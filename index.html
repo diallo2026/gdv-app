@@ -456,9 +456,11 @@ function agvRegister(){
   var email=(document.getElementById('r-email')||{}).value||'';
   var tel=(document.getElementById('r-tel')||{}).value||'';
   var ville=(document.getElementById('r-ville')||{}).value||'';
-  prenom=prenom.trim();nom=nom.trim();ent=ent.trim();email=email.trim();tel=tel.trim();
-  if(!prenom||!nom||!ent||!email||!tel){agvMsg('Remplissez tous les champs obligatoires (*)',false);return;}
+  var fondCode=(document.getElementById('r-fondateur-code')||{}).value||'';
+  prenom=prenom.trim();nom=nom.trim();ent=ent.trim();email=email.trim();tel=tel.trim();fondCode=fondCode.trim();
+  if(!prenom||!nom||!ent||!email||!tel||!fondCode){agvMsg('Remplissez tous les champs obligatoires (*)',false);return;}
   if(email.indexOf('@')<0){agvMsg('Email invalide',false);return;}
+  if(fondCode.length<3){agvMsg('Le code fondateur doit faire au moins 3 caractères',false);return;}
   var btn=document.getElementById('r-btn');
   if(btn){btn.disabled=true;btn.textContent='Creation...';}
   db.ref('gdv_shops').orderByChild('email').equalTo(email).once('value',function(snap){
@@ -473,12 +475,12 @@ function agvRegister(){
     function save(logo){
       var shop={uid:uid,nom:prenom+' '+nom,prenom:prenom,nomFamille:nom,
         entreprise:ent,email:email,tel:tel,ville:ville,logo:logo,
-        codeAcces:code,dateCreation:new Date().toISOString()};
+        codeAcces:code,codeFondateur:fondCode,dateCreation:new Date().toISOString()};
       db.ref('gdv_shops/'+uid+'/info').set(shop).then(function(){
         // Envoyer email
         emailjs.send('service_xl8rdum','gdv_welcome',{
           to_name:prenom+' '+nom, to_email:email,
-          entreprise:ent, code_acces:code, login_url:window.location.href
+          entreprise:ent, code_acces:code, code_fondateur:fondCode, login_url:window.location.href
         }).then(function(){console.log('Email OK');}).catch(function(e){console.warn('Email:',e);});
         // *** AFFICHER ECRAN SUCCES - PAS D'OUVERTURE AUTO ***
         agvShowSuccess(shop, code);
@@ -529,6 +531,12 @@ function agvShowSuccess(shop, code){
     '<div><span style="color:#64748b">Email: </span><strong style="color:#e2e8f0">'+shop.email+'</strong></div>'+
     '<div><span style="color:#64748b">Telephone: </span><strong style="color:#e2e8f0">'+shop.tel+'</strong></div>'+
     (shop.ville?'<div><span style="color:#64748b">Ville: </span><strong style="color:#e2e8f0">'+shop.ville+'</strong></div>':'')+
+    '</div>'+
+    
+    '<div style="background:rgba(251,191,36,0.08);border:1px solid rgba(251,191,36,0.25);border-radius:10px;padding:14px;margin-bottom:14px">'+
+    '<div style="font-size:11px;color:#a16207;text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px">👑 Code Fondateur</div>'+
+    '<div style="font-family:monospace;font-size:18px;font-weight:800;color:#fbbf24;letter-spacing:.12em;margin-bottom:4px">'+shop.codeFondateur+'</div>'+
+    '<div style="font-size:11px;color:#78716c">Conservez ce code — il donne acces total a votre boutique</div>'+
     '</div>'+
 
     // Avertissement
@@ -613,6 +621,12 @@ function agvLaunchApp(shop){
   updateBrand();
   setTimeout(updateBrand,300);
   setTimeout(updateBrand,1000);
+  // Synchroniser le code fondateur avec le moteur boutique
+  if(shop.codeFondateur){
+    window.FONDATEUR_CODE = shop.codeFondateur;
+    // Sauvegarder aussi en localStorage pour le moteur
+    localStorage.setItem(window.AGV_KEY('fondateur_code'), shop.codeFondateur);
+  }
 
   // Cacher le login-screen du moteur
   var ls=document.getElementById('login-screen'); if(ls)ls.style.display='none';
@@ -688,6 +702,120 @@ function agvLoadAdmin(){
     h+='</div>';
     list.innerHTML=shops.length?h:'<p style="color:#475569;text-align:center;padding:40px">Aucune boutique.</p>';
   });
+}
+
+// ===== PAGE ACCES GERANT =====
+function agvOpenGerantAccess(){
+  var ov=document.createElement('div');
+  ov.id='agv-gerant-modal';
+  ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,0.8);z-index:99999;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px)';
+  var shop=window._currentShop||{};
+  var d=document.createElement('div');
+  d.style.cssText='background:#0a1628;border:1px solid rgba(37,99,235,0.25);border-radius:16px;width:90%;max-width:440px;overflow:hidden;box-shadow:0 24px 60px rgba(0,0,0,0.5)';
+  
+  d.innerHTML=
+    '<div style="padding:20px 22px 16px;border-bottom:1px solid rgba(37,99,235,0.12);display:flex;justify-content:space-between;align-items:center">'+
+    '<div>'+
+    '<h3 style="color:#fff;font-size:16px;font-weight:700">Gestion des accès</h3>'+
+    '<p style="font-size:12px;color:#64748b;margin-top:2px">'+(shop.entreprise||'Ma Boutique')+'</p>'+
+    '</div>'+
+    '<button id="close-ga" style="background:none;border:none;color:#64748b;font-size:20px;cursor:pointer;line-height:1">&#x2715;</button>'+
+    '</div>'+
+    
+    '<div style="padding:20px 22px">'+
+    
+    // Fondateur
+    '<div style="background:rgba(251,191,36,0.08);border:1px solid rgba(251,191,36,0.2);border-radius:10px;padding:14px;margin-bottom:12px">'+
+    '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">'+
+    '<span style="font-size:18px">👑</span>'+
+    '<div><div style="color:#fbbf24;font-weight:700;font-size:13px">Fondateur</div>'+
+    '<div style="color:#78716c;font-size:11px">Acces complet — gestion totale</div></div>'+
+    '</div>'+
+    '<div style="display:flex;gap:8px;align-items:center">'+
+    '<input id="ga-fondateur-code" type="password" placeholder="Votre code fondateur" style="flex:1;padding:9px 12px;background:#060d24;border:1px solid rgba(251,191,36,0.2);border-radius:8px;color:#e2e8f0;font-size:13px;font-family:inherit;outline:none">'+
+    '</div>'+
+    '</div>'+
+    
+    // Gérant
+    '<div style="background:rgba(37,99,235,0.07);border:1px solid rgba(37,99,235,0.2);border-radius:10px;padding:14px">'+
+    '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">'+
+    '<span style="font-size:18px">🧑‍💼</span>'+
+    '<div><div style="color:#60a5fa;font-weight:700;font-size:13px">Gérant</div>'+
+    '<div style="color:#475569;font-size:11px">Acces ventes et depenses</div></div>'+
+    '</div>'+
+    '<div id="ga-gerant-select-wrap" style="margin-bottom:8px">'+
+    '<select id="ga-gerant-select" style="width:100%;padding:9px 12px;background:#060d24;border:1px solid rgba(37,99,235,0.2);border-radius:8px;color:#e2e8f0;font-size:13px;font-family:inherit;outline:none;cursor:pointer">'+
+    '<option value="">-- Sélectionner un gérant --</option>'+
+    '</select>'+
+    '</div>'+
+    '<div style="display:flex;gap:8px;align-items:center">'+
+    '<input id="ga-gerant-code" type="password" placeholder="Code gérant" style="flex:1;padding:9px 12px;background:#060d24;border:1px solid rgba(37,99,235,0.2);border-radius:8px;color:#e2e8f0;font-size:13px;font-family:inherit;outline:none">'+
+    '</div>'+
+    '</div>'+
+    
+    '<div id="ga-msg" style="display:none;margin-top:12px;padding:9px 12px;border-radius:7px;font-size:12px"></div>'+
+    '</div>';
+  
+  ov.appendChild(d);
+  document.body.appendChild(ov);
+  document.getElementById('close-ga').onclick=function(){ov.remove();};
+  var btnF=document.getElementById('ga-btn-fondateur');
+  if(btnF) btnF.onclick=function(){agvLoginGerant('fondateur');};
+  var btnG=document.getElementById('ga-btn-gerant');
+  if(btnG) btnG.onclick=function(){agvLoginGerant('gerant');};
+  ov.onclick=function(e){if(e.target===ov)ov.remove();};
+  
+  // Peupler la liste des gérants
+  var sel=document.getElementById('ga-gerant-select');
+  if(sel && gerants && gerants.length>0){
+    gerants.forEach(function(g){
+      var opt=document.createElement('option');
+      opt.value=g.id;
+      opt.textContent=g.nom+(g.poste?' — '+g.poste:'');
+      sel.appendChild(opt);
+    });
+  }
+}
+
+function agvLoginGerant(role){
+  var msg=document.getElementById('ga-msg');
+  function showMsg(txt,ok){
+    msg.style.display='block';
+    msg.textContent=txt;
+    msg.style.cssText='display:block;padding:9px 12px;border-radius:7px;font-size:12px;margin-top:12px;'+
+      (ok?'background:rgba(34,197,94,0.1);color:#22c55e;border:1px solid rgba(34,197,94,0.2)':
+          'background:rgba(239,68,68,0.1);color:#ef4444;border:1px solid rgba(239,68,68,0.2)');
+  }
+  
+  if(role==='fondateur'){
+    var code=document.getElementById('ga-fondateur-code').value.trim();
+    if(!code){showMsg('Entrez votre code fondateur',false);return;}
+    // Vérifier via le code fondateur sauvegardé dans Firebase
+    var shopInfo = window._currentShop;
+    if(shopInfo && shopInfo.codeFondateur && code === shopInfo.codeFondateur){
+      currentRole='fondateur'; currentGerantId=null;
+      if(typeof applyRoleUI==='function')applyRoleUI();
+      showMsg('Connecté en tant que Fondateur ✓', true);
+      setTimeout(function(){var m=document.getElementById('agv-gerant-modal');if(m)m.remove();},800);
+    } else {
+      showMsg('Code fondateur incorrect',false);
+    }
+  } else {
+    var gerantId=document.getElementById('ga-gerant-select').value;
+    var code=document.getElementById('ga-gerant-code').value.trim();
+    if(!gerantId){showMsg('Sélectionnez un gérant',false);return;}
+    if(!code){showMsg('Entrez le code gérant',false);return;}
+    var gerant=gerants.find(function(g){return g.id===gerantId;});
+    if(!gerant){showMsg('Gérant introuvable',false);return;}
+    if(gerant.code && code===gerant.code){
+      currentRole='gerant'; currentGerantId=gerantId;
+      if(typeof applyRoleUI==='function')applyRoleUI();
+      showMsg('Connecté en tant que '+gerant.nom+' ✓', true);
+      setTimeout(function(){var m=document.getElementById('agv-gerant-modal');if(m)m.remove();},800);
+    } else {
+      showMsg('Code gérant incorrect',false);
+    }
+  }
 }
 
 // ===== QUITTER avec confirmation =====
@@ -843,7 +971,6 @@ window.addEventListener('DOMContentLoaded',function(){
       <button onclick="showAuth('login')" class="fb" style="width:auto;padding:14px 30px;font-size:15px;border-radius:12px;background:transparent;color:#93c5fd;border:1px solid rgba(37,99,235,0.3)">Se connecter</button>
     </div>
   </div>
-</div>
 
 <!-- FOOTER LANDING -->
 <div style="background:#030a1a;border-top:1px solid rgba(37,99,235,0.1);padding:20px 24px">
@@ -880,6 +1007,7 @@ window.addEventListener('DOMContentLoaded',function(){
 
   </div>
 </div>
+</div>
 
 <!-- ==================== AUTH ==================== -->
 <div id="agv-auth" style="display:none;min-height:100vh;background:#060d24;padding:24px">
@@ -913,6 +1041,11 @@ window.addEventListener('DOMContentLoaded',function(){
         <div class="fg2" style="margin-bottom:10px">
           <div><label class="fl">Telephone *</label><input id="r-tel" class="fi" placeholder="+224 620 000 000"></div>
           <div><label class="fl">Ville</label><input id="r-ville" class="fi" placeholder="Conakry"></div>
+        </div>
+        <div style="margin-bottom:10px">
+          <label class="fl">Code fondateur *</label>
+          <input id="r-fondateur-code" class="fi" placeholder="Choisissez un code secret (ex: 1234)" type="password" autocomplete="new-password">
+          <div style="font-size:11px;color:#475569;margin-top:4px">Ce code vous permettra d acceder a votre boutique en tant que Fondateur</div>
         </div>
         <div style="margin-bottom:14px">
           <label class="fl">Logo boutique (optionnel)</label>
