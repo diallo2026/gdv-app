@@ -959,6 +959,7 @@ function agvChangeDevPwd(){
       var stored=snap.val()||agvSimpleHash('AGVDev2026#');
       if(agvSimpleHash(oldP)!==stored){showM('Ancien mot de passe incorrect',false);return;}
       db.ref('agv_config/dev_pwd_hash').set(agvSimpleHash(newP)).then(function(){
+        window._devPwdHash = agvSimpleHash(newP); // Mettre à jour le cache
         showM('Mot de passe modifié !',true);
         setTimeout(function(){ov.remove();},1500);
       });
@@ -975,23 +976,20 @@ function agvDevVerify(){
   msg.style.display='block';
   msg.textContent='Verification...';
   msg.style.cssText='display:block;margin-top:10px;padding:9px 12px;border-radius:7px;font-size:12px;color:#60a5fa;background:rgba(37,99,235,0.08);border:1px solid rgba(37,99,235,0.2)';
-  db.ref('agv_config/dev_pwd_hash').once('value',function(snap){
-    var storedHash=snap.val();
-    var enteredHash=agvSimpleHash(entered);
-    if(!storedHash){
-      db.ref('agv_config/dev_pwd_hash').set(agvSimpleHash('AGVDev2026#'));
-      storedHash=agvSimpleHash('AGVDev2026#');
-    }
-    if(enteredHash!==storedHash){
-      msg.textContent='Mot de passe incorrect.';
-      msg.style.cssText='display:block;margin-top:10px;padding:9px 12px;border-radius:7px;font-size:12px;color:#ef4444;background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.2)';
-      return;
-    }
-    msg.style.display='none';
-    var box=document.getElementById('dev-pwd');
-    if(box) box=box.closest('div');
-    if(box) box.innerHTML='<div style="text-align:center;color:#64748b;padding:20px">Chargement...</div>';
-    db.ref('gdv_shops').once('value',function(snap2){
+  // Vérification instantanée via cache local
+  var storedHash = window._devPwdHash || agvSimpleHash('AGVDev2026#');
+  var enteredHash = agvSimpleHash(entered);
+  if(enteredHash !== storedHash){
+    msg.textContent='Mot de passe incorrect.';
+    msg.style.cssText='display:block;margin-top:10px;padding:9px 12px;border-radius:7px;font-size:12px;color:#ef4444;background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.2)';
+    return;
+  }
+  msg.style.display='none';
+  var box=document.getElementById('dev-pwd');
+  if(box) box=box.closest('div');
+  if(box) box.innerHTML='<div style="text-align:center;color:#64748b;padding:20px">Chargement...</div>';
+  // Un seul appel Firebase pour charger les boutiques
+  db.ref('gdv_shops').once('value',function(snap2){
       var shops=[];
       snap2.forEach(function(c){var info=c.val()&&c.val().info;if(info)shops.push(info);});
       shops.sort(function(a,b){return new Date(b.dateCreation)-new Date(a.dateCreation);});
@@ -1045,7 +1043,6 @@ function agvDevVerify(){
         var d=ov.querySelector('div');
         if(d){ d.innerHTML=h; d.style.maxWidth='600px'; }
       }
-    });
   });
 }
 function agvDeleteShop(btn){
@@ -1295,6 +1292,11 @@ window.addEventListener('DOMContentLoaded',function(){
   // Supprimer les clés neindi_ au démarrage
   var k=[];for(var i=0;i<localStorage.length;i++){var key=localStorage.key(i);if(key&&key.indexOf('neindi_')===0)k.push(key);}
   k.forEach(function(key){localStorage.removeItem(key);});
+  // Précharger le hash concepteur pour une vérification instantanée
+  db.ref('agv_config/dev_pwd_hash').once('value',function(snap){
+    window._devPwdHash = snap.val() || agvSimpleHash('AGVDev2026#');
+    if(!snap.val()) db.ref('agv_config/dev_pwd_hash').set(window._devPwdHash);
+  });
 
   // Sauvegarder le HTML de l'auth
   setTimeout(function(){
