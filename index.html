@@ -1026,8 +1026,13 @@ function agvDevVerify(){
   db.ref('gdv_shops').once('value',function(snap2){
       var shops=[];
       snap2.forEach(function(c){var info=c.val()&&c.val().info;if(info)shops.push(info);});
-      shops.sort(function(a,b){return new Date(b.dateCreation)-new Date(a.dateCreation);});
-      var h='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">'+
+      agvRenderDevShops(shops);
+  });
+}
+
+function agvRenderDevShops(shops){
+    shops.sort(function(a,b){return new Date(b.dateCreation)-new Date(a.dateCreation);});
+    var h='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">'+
         '<h3 style="color:#fff;font-size:15px;font-weight:700">Toutes les boutiques ('+shops.length+')</h3>'+
         '<div style="display:flex;gap:6px">'+
         '<button onclick="agvChangeDevPwd()" style="padding:5px 10px;border:1px solid rgba(37,99,235,0.3);border-radius:6px;background:transparent;color:#60a5fa;font-size:11px;cursor:pointer;font-family:inherit">Changer mdp</button>'+
@@ -1077,8 +1082,8 @@ function agvDevVerify(){
         var d=ov.querySelector('div');
         if(d){ d.innerHTML=h; d.style.maxWidth='600px'; }
       }
-  });
 }
+
 function agvDeleteShop(btn){
   var uid = btn.getAttribute('data-uid');
   var name = btn.getAttribute('data-name');
@@ -1132,8 +1137,13 @@ function agvToggleBlock(btn){
   btn.disabled = true;
   btn.textContent = '...';
   db.ref('gdv_shops/'+uid+'/info/blocked').set(newBlocked).then(function(){
-    // Recharger la liste
-    agvDevVerify();
+    // Mettre à jour le cache local
+    if(window._devShopsCache){
+      window._devShopsCache.forEach(function(s){if(s.uid===uid)s.blocked=newBlocked;});
+      try{localStorage.setItem('agv_dev_shops',JSON.stringify(window._devShopsCache));}catch(e){}
+      agvRenderDevShops(window._devShopsCache); // Affichage immédiat
+    }
+    agvDevVerify(); // Resync Firebase en arrière-plan
   }).catch(function(e){
     btn.disabled=false;
     btn.textContent=isBlocked?'Débloquer':'Bloquer';
@@ -1360,6 +1370,21 @@ window.addEventListener('DOMContentLoaded',function(){
   db.ref('agv_config/dev_pwd_hash').once('value',function(snap){
     if(snap.val()) window._devPwdHash = snap.val();
   });
+  // Précharger la liste des boutiques en arrière-plan (pour accès concepteur instantané)
+  setTimeout(function(){
+    // D'abord charger depuis localStorage
+    try{
+      var cached=JSON.parse(localStorage.getItem('agv_dev_shops')||'null');
+      if(cached) window._devShopsCache=cached;
+    }catch(e){}
+    // Puis syncer avec Firebase silencieusement
+    db.ref('gdv_shops').once('value',function(snap){
+      var shops=[];
+      snap.forEach(function(c){var info=c.val()&&c.val().info;if(info)shops.push(info);});
+      window._devShopsCache=shops;
+      try{localStorage.setItem('agv_dev_shops',JSON.stringify(shops));}catch(e){}
+    });
+  }, 2000); // Délai 2s pour ne pas bloquer le chargement principal
 
   // Sauvegarder le HTML de l'auth
   setTimeout(function(){
