@@ -713,15 +713,7 @@ function agvPreviewLogo(inp){
 }
 
 // ===== CONCEPTEUR ACCESS =====
-var _concepteurClicks = 0;
-var _concepteurTimer = null;
 function agvConcepteurAccess(){
-  // Triple-clic dans les 2 secondes pour ouvrir le modal
-  _concepteurClicks++;
-  clearTimeout(_concepteurTimer);
-  _concepteurTimer = setTimeout(function(){ _concepteurClicks=0; }, 2000);
-  if(_concepteurClicks < 3) return;
-  _concepteurClicks = 0;
 
   var ov=document.createElement('div');
   ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:99999;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(6px)';
