@@ -924,6 +924,7 @@ function agvDevVerify(){
         '<div style="font-family:monospace;font-size:12px;font-weight:800;color:#60a5fa;background:rgba(37,99,235,0.12);padding:5px 10px;border-radius:7px;letter-spacing:.1em">'+s.codeAcces+'</div>'+
         '<button data-code="'+s.codeAcces+'" onclick="agvDevCopy(this)" style="padding:5px 10px;border:none;border-radius:6px;background:#2563eb;color:#fff;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit">Copier code</button>'+
         '<button data-uid="'+s.uid+'" data-blocked="'+(isBlocked?'1':'0')+'" onclick="agvToggleBlock(this)" style="padding:5px 10px;border:none;border-radius:6px;background:'+toggleBg+';color:#fff;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit">'+toggleLabel+'</button>'+
+        '<button data-uid="'+s.uid+'" data-name="'+s.entreprise+'" onclick="agvDeleteShop(this)" style="padding:5px 10px;border:1px solid rgba(239,68,68,0.4);border-radius:6px;background:transparent;color:#ef4444;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit">🗑 Supprimer</button>'+
         '</div></div></div>';
     });
     h+='</div>';
@@ -934,6 +935,52 @@ function agvDevVerify(){
       d.style.maxWidth='600px';
     }
   });
+}
+
+function agvDeleteShop(btn){
+  var uid = btn.getAttribute('data-uid');
+  var name = btn.getAttribute('data-name');
+  // Modal de confirmation
+  var ov=document.createElement('div');
+  ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:999999;display:flex;align-items:center;justify-content:center';
+  var d=document.createElement('div');
+  d.style.cssText='background:#0a1628;border:2px solid rgba(239,68,68,0.5);border-radius:14px;padding:28px;max-width:380px;width:90%;text-align:center';
+  d.innerHTML=
+    '<div style="font-size:40px;margin-bottom:14px">🗑️</div>'+
+    '<h3 style="color:#ef4444;font-size:17px;font-weight:700;margin-bottom:8px">Supprimer la boutique ?</h3>'+
+    '<p style="color:#94a3b8;font-size:13px;margin-bottom:6px"><strong style="color:#fff">'+name+'</strong></p>'+
+    '<p style="color:#64748b;font-size:12px;margin-bottom:20px">Cette action est irreversible. Toutes les donnees (produits, ventes, dettes...) seront definitvement supprimees.</p>'+
+    '<div style="display:flex;gap:10px;justify-content:center">'+
+    '<button id="del-cancel" style="padding:10px 22px;border:1px solid rgba(255,255,255,0.12);border-radius:8px;background:transparent;color:#94a3b8;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit">Annuler</button>'+
+    '<button id="del-confirm" style="padding:10px 22px;border:none;border-radius:8px;background:#ef4444;color:#fff;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit">Supprimer definitivement</button>'+
+    '</div>'+
+    '<div id="del-msg" style="display:none;margin-top:12px;font-size:12px;color:#94a3b8"></div>';
+  ov.appendChild(d);
+  document.body.appendChild(ov);
+  document.getElementById('del-cancel').onclick=function(){ov.remove();};
+  ov.onclick=function(e){if(e.target===ov)ov.remove();};
+  document.getElementById('del-confirm').onclick=function(){
+    var confirmBtn=document.getElementById('del-confirm');
+    var msg=document.getElementById('del-msg');
+    confirmBtn.disabled=true;
+    confirmBtn.textContent='Suppression...';
+    msg.style.display='block';
+    msg.textContent='Suppression en cours...';
+    // Supprimer toutes les données Firebase de la boutique
+    db.ref('gdv_shops/'+uid).remove().then(function(){
+      msg.style.color='#22c55e';
+      msg.textContent='Boutique supprimee avec succes !';
+      setTimeout(function(){
+        ov.remove();
+        agvDevVerify(); // Recharger la liste
+      }, 1000);
+    }).catch(function(e){
+      msg.style.color='#ef4444';
+      msg.textContent='Erreur: '+e.message;
+      confirmBtn.disabled=false;
+      confirmBtn.textContent='Reessayer';
+    });
+  };
 }
 
 function agvToggleBlock(btn){
