@@ -15,7 +15,7 @@
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
 
 <!-- EmailJS -->
-<script src="https://cdn.emailjs.com/dist/email.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
 
 <!-- AGV SYSTEM - Loaded first -->
 <script>
@@ -40,7 +40,14 @@ firebase.initializeApp(fbConfig);
 db = firebase.database();
 
 // EmailJS
-try { emailjs.init('FTyIFM5XKoLaY-pbL'); } catch(e) {}
+emailjs.init({publicKey: 'FTyIFM5XKoLaY-pbL'});
+
+// Global AGV_KEY - dynamic localStorage key per shop
+window.AGV_KEY = function(name) {
+  var uid = window._currentShop ? window._currentShop.uid : 'default';
+  return 'agv_' + uid + '_' + name;
+};
+function AGV_KEY(name) { return window.AGV_KEY(name); }
 
 function agvGenCode() {
   var c='ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -152,19 +159,35 @@ function agvRegister() {
           });
         }catch(e){console.warn('EmailJS:',e);}
         // Show code prominently on screen
-agvMsg('Compte cree ! Votre code dacces : ' + code, true);
-// Also show a large code display
-var codeDisplay = document.getElementById('agv-code-display');
-if(!codeDisplay){
-  codeDisplay = document.createElement('div');
-  codeDisplay.id = 'agv-code-display';
-  codeDisplay.style.cssText = 'margin:16px 0;padding:16px;background:rgba(37,99,235,0.15);border:2px solid rgba(37,99,235,0.4);border-radius:12px;text-align:center';
+agvMsg('Compte cree avec succes !', true);
+
+// Show large code panel
+var panel = document.getElementById('agv-code-display');
+if(!panel){
+  panel = document.createElement('div');
+  panel.id = 'agv-code-display';
+  panel.style.cssText = 'margin:16px 0;padding:20px;background:rgba(37,99,235,0.12);border:2px solid rgba(37,99,235,0.35);border-radius:14px;text-align:center';
   var msgEl = document.getElementById('agv-msg');
-  if(msgEl && msgEl.parentNode) msgEl.parentNode.insertBefore(codeDisplay, msgEl.nextSibling);
+  if(msgEl && msgEl.parentNode) msgEl.parentNode.insertBefore(panel, msgEl.nextSibling);
 }
-codeDisplay.innerHTML = '<div style="font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px">Votre code dacces (copiez-le !)</div>' +
-  '<div style="font-family:monospace;font-size:24px;font-weight:800;color:#60a5fa;letter-spacing:.15em">' + code + '</div>' +
-  '<div style="font-size:11px;color:#475569;margin-top:8px">Envoi email en cours vers ' + email + '</div>';
+
+// Build WhatsApp link with code
+var whatsappNum = '224623030403'; // votre numero
+var waMsg = encodeURIComponent('Bonjour ! Je viens de creer mon compte App AGV.%0ANom: ' + prenom + ' ' + nom + '%0ABoutique: ' + ent + '%0AMon email: ' + email + '%0ACode recu: En attente%0AMerci de me communiquer mon code dacces.');
+var waLink = 'https://wa.me/' + whatsappNum + '?text=' + waMsg;
+
+panel.innerHTML = 
+  '<div style="font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px">Votre code dacces</div>' +
+  '<div style="font-family:monospace;font-size:26px;font-weight:800;color:#60a5fa;letter-spacing:.15em;margin-bottom:4px">' + code + '</div>' +
+  '<div style="font-size:11px;color:#475569;margin-bottom:14px">Copiez et conservez ce code !</div>' +
+  '<div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap">' +
+  '<button id="agv-copy-code" style="padding:8px 16px;border:none;border-radius:8px;background:#2563eb;color:#fff;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit">Copier le code</button>' +
+  '<a href="' + waLink + '" target="_blank" style="padding:8px 16px;border:none;border-radius:8px;background:#25D366;color:#fff;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;text-decoration:none">WhatsApp support</a>' +
+  '</div>' +
+  '<div style="font-size:11px;color:#334155;margin-top:10px">Email envoye vers ' + email + ' | Si non recu, contactez le support</div>';
+// Add copy handler
+var copyBtn = document.getElementById('agv-copy-code');
+if(copyBtn){ var _code=code; copyBtn.onclick=function(){ if(navigator.clipboard){navigator.clipboard.writeText(_code).then(function(){copyBtn.textContent='Code copie !';copyBtn.style.background='#22c55e';});}else{copyBtn.textContent=_code;} }; }
         setTimeout(function(){_shop=shopData;agvLaunchApp(shopData);},2500);
       }).catch(function(e){agvMsg('Erreur: '+e.message,false);});
     }
@@ -356,7 +379,19 @@ function agvInstall(){
 }
 if('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js');
 
-window.addEventListener('DOMContentLoaded',function(){agvShow('agv-landing');});
+window.addEventListener('DOMContentLoaded', function(){
+  // Clear ALL localStorage on startup to prevent stale Neindi data
+  var toRemove = [];
+  for(var i=0; i<localStorage.length; i++){
+    var k = localStorage.key(i);
+    if(k) toRemove.push(k);
+  }
+  // Only clear neindi_ keys, keep others (settings etc)
+  toRemove.forEach(function(k){
+    if(k.indexOf('neindi_')===0) localStorage.removeItem(k);
+  });
+  agvShow('agv-landing');
+});
 </script>
 
 <style>
@@ -2390,7 +2425,7 @@ function preloadGerantsForLogin(){
     return;
   }
   // Priorité 2 : localStorage
-  const sg = localStorage.getItem(AGV_KEY('gerants'));
+  const sg = localStorage.getItem(window.AGV_KEY('gerants'));
   if(sg){ 
     try{ 
       gerants = JSON.parse(sg);
@@ -2424,7 +2459,7 @@ function doLogin(){
   const err = document.getElementById('login-err');
   err.style.display='none';
   if(loginRoleSelected==='fondateur'){
-    const savedCode = localStorage.getItem(AGV_KEY('fondateur_code')) || FONDATEUR_CODE;
+    const savedCode = localStorage.getItem(window.AGV_KEY('fondateur_code')) || FONDATEUR_CODE;
     if(code !== savedCode){ err.style.display='block'; return; }
     currentRole='fondateur'; currentGerantId=null;
     startApp();
@@ -2456,10 +2491,10 @@ function startApp(){
   if (window._firebaseData) {
     appliquerDonneesFirebase(window._firebaseData);
     // Mettre à jour localStorage avec les données Firebase
-    localStorage.setItem(AGV_KEY('products'), JSON.stringify(products));
-    localStorage.setItem(AGV_KEY('ventes'), JSON.stringify(ventes));
-    localStorage.setItem(AGV_KEY('depenses'), JSON.stringify(depenses));
-    localStorage.setItem(AGV_KEY('gerants'), JSON.stringify(gerants));
+    localStorage.setItem(window.AGV_KEY('products'), JSON.stringify(products));
+    localStorage.setItem(window.AGV_KEY('ventes'), JSON.stringify(ventes));
+    localStorage.setItem(window.AGV_KEY('depenses'), JSON.stringify(depenses));
+    localStorage.setItem(window.AGV_KEY('gerants'), JSON.stringify(gerants));
   }
   init();
 }
@@ -2658,16 +2693,16 @@ function init(){
     return;
   }
   // Original init (standalone mode):
-  const sp = localStorage.getItem(AGV_KEY('products'));
-  const sv = localStorage.getItem(AGV_KEY('ventes'));
-  const sd = localStorage.getItem(AGV_KEY('depenses'));
-  const sg = localStorage.getItem(AGV_KEY('gerants'));
-  const se = localStorage.getItem(AGV_KEY('entrees'));
-  const sa = localStorage.getItem(AGV_KEY('appros'));
-  const sr = localStorage.getItem(AGV_KEY('repconfig'));
-  const sdt = localStorage.getItem(AGV_KEY('dettes'));
-  const scl = localStorage.getItem(AGV_KEY('clients'));
-  const sfact = localStorage.getItem(AGV_KEY('factureventes'));
+  const sp = localStorage.getItem(window.AGV_KEY('products'));
+  const sv = localStorage.getItem(window.AGV_KEY('ventes'));
+  const sd = localStorage.getItem(window.AGV_KEY('depenses'));
+  const sg = localStorage.getItem(window.AGV_KEY('gerants'));
+  const se = localStorage.getItem(window.AGV_KEY('entrees'));
+  const sa = localStorage.getItem(window.AGV_KEY('appros'));
+  const sr = localStorage.getItem(window.AGV_KEY('repconfig'));
+  const sdt = localStorage.getItem(window.AGV_KEY('dettes'));
+  const scl = localStorage.getItem(window.AGV_KEY('clients'));
+  const sfact = localStorage.getItem(window.AGV_KEY('factureventes'));
 
   products = sp ? JSON.parse(sp) : RAW_DATA.map((p,i)=>({...p,id:i+1}));
   ventes   = sv ? JSON.parse(sv) : [];
@@ -2721,16 +2756,16 @@ function saveAll(){
     return;
   }
   // Original saveAll for standalone:
-  localStorage.setItem(AGV_KEY('products'), JSON.stringify(products));
-  localStorage.setItem(AGV_KEY('ventes'), JSON.stringify(ventes));
-  localStorage.setItem(AGV_KEY('depenses'), JSON.stringify(depenses));
-  localStorage.setItem(AGV_KEY('gerants'), JSON.stringify(gerants));
-  localStorage.setItem(AGV_KEY('entrees'), JSON.stringify(entrees));
-  localStorage.setItem(AGV_KEY('appros'), JSON.stringify(appros));
-  localStorage.setItem(AGV_KEY('repconfig'), JSON.stringify(repConfig));
-  localStorage.setItem(AGV_KEY('dettes'), JSON.stringify(dettes));
-  localStorage.setItem(AGV_KEY('clients'), JSON.stringify(clients));
-  localStorage.setItem(AGV_KEY('factureventes'), JSON.stringify(factureVentes));
+  localStorage.setItem(window.AGV_KEY('products'), JSON.stringify(products));
+  localStorage.setItem(window.AGV_KEY('ventes'), JSON.stringify(ventes));
+  localStorage.setItem(window.AGV_KEY('depenses'), JSON.stringify(depenses));
+  localStorage.setItem(window.AGV_KEY('gerants'), JSON.stringify(gerants));
+  localStorage.setItem(window.AGV_KEY('entrees'), JSON.stringify(entrees));
+  localStorage.setItem(window.AGV_KEY('appros'), JSON.stringify(appros));
+  localStorage.setItem(window.AGV_KEY('repconfig'), JSON.stringify(repConfig));
+  localStorage.setItem(window.AGV_KEY('dettes'), JSON.stringify(dettes));
+  localStorage.setItem(window.AGV_KEY('clients'), JSON.stringify(clients));
+  localStorage.setItem(window.AGV_KEY('factureventes'), JSON.stringify(factureVentes));
   document.getElementById('nb-produits').textContent = products.length;
   if(typeof window.sauvegarderFirebase === 'function') window.sauvegarderFirebase();
 }
@@ -4207,7 +4242,7 @@ function closeResetModal(e){
 }
 function confirmReset(){
   const code=document.getElementById('reset-code-confirm').value.trim();
-  const savedCode=localStorage.getItem(AGV_KEY('fondateur_code'))||FONDATEUR_CODE;
+  const savedCode=localStorage.getItem(window.AGV_KEY('fondateur_code'))||FONDATEUR_CODE;
   if(code!==savedCode){showToast('Code incorrect');return}
   if(!confirm('DERNIÈRE CONFIRMATION : toutes les données seront effacées. Continuer ?'))return;
   // Réinitialisation
