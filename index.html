@@ -398,6 +398,9 @@ firebase.initializeApp({
 var db = firebase.database();
 emailjs.init({publicKey:'FTyIFM5XKoLaY-pbL'});
 
+// Optimisation : désactiver la persistance pour connexion directe
+try { db.goOnline(); } catch(e){}
+
 // Clé localStorage dynamique par boutique
 window.AGV_KEY = function(name){
   return 'agv_' + (window._currentShop ? window._currentShop.uid : 'x') + '_' + name;
@@ -425,25 +428,24 @@ function landingGoShop(){
     agvLoadShopLogin(code); // Charge depuis cache instantanément
     return;
   }
-  // Pas de cache - Firebase
-  db.ref('gdv_shops').once('value',function(snap){
-    var found=null;
-    snap.forEach(function(c){var info=c.val()&&c.val().info;if(info&&info.codeAcces===code)found=info;});
+  // Recherche via index (rapide) ou Firebase complet
+  db.ref('gdv_codes/'+code).once('value',function(snapCode){
+    var uid=snapCode.val();
     if(btn){ btn.textContent='Accéder →'; btn.disabled=false; }
-    if(!found){
+    if(!uid){
       if(msg){msg.textContent='Code introuvable. Vérifiez votre code.';msg.style.display='block';}
       return;
     }
-    if(found.blocked){
-      if(msg){msg.textContent='Accès suspendu. Contactez le concepteur.';msg.style.display='block';}
-      return;
-    }
-    // Sauvegarder dans le cache pour la prochaine fois
-    try{ localStorage.setItem('agv_shop_'+code, JSON.stringify(found)); }catch(e){}
-    window._lastShopCode=code;
-    window._shopLoginData=found;
-    agvShow('agv-shop-login');
-    agvLoadShopLogin(code);
+    db.ref('gdv_shops/'+uid+'/info').once('value',function(snap){
+      var found=snap.val();
+      if(!found){if(msg){msg.textContent='Boutique introuvable.';msg.style.display='block';}return;}
+      if(found.blocked){if(msg){msg.textContent='⛔ Accès suspendu.';msg.style.display='block';}return;}
+      try{localStorage.setItem('agv_shop_'+code,JSON.stringify(found));}catch(e){}
+      window._lastShopCode=code;
+      window._shopLoginData=found;
+      agvShow('agv-shop-login');
+      agvLoadShopLogin(code);
+    });
   });
 }
 
@@ -523,7 +525,10 @@ function agvRegister(){
         codeAcces:code,
         codeFondateur:fondCode,
         dateCreation:new Date().toISOString()};
-      db.ref('gdv_shops/'+uid+'/info').set(shop).then(function(){
+      // Sauvegarder la boutique ET l'index code->uid pour recherche rapide
+      db.ref('gdv_shops/'+uid+'/info').set(shop);
+      db.ref('gdv_codes/'+code).set(uid); // Index pour recherche instantanée
+      db.ref('gdv_shops/'+uid+'/info').once('value').then(function(){
         // Envoyer email
         emailjs.send('service_xl8rdum','gdv_welcome',{
           to_name:prenom+' '+nom, to_email:email,
@@ -634,22 +639,30 @@ function agvLogin(){
   if(code==='AGVADMIN2026'){agvLoadAdmin();return;}
   var btn=document.getElementById('l-btn');
   if(btn){btn.disabled=true;btn.textContent='Connexion...';}
-  db.ref('gdv_shops').once('value',function(snap){
-    var found=null;
-    snap.forEach(function(c){var info=c.val()&&c.val().info;if(info&&info.codeAcces===code)found=info;});
-    if(!found){
-      agvMsg('Code incorrect. Verifiez votre email ou contactez le support.',false);
+  // Recherche rapide via index code->uid
+  db.ref('gdv_codes/'+code).once('value',function(snapCode){
+    var uid = snapCode.val();
+    if(!uid){
+      // Pas d'index - chercher dans le cache ou Firebase complet
+      var cached = null;
+      try{ cached=JSON.parse(localStorage.getItem('agv_shop_'+code)||'null'); }catch(e){}
+      if(cached){
+        if(cached.blocked){agvMsg('Accès suspendu.',false);if(btn){btn.disabled=false;btn.textContent='Se connecter';}return;}
+        window._currentShop=cached; agvLaunchApp(cached); return;
+      }
+      agvMsg('Code incorrect. Vérifiez votre code.',false);
       if(btn){btn.disabled=false;btn.textContent='Se connecter';}
       return;
     }
-    // Vérifier si la boutique est bloquée
-    if(found.blocked === true){
-      agvMsg('⛔ Votre accès a été suspendu. Contactez le concepteur.', false);
-      if(btn){btn.disabled=false;btn.textContent='Se connecter';}
-      return;
-    }
-    window._currentShop=found;
-    agvLaunchApp(found);
+    // Lire directement la boutique par UID (ultra rapide)
+    db.ref('gdv_shops/'+uid+'/info').once('value',function(snap){
+      var found=snap.val();
+      if(!found){agvMsg('Boutique introuvable.',false);if(btn){btn.disabled=false;btn.textContent='Se connecter';}return;}
+      if(found.blocked){agvMsg('⛔ Accès suspendu. Contactez le concepteur.',false);if(btn){btn.disabled=false;btn.textContent='Se connecter';}return;}
+      try{localStorage.setItem('agv_shop_'+code,JSON.stringify(found));}catch(e){}
+      window._currentShop=found;
+      agvLaunchApp(found);
+    });
   });
 }
 
@@ -1170,12 +1183,18 @@ function agvLoadShopLogin(code){
     });
     return;
   }
-  // Pas de cache - chercher dans Firebase
-  db.ref('gdv_shops').once('value',function(snap){
-    var shop=null;
-    snap.forEach(function(c){var info=c.val()&&c.val().info;if(info&&info.codeAcces===code)shop=info;});
-    // Sauvegarder dans le cache
-    if(shop) try{ localStorage.setItem('agv_shop_'+code, JSON.stringify(shop)); }catch(e){};
+  // Recherche via index puis UID direct
+  db.ref('gdv_codes/'+code).once('value',function(snapCode){
+    var uid=snapCode.val();
+    if(!uid){
+      container.innerHTML='<div style="text-align:center;padding:40px"><div style="font-size:40px">❌</div><h2 style="color:#ef4444;margin-top:12px">Code introuvable</h2></div>';
+      return;
+    }
+    db.ref('gdv_shops/'+uid+'/info').once('value',function(snapShop){
+      var shop=snapShop.val();
+      if(shop) try{localStorage.setItem('agv_shop_'+code,JSON.stringify(shop));}catch(e){}
+      snap={val:function(){return null;}}; // dummy
+      var fakeSnap={forEach:function(){}};
 
     if(!shop){
       // Enlever du cache si invalide
@@ -1190,7 +1209,8 @@ function agvLoadShopLogin(code){
     }
 
     agvRenderShopLogin(shop, container);
-  });
+    }); // fin db.ref gdv_shops
+  }); // fin db.ref gdv_codes
 }
 
 function agvRenderShopLogin(shop, container){
