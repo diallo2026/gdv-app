@@ -151,7 +151,20 @@ function agvRegister() {
             agvMsg('Compte cree ! Code : '+code+' (sauvegardez ce code - email non recu)',true);
           });
         }catch(e){console.warn('EmailJS:',e);}
-        agvMsg('Compte cree ! Code dacces : '+code+' — Email envoye a '+email,true);
+        // Show code prominently on screen
+agvMsg('Compte cree ! Votre code dacces : ' + code, true);
+// Also show a large code display
+var codeDisplay = document.getElementById('agv-code-display');
+if(!codeDisplay){
+  codeDisplay = document.createElement('div');
+  codeDisplay.id = 'agv-code-display';
+  codeDisplay.style.cssText = 'margin:16px 0;padding:16px;background:rgba(37,99,235,0.15);border:2px solid rgba(37,99,235,0.4);border-radius:12px;text-align:center';
+  var msgEl = document.getElementById('agv-msg');
+  if(msgEl && msgEl.parentNode) msgEl.parentNode.insertBefore(codeDisplay, msgEl.nextSibling);
+}
+codeDisplay.innerHTML = '<div style="font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px">Votre code dacces (copiez-le !)</div>' +
+  '<div style="font-family:monospace;font-size:24px;font-weight:800;color:#60a5fa;letter-spacing:.15em">' + code + '</div>' +
+  '<div style="font-size:11px;color:#475569;margin-top:8px">Envoi email en cours vers ' + email + '</div>';
         setTimeout(function(){_shop=shopData;agvLaunchApp(shopData);},2500);
       }).catch(function(e){agvMsg('Erreur: '+e.message,false);});
     }
@@ -167,6 +180,22 @@ function agvLaunchApp(shop) {
   agvShow('agv-app');
   document.getElementById('syncIndicator').style.display='block';
   
+  // CLEAR ALL OLD LOCALSTORAGE DATA (Neindi or any old shop)
+  // This ensures every login starts fresh from Firebase only
+  var keysToRemove = [];
+  for(var i=0; i<localStorage.length; i++){
+    var k = localStorage.key(i);
+    if(k && (k.indexOf('neindi_')===0 || k.indexOf('agv_')===0 || k.indexOf('shop_')===0)){
+      keysToRemove.push(k);
+    }
+  }
+  keysToRemove.forEach(function(k){ localStorage.removeItem(k); });
+  console.log('Cleared', keysToRemove.length, 'old localStorage keys');
+
+  // Reset all data arrays to empty
+  products=[];ventes=[];depenses=[];gerants=[];
+  entrees=[];appros=[];repConfig=[];dettes=[];clients=[];factureVentes=[];
+
   // Set brand info from shop throughout the app
   function updateBrand() {
     var shopName = shop.entreprise || 'Ma Boutique';
@@ -298,6 +327,21 @@ function agvPreviewLogo(input){
     };
     r.readAsDataURL(input.files[0]);
   }
+}
+
+function agvConfirmQuit(){
+  // Create modal overlay
+  var overlay = document.createElement('div');
+  overlay.id = 'agv-quit-modal';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:99999;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px)';
+  var d = document.createElement('div');
+  d.style.cssText = 'background:#0a1628;border:2px solid rgba(239,68,68,0.4);border-radius:16px;padding:32px;max-width:380px;width:90%;text-align:center;box-shadow:0 24px 60px rgba(0,0,0,0.5)';
+  d.innerHTML = '<div style="font-size:40px;margin-bottom:16px">&#x1F6AA;</div><h3 style="color:#fff;font-size:18px;font-weight:700;margin-bottom:8px">Quitter la session ?</h3><p style="color:#64748b;font-size:14px;margin-bottom:24px">Vous serez deconnecte et ramene a la page d accueil.</p><div style="display:flex;gap:12px;justify-content:center"><button id="agv-cancel-quit" style="padding:11px 24px;border:1px solid rgba(255,255,255,0.15);border-radius:10px;background:transparent;color:#94a3b8;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit">Annuler</button><button id="agv-confirm-quit" style="padding:11px 24px;border:none;border-radius:10px;background:#ef4444;color:#fff;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit">Quitter maintenant</button></div>';
+  overlay.appendChild(d);
+  document.getElementById('agv-cancel-quit').onclick = function(){ overlay.remove(); };
+  document.getElementById('agv-confirm-quit').onclick = function(){ overlay.remove(); doLogout(); };
+  document.body.appendChild(overlay);
+  overlay.addEventListener('click',function(e){if(e.target===overlay)overlay.remove();});
 }
 
 // PWA
@@ -995,7 +1039,7 @@ body{font-family:'DM Sans',sans-serif;background:#060d24;color:#e2e8f0;min-heigh
       <button class="btn btn-primary" id="btn-nouveau-produit" style="width:100%;justify-content:center;display:flex;gap:6px" onclick="openAdd()">
         <span style="font-size:16px">+</span> Nouveau produit
       </button>
-      <button class="btn btn-ghost btn-sm" style="width:100%;justify-content:center;display:flex;gap:6px" onclick="doLogout()">
+      <button class="btn btn-ghost btn-sm" style="width:100%;justify-content:center;display:flex;gap:6px;color:#ef4444" onclick="agvConfirmQuit()">
         ↩ Déconnexion
       </button>
       <button class="btn btn-reset btn-sm no-print" id="btn-reset-all" style="width:100%;justify-content:center;display:flex;gap:6px;display:none" onclick="resetAllData()">
@@ -2671,6 +2715,12 @@ function init(){
 }
 
 function saveAll(){
+  // AGV: skip localStorage entirely - use Firebase only
+  if(window._currentShop){
+    if(typeof window.sauvegarderFirebase==='function') window.sauvegarderFirebase();
+    return;
+  }
+  // Original saveAll for standalone:
   localStorage.setItem(AGV_KEY('products'), JSON.stringify(products));
   localStorage.setItem(AGV_KEY('ventes'), JSON.stringify(ventes));
   localStorage.setItem(AGV_KEY('depenses'), JSON.stringify(depenses));
@@ -5224,7 +5274,7 @@ function genererFacturePDF(factureId){
     <button class="btn-dl" onclick="window.print()">🖨️ Imprimer / Sauvegarder PDF</button>
   </div>
   <div class="header">
-    <div style="display:flex;align-items:center;gap:8px"><img id="brand-logo-img" src="" style="height:32px;width:32px;object-fit:contain;border-radius:6px;display:none"><div><div class="brand" id="brand-name">Ma Boutique</div><div class="brand-sub" id="brand-sub">App AGV</div></div></div>
+    <div style="display:flex;align-items:center;gap:8px"><div><div class="brand" id="brand-name">Ma Boutique</div><div class="brand-sub" id="brand-sub">App AGV</div></div></div>
     <div class="fact-no"><h2>FACTURE</h2><p>N° ${f.no}</p><p>${new Date(f.date).toLocaleDateString('fr-FR',{year:'numeric',month:'long',day:'numeric'})}</p></div>
   </div>
   <div class="info-grid">
@@ -8566,7 +8616,7 @@ function genererFacturePDF(factureId){
     <button class="btn-dl" onclick="window.print()">🖨️ Imprimer / Sauvegarder PDF</button>
   </div>
   <div class="header">
-    <div style="display:flex;align-items:center;gap:8px"><img id="brand-logo-img2" src="" style="height:32px;width:32px;object-fit:contain;border-radius:6px;display:none"><div><div class="brand" id="brand-name2">Ma Boutique</div><div class="brand-sub" id="brand-sub2">App AGV</div></div></div>
+    <div style="display:flex;align-items:center;gap:8px"><div><div class="brand" id="brand-name2">Ma Boutique</div><div class="brand-sub" id="brand-sub2">App AGV</div></div></div>
     <div class="fact-no"><h2>FACTURE</h2><p>N° ${f.no}</p><p>${new Date(f.date).toLocaleDateString('fr-FR',{year:'numeric',month:'long',day:'numeric'})}</p></div>
   </div>
   <div class="info-grid">
