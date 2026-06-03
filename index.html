@@ -1292,10 +1292,11 @@ window.addEventListener('DOMContentLoaded',function(){
   // Supprimer les clés neindi_ au démarrage
   var k=[];for(var i=0;i<localStorage.length;i++){var key=localStorage.key(i);if(key&&key.indexOf('neindi_')===0)k.push(key);}
   k.forEach(function(key){localStorage.removeItem(key);});
-  // Précharger le hash concepteur pour une vérification instantanée
+  // Hash par défaut disponible immédiatement (pas d'attente Firebase)
+  window._devPwdHash = "a0455d7c_agv_11";
+  // Si le mdp a été changé, Firebase le remplace silencieusement
   db.ref('agv_config/dev_pwd_hash').once('value',function(snap){
-    window._devPwdHash = snap.val() || agvSimpleHash('AGVDev2026#');
-    if(!snap.val()) db.ref('agv_config/dev_pwd_hash').set(window._devPwdHash);
+    if(snap.val()) window._devPwdHash = snap.val();
   });
 
   // Sauvegarder le HTML de l'auth
