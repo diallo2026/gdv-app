@@ -507,7 +507,10 @@ function agvRegister(){
     function save(logo){
       var shop={uid:uid,nom:prenom+' '+nom,prenom:prenom,nomFamille:nom,
         entreprise:ent,email:email,tel:tel,ville:ville,logo:logo,
-        codeAcces:code,codeFondateur:fondCode,dateCreation:new Date().toISOString()};
+        codeAcces:code,
+        codeFondateur:fondCode,
+        codeFondateurHash:agvSimpleHash(fondCode),
+        dateCreation:new Date().toISOString()};
       db.ref('gdv_shops/'+uid+'/info').set(shop).then(function(){
         // Envoyer email
         emailjs.send('service_xl8rdum','gdv_welcome',{
@@ -843,7 +846,9 @@ function agvLoginGerant(role){
     if(!code){showMsg('Entrez votre code fondateur',false);return;}
     // Vérifier via le code fondateur sauvegardé dans Firebase
     var shopInfo = window._currentShop;
-    if(shopInfo && shopInfo.codeFondateur && code === shopInfo.codeFondateur){
+    var hashMatch = shopInfo && shopInfo.codeFondateurHash && agvSimpleHash(code)===shopInfo.codeFondateurHash;
+    var plainMatch = shopInfo && shopInfo.codeFondateur && code===shopInfo.codeFondateur;
+    if(hashMatch || plainMatch){
       currentRole='fondateur'; currentGerantId=null;
       if(typeof applyRoleUI==='function')applyRoleUI();
       showMsg('Connecté en tant que Fondateur ✓', true);
@@ -921,77 +926,128 @@ function agvDevCopy(btn){
   else{btn.textContent=c;}
 }
 function agvCloseDevModal(){if(window._devOverlay)window._devOverlay.remove();}
+
+function agvChangeDevPwd(){
+  var ov=document.createElement('div');
+  ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:9999999;display:flex;align-items:center;justify-content:center';
+  var d=document.createElement('div');
+  d.style.cssText='background:#0a1628;border:1px solid rgba(37,99,235,0.3);border-radius:14px;padding:24px;max-width:360px;width:90%';
+  d.innerHTML='<h3 style="color:#fff;font-size:15px;font-weight:700;margin-bottom:16px">🔒 Changer le mot de passe concepteur</h3>'+
+    '<label style="display:block;font-size:11px;color:#475569;font-weight:700;text-transform:uppercase;margin-bottom:5px">Ancien mot de passe</label>'+
+    '<input id="cpwd-old" type="password" style="width:100%;padding:10px 12px;background:#060d24;border:1px solid rgba(37,99,235,0.3);border-radius:8px;color:#e2e8f0;font-size:13px;font-family:inherit;outline:none;margin-bottom:10px;box-sizing:border-box">'+
+    '<label style="display:block;font-size:11px;color:#475569;font-weight:700;text-transform:uppercase;margin-bottom:5px">Nouveau mot de passe</label>'+
+    '<input id="cpwd-new" type="password" style="width:100%;padding:10px 12px;background:#060d24;border:1px solid rgba(37,99,235,0.3);border-radius:8px;color:#e2e8f0;font-size:13px;font-family:inherit;outline:none;margin-bottom:10px;box-sizing:border-box">'+
+    '<label style="display:block;font-size:11px;color:#475569;font-weight:700;text-transform:uppercase;margin-bottom:5px">Confirmer</label>'+
+    '<input id="cpwd-confirm" type="password" style="width:100%;padding:10px 12px;background:#060d24;border:1px solid rgba(37,99,235,0.3);border-radius:8px;color:#e2e8f0;font-size:13px;font-family:inherit;outline:none;margin-bottom:14px;box-sizing:border-box">'+
+    '<div id="cpwd-msg" style="display:none;font-size:12px;padding:8px 12px;border-radius:7px;margin-bottom:10px"></div>'+
+    '<div style="display:flex;gap:8px">'+
+    '<button id="cpwd-cancel" style="flex:1;padding:10px;border:1px solid rgba(255,255,255,0.1);border-radius:8px;background:transparent;color:#64748b;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit">Annuler</button>'+
+    '<button id="cpwd-save" style="flex:1;padding:10px;border:none;border-radius:8px;background:#2563eb;color:#fff;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit">Enregistrer</button>'+
+    '</div>';
+  ov.appendChild(d);document.body.appendChild(ov);
+  document.getElementById('cpwd-cancel').onclick=function(){ov.remove();};
+  document.getElementById('cpwd-save').onclick=function(){
+    var oldP=document.getElementById('cpwd-old').value;
+    var newP=document.getElementById('cpwd-new').value;
+    var con=document.getElementById('cpwd-confirm').value;
+    var msg=document.getElementById('cpwd-msg');
+    function showM(t,ok){msg.style.display='block';msg.textContent=t;msg.style.cssText='display:block;font-size:12px;padding:8px 12px;border-radius:7px;margin-bottom:10px;'+(ok?'background:rgba(34,197,94,0.1);color:#22c55e':'background:rgba(239,68,68,0.1);color:#ef4444');}
+    if(!oldP||!newP||!con){showM('Remplissez tous les champs',false);return;}
+    if(newP!==con){showM('Les mots de passe ne correspondent pas',false);return;}
+    if(newP.length<6){showM('Minimum 6 caractères',false);return;}
+    db.ref('agv_config/dev_pwd_hash').once('value',function(snap){
+      var stored=snap.val()||agvSimpleHash('AGVDev2026#');
+      if(agvSimpleHash(oldP)!==stored){showM('Ancien mot de passe incorrect',false);return;}
+      db.ref('agv_config/dev_pwd_hash').set(agvSimpleHash(newP)).then(function(){
+        showM('Mot de passe modifié !',true);
+        setTimeout(function(){ov.remove();},1500);
+      });
+    });
+  };
+}
 function agvDevOnEnter(e){if(e.key==='Enter')agvDevVerify();}
 function agvDevVerify(){
   var pwd=document.getElementById('dev-pwd');
   var msg=document.getElementById('dev-msg');
   if(!pwd||!msg) return;
-  // Mot de passe concepteur
-  if(pwd.value !== 'AGVDev2026#') {
-    msg.style.display='block';
-    msg.textContent='Mot de passe incorrect.';
-    pwd.value='';
-    return;
-  }
-  // Charger toutes les boutiques
-  msg.style.display='none';
-  var box=document.getElementById('dev-pwd').closest('div');
-  if(box) box.innerHTML='<div style="text-align:center;color:#64748b;padding:20px">Chargement...</div>';
-  db.ref('gdv_shops').once('value',function(snap){
-    var shops=[];
-    snap.forEach(function(c){var info=c.val()&&c.val().info;if(info)shops.push(info);});
-    shops.sort(function(a,b){return new Date(b.dateCreation)-new Date(a.dateCreation);});
-    var h='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">'+
-      '<h3 style="color:#fff;font-size:15px;font-weight:700">&#x1F4CB; Toutes les boutiques ('+shops.length+')</h3>'+
-      '<button onclick="agvCloseDevModal()" style="background:none;border:none;color:#64748b;font-size:18px;cursor:pointer">&#x2715;</button>'+
-      '</div>'+
-      '<input oninput="agvDevFilter(this.value)" placeholder="Rechercher boutique / email..." style="width:100%;padding:10px 12px;background:#060d24;border:1px solid rgba(37,99,235,0.2);border-radius:8px;color:#e2e8f0;font-size:13px;font-family:inherit;outline:none;margin-bottom:14px">'+
-      '<div id="dev-shop-list">';
-    shops.forEach(function(s){
-      var isBlocked = s.blocked === true;
-      var statusColor = isBlocked ? '#ef4444' : '#22c55e';
-      var statusLabel = isBlocked ? '🔴 Bloqué' : '🟢 Actif';
-      var toggleLabel = isBlocked ? 'Débloquer' : 'Bloquer';
-      var toggleBg = isBlocked ? '#22c55e' : '#ef4444';
-      h+='<div class="dev-shop-item" data-search="'+(s.entreprise+' '+s.email+' '+s.nom).toLowerCase()+'" style="background:#060d24;border:1px solid '+(isBlocked?'rgba(239,68,68,0.3)':'rgba(37,99,235,0.15)')+';border-radius:10px;padding:14px;margin-bottom:10px">'+
-        '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px">'+
-        '<div style="flex:1">'+
-        (s.logo?'<img src="'+s.logo+'" style="height:28px;object-fit:contain;margin-bottom:8px;display:block">':'')+
-        '<div style="display:flex;align-items:center;gap:8px;margin-bottom:2px">'+
-        '<div style="font-weight:700;color:#e2e8f0;font-size:14px">'+s.entreprise+'</div>'+
-        '<span style="font-size:11px;font-weight:700;color:'+statusColor+'">'+statusLabel+'</span>'+
-        '</div>'+
-        '<div style="font-size:12px;color:#64748b;margin-bottom:4px">'+s.nom+' · '+s.email+'</div>'+
-        (s.tel?'<div style="font-size:11px;color:#475569">'+s.tel+(s.ville?' · '+s.ville:'')+'</div>':'')+
-        '<div style="font-size:10px;color:#334155;margin-top:4px">'+new Date(s.dateCreation).toLocaleString('fr-FR')+'</div>'+
-        '</div>'+
-        '<div style="text-align:right;flex-shrink:0;display:flex;flex-direction:column;gap:6px">'+
-        '<div style="margin-bottom:4px">'+
-        '<div style="font-size:9px;color:#475569;text-transform:uppercase;letter-spacing:.06em;margin-bottom:2px">Code boutique</div>'+
-        '<div style="font-family:monospace;font-size:12px;font-weight:800;color:#60a5fa;background:rgba(37,99,235,0.12);padding:5px 10px;border-radius:7px;letter-spacing:.1em">'+s.codeAcces+'</div>'+
-        '</div>'+
-        '<div style="margin-bottom:6px">'+
-        '<div style="font-size:9px;color:#a16207;text-transform:uppercase;letter-spacing:.06em;margin-bottom:2px">Code fondateur</div>'+
-        '<div style="font-family:monospace;font-size:12px;font-weight:800;color:#fbbf24;background:rgba(251,191,36,0.1);padding:5px 10px;border-radius:7px;letter-spacing:.1em">'+(s.codeFondateur||'—')+'</div>'+
-        '</div>'+
-        '<div style="display:flex;gap:4px;flex-wrap:wrap">'+
-        '<button data-code="'+s.codeAcces+'" onclick="agvDevCopy(this)" style="padding:5px 8px;border:none;border-radius:6px;background:#2563eb;color:#fff;font-size:10px;font-weight:700;cursor:pointer;font-family:inherit">Copier code</button>'+
-        '<button data-code="'+(s.codeFondateur||'')+'" onclick="agvDevCopy(this)" style="padding:5px 8px;border:none;border-radius:6px;background:#d97706;color:#fff;font-size:10px;font-weight:700;cursor:pointer;font-family:inherit">Copier fondateur</button>'+
-        '</div>'+
-        '<button data-uid="'+s.uid+'" data-blocked="'+(isBlocked?'1':'0')+'" onclick="agvToggleBlock(this)" style="padding:5px 10px;border:none;border-radius:6px;background:'+toggleBg+';color:#fff;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit">'+toggleLabel+'</button>'+
-        '<button data-uid="'+s.uid+'" data-name="'+s.entreprise+'" onclick="agvDeleteShop(this)" style="padding:5px 10px;border:1px solid rgba(239,68,68,0.4);border-radius:6px;background:transparent;color:#ef4444;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit">🗑 Supprimer</button>'+
-        '</div></div></div>';
-    });
-    h+='</div>';
-    var ov=window._devOverlay;
-    if(ov){
-      var d=ov.querySelector('div');
-      if(d) d.innerHTML=h;
-      d.style.maxWidth='600px';
+  var entered=pwd.value;
+  pwd.value='';
+  msg.style.display='block';
+  msg.textContent='Verification...';
+  msg.style.cssText='display:block;margin-top:10px;padding:9px 12px;border-radius:7px;font-size:12px;color:#60a5fa;background:rgba(37,99,235,0.08);border:1px solid rgba(37,99,235,0.2)';
+  db.ref('agv_config/dev_pwd_hash').once('value',function(snap){
+    var storedHash=snap.val();
+    var enteredHash=agvSimpleHash(entered);
+    if(!storedHash){
+      db.ref('agv_config/dev_pwd_hash').set(agvSimpleHash('AGVDev2026#'));
+      storedHash=agvSimpleHash('AGVDev2026#');
     }
+    if(enteredHash!==storedHash){
+      msg.textContent='Mot de passe incorrect.';
+      msg.style.cssText='display:block;margin-top:10px;padding:9px 12px;border-radius:7px;font-size:12px;color:#ef4444;background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.2)';
+      return;
+    }
+    msg.style.display='none';
+    var box=document.getElementById('dev-pwd');
+    if(box) box=box.closest('div');
+    if(box) box.innerHTML='<div style="text-align:center;color:#64748b;padding:20px">Chargement...</div>';
+    db.ref('gdv_shops').once('value',function(snap2){
+      var shops=[];
+      snap2.forEach(function(c){var info=c.val()&&c.val().info;if(info)shops.push(info);});
+      shops.sort(function(a,b){return new Date(b.dateCreation)-new Date(a.dateCreation);});
+      var h='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">'+
+        '<h3 style="color:#fff;font-size:15px;font-weight:700">Toutes les boutiques ('+shops.length+')</h3>'+
+        '<div style="display:flex;gap:6px">'+
+        '<button onclick="agvChangeDevPwd()" style="padding:5px 10px;border:1px solid rgba(37,99,235,0.3);border-radius:6px;background:transparent;color:#60a5fa;font-size:11px;cursor:pointer;font-family:inherit">Changer mdp</button>'+
+        '<button onclick="agvCloseDevModal()" style="background:none;border:none;color:#64748b;font-size:18px;cursor:pointer">&#x2715;</button>'+
+        '</div></div>'+
+        '<input oninput="agvDevFilter(this.value)" placeholder="Rechercher boutique / email..." style="width:100%;padding:10px 12px;background:#060d24;border:1px solid rgba(37,99,235,0.2);border-radius:8px;color:#e2e8f0;font-size:13px;font-family:inherit;outline:none;margin-bottom:14px;box-sizing:border-box">'+
+        '<div id="dev-shop-list">';
+      shops.forEach(function(s){
+        var isBlocked=s.blocked===true;
+        var statusColor=isBlocked?'#ef4444':'#22c55e';
+        var statusLabel=isBlocked?'Bloque':'Actif';
+        var toggleLabel=isBlocked?'Debloquer':'Bloquer';
+        var toggleBg=isBlocked?'#22c55e':'#ef4444';
+        var fondCode=s.codeFondateur?s.codeFondateur:'—';
+        h+='<div class="dev-shop-item" data-search="'+(s.entreprise+' '+s.email+' '+s.nom).toLowerCase()+'" style="background:#060d24;border:1px solid '+(isBlocked?'rgba(239,68,68,0.3)':'rgba(37,99,235,0.15)')+';border-radius:10px;padding:14px;margin-bottom:10px">'+
+          '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px">'+
+          '<div style="flex:1">'+
+          (s.logo?'<img src="'+s.logo+'" style="height:28px;object-fit:contain;margin-bottom:8px;display:block">':'')+
+          '<div style="display:flex;align-items:center;gap:8px;margin-bottom:2px">'+
+          '<div style="font-weight:700;color:#e2e8f0;font-size:14px">'+s.entreprise+'</div>'+
+          '<span style="font-size:11px;font-weight:700;color:'+statusColor+'">'+statusLabel+'</span>'+
+          '</div>'+
+          '<div style="font-size:12px;color:#64748b;margin-bottom:4px">'+s.nom+' — '+s.email+'</div>'+
+          (s.tel?'<div style="font-size:11px;color:#475569">'+s.tel+(s.ville?' — '+s.ville:'')+'</div>':'')+
+          '<div style="font-size:10px;color:#334155;margin-top:4px">'+new Date(s.dateCreation).toLocaleString('fr-FR')+'</div>'+
+          '</div>'+
+          '<div style="text-align:right;flex-shrink:0;display:flex;flex-direction:column;gap:6px">'+
+          '<div>'+
+          '<div style="font-size:9px;color:#475569;text-transform:uppercase;margin-bottom:2px">Code boutique</div>'+
+          '<div style="font-family:monospace;font-size:12px;font-weight:800;color:#60a5fa;background:rgba(37,99,235,0.12);padding:5px 10px;border-radius:7px;letter-spacing:.1em">'+s.codeAcces+'</div>'+
+          '</div>'+
+          '<div>'+
+          '<div style="font-size:9px;color:#a16207;text-transform:uppercase;margin-bottom:2px">Code fondateur</div>'+
+          '<div style="font-family:monospace;font-size:12px;font-weight:800;color:#fbbf24;background:rgba(251,191,36,0.1);padding:5px 10px;border-radius:7px;letter-spacing:.1em">'+fondCode+'</div>'+
+          '</div>'+
+          '<div style="display:flex;gap:4px;flex-wrap:wrap">'+
+          '<button data-code="'+s.codeAcces+'" onclick="agvDevCopy(this)" style="padding:5px 8px;border:none;border-radius:6px;background:#2563eb;color:#fff;font-size:10px;font-weight:700;cursor:pointer;font-family:inherit">Copier code</button>'+
+          '<button data-code="'+fondCode+'" onclick="agvDevCopy(this)" style="padding:5px 8px;border:none;border-radius:6px;background:#d97706;color:#fff;font-size:10px;font-weight:700;cursor:pointer;font-family:inherit">Copier fondateur</button>'+
+          '</div>'+
+          '<button data-uid="'+s.uid+'" data-blocked="'+(isBlocked?'1':'0')+'" onclick="agvToggleBlock(this)" style="padding:5px 10px;border:none;border-radius:6px;background:'+toggleBg+';color:#fff;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit">'+toggleLabel+'</button>'+
+          '<button data-uid="'+s.uid+'" data-name="'+s.entreprise+'" onclick="agvDeleteShop(this)" style="padding:5px 10px;border:1px solid rgba(239,68,68,0.4);border-radius:6px;background:transparent;color:#ef4444;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit">Supprimer</button>'+
+          '</div></div></div>';
+      });
+      h+='</div>';
+      var ov=window._devOverlay;
+      if(ov){
+        var d=ov.querySelector('div');
+        if(d){ d.innerHTML=h; d.style.maxWidth='600px'; }
+      }
+    });
   });
 }
-
 function agvDeleteShop(btn){
   var uid = btn.getAttribute('data-uid');
   var name = btn.getAttribute('data-name');
@@ -1191,7 +1247,9 @@ function agvShopLogin(role){
     var pwd=(document.getElementById('sl-fondateur-pwd')||{}).value||'';
     pwd=pwd.trim();
     if(!pwd){agvShopLoginMsg('Entrez votre code fondateur',false);return;}
-    if(pwd===shop.codeFondateur){
+    var match = (shop.codeFondateurHash && agvSimpleHash(pwd)===shop.codeFondateurHash) ||
+                 (shop.codeFondateur && pwd===shop.codeFondateur);
+    if(match){
       agvShopLoginMsg('Connexion réussie !', true);
       window._currentShop=shop;
       setTimeout(function(){
