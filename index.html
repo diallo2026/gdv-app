@@ -414,6 +414,18 @@ function landingGoShop(){
             document.querySelector('#agv-landing .fb-blue');
   if(btn){ btn.textContent='Chargement...'; btn.disabled=true; }
   // Chercher la boutique
+  // Vérifier le cache d'abord
+  var cachedShop=null;
+  try{ cachedShop=JSON.parse(localStorage.getItem('agv_shop_'+code)||'null'); }catch(e){}
+  if(cachedShop && !cachedShop.blocked){
+    if(btn){ btn.textContent='Accéder →'; btn.disabled=false; }
+    window._lastShopCode=code;
+    window._shopLoginData=cachedShop;
+    agvShow('agv-shop-login');
+    agvLoadShopLogin(code); // Charge depuis cache instantanément
+    return;
+  }
+  // Pas de cache - Firebase
   db.ref('gdv_shops').once('value',function(snap){
     var found=null;
     snap.forEach(function(c){var info=c.val()&&c.val().info;if(info&&info.codeAcces===code)found=info;});
@@ -423,12 +435,13 @@ function landingGoShop(){
       return;
     }
     if(found.blocked){
-      if(msg){msg.textContent='⛔ Accès suspendu. Contactez le concepteur.';msg.style.display='block';}
+      if(msg){msg.textContent='Accès suspendu. Contactez le concepteur.';msg.style.display='block';}
       return;
     }
-    // Stocker le code pour pouvoir revenir
-    window._lastShopCode = code;
-    window._shopLoginData = found;
+    // Sauvegarder dans le cache pour la prochaine fois
+    try{ localStorage.setItem('agv_shop_'+code, JSON.stringify(found)); }catch(e){}
+    window._lastShopCode=code;
+    window._shopLoginData=found;
     agvShow('agv-shop-login');
     agvLoadShopLogin(code);
   });
@@ -697,14 +710,10 @@ function agvLaunchApp(shop){
     });
   };
 
-  // Écouter les données Firebase de CETTE boutique uniquement
-  var ref=db.ref('gdv_shops/'+shop.uid+'/data');
-  window._agvDbListener=ref;
-  ref.on('value',function(snap){
-    var data=snap.val();
-    function toA(v){if(!v)return[];if(Array.isArray(v))return v;return Object.values(v);}
-    products=[]; ventes=[]; depenses=[]; gerants=[];
-    entrees=[]; appros=[]; repConfig=[]; dettes=[]; clients=[]; factureVentes=[];
+  // Cache localStorage pour affichage INSTANTANE
+  var cacheKey = 'agv_cache_' + shop.uid;
+  function toA(v){if(!v)return[];if(Array.isArray(v))return v;return Object.values(v);}
+  function applyData(data){
     if(data){
       if(data.products) products=toA(data.products);
       if(data.ventes) ventes=toA(data.ventes);
@@ -724,6 +733,31 @@ function agvLaunchApp(shop){
     if(typeof renderDashboard==='function')renderDashboard();
     if(typeof buildCatFilters==='function')buildCatFilters();
     if(typeof renderAlerts==='function')renderAlerts();
+  }
+  // 1. Charger le cache IMMEDIATEMENT (0ms d'attente)
+  try {
+    var cached = localStorage.getItem(cacheKey);
+    if(cached){
+      var cachedData = JSON.parse(cached);
+      applyData(cachedData);
+      var ind=document.getElementById('syncIndicator');
+      if(ind){ind.textContent='Cache local...';ind.style.color='#f59e0b';}
+    }
+  } catch(e){}
+  // 2. Firebase sync en arriere-plan (met a jour si changements)
+  var ref=db.ref('gdv_shops/'+shop.uid+'/data');
+  window._agvDbListener=ref;
+  ref.on('value',function(snap){
+    var data=snap.val();
+    // Mettre a jour le cache local
+    if(data) try{ localStorage.setItem(cacheKey, JSON.stringify(data)); }catch(e){}
+    // Reinitialiser les arrays
+    products=[]; ventes=[]; depenses=[]; gerants=[];
+    entrees=[]; appros=[]; repConfig=[]; dettes=[]; clients=[]; factureVentes=[];
+    applyData(data);
+    var ind=document.getElementById('syncIndicator');
+    if(ind){ind.textContent='Sync OK ✓';ind.style.color='#22c55e';
+      setTimeout(function(){ind.textContent='Cloud actif';ind.style.color='#2563eb';},1500);}
   });
 
   currentRole='fondateur';
@@ -1121,12 +1155,35 @@ function agvLoadShopLogin(code){
   if(!container) return;
   container.innerHTML='<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#060d24;padding:20px"><div style="color:#60a5fa;font-size:14px">Chargement...</div></div>';
 
-  // Chercher la boutique par code
+  // Chercher d'abord dans le cache local (instantané)
+  var shopCacheKey='agv_shop_'+code;
+  var shopCached=null;
+  try{ shopCached=JSON.parse(localStorage.getItem(shopCacheKey)||'null'); }catch(e){}
+  if(shopCached && !shopCached.blocked){
+    // Affichage instantané depuis le cache
+    window._shopLoginData=shopCached;
+    agvRenderShopLogin(shopCached, container);
+    // Vérifier en arrière-plan si des infos ont changé (blocked, etc)
+    db.ref('gdv_shops/'+shopCached.uid+'/info').once('value',function(s){
+      if(s.val()){
+        var updated=s.val();
+        try{ localStorage.setItem(shopCacheKey, JSON.stringify(updated)); }catch(e){}
+        if(updated.blocked) agvLoadShopLogin(code); // Recharger si bloqué
+        else window._shopLoginData=updated;
+      }
+    });
+    return;
+  }
+  // Pas de cache - chercher dans Firebase
   db.ref('gdv_shops').once('value',function(snap){
     var shop=null;
     snap.forEach(function(c){var info=c.val()&&c.val().info;if(info&&info.codeAcces===code)shop=info;});
+    // Sauvegarder dans le cache
+    if(shop) try{ localStorage.setItem('agv_shop_'+code, JSON.stringify(shop)); }catch(e){};
 
     if(!shop){
+      // Enlever du cache si invalide
+      try{ localStorage.removeItem('agv_shop_'+code); }catch(e){}
       container.innerHTML='<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#060d24"><div style="text-align:center"><div style="font-size:40px;margin-bottom:16px">❌</div><h2 style="color:#ef4444">Boutique introuvable</h2><p style="color:#64748b;margin-top:8px">Code: '+code+'</p><button onclick="showLanding()" style="margin-top:20px;padding:10px 20px;border:none;border-radius:8px;background:#2563eb;color:#fff;cursor:pointer;font-family:inherit;font-weight:600">Retour</button></div></div>';
       return;
     }
@@ -1136,8 +1193,14 @@ function agvLoadShopLogin(code){
       return;
     }
 
-    // Afficher la page de connexion de la boutique
-    var logoHtml = shop.logo ? '<img src="'+shop.logo+'" style="height:70px;width:70px;object-fit:contain;border-radius:16px;margin-bottom:14px;box-shadow:0 0 30px rgba(37,99,235,0.25)">' : '<div style="font-size:60px;margin-bottom:14px">&#x1F3EA;</div>';
+    agvRenderShopLogin(shop, container);
+  });
+}
+
+function agvRenderShopLogin(shop, container){
+  if(!container) container=document.getElementById('agv-shop-login');
+  // Afficher la page de connexion de la boutique
+  var logoHtml = shop.logo ? '<img src="'+shop.logo+'" style="height:70px;width:70px;object-fit:contain;border-radius:16px;margin-bottom:14px;box-shadow:0 0 30px rgba(37,99,235,0.25)">' : '<div style="font-size:60px;margin-bottom:14px">&#x1F3EA;</div>';
     var villeHtml = shop.ville ? '<div style="font-size:12px;color:#475569">'+shop.ville+'</div>' : '';
     container.innerHTML = [
       '<div style="min-height:100vh;background:linear-gradient(180deg,#060d24 0%,#0a1628 100%);display:flex;flex-direction:column">',
@@ -1223,7 +1286,6 @@ function agvLoadShopLogin(code){
         sel.appendChild(opt);
       }
     });
-  });
 }
 
 function agvShopKeydown(e,role){if(e.key==='Enter')agvShopLogin(role);}
