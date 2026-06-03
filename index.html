@@ -410,7 +410,11 @@ function agvShow(id){
     if(el) el.style.display = (x===id) ? 'block' : 'none';
   });
 }
-function showLanding(){ agvShow('agv-landing'); }
+function showLanding(){
+  var codeField=document.getElementById('l-code'); if(codeField) codeField.value='';
+  var msgEl=document.getElementById('agv-msg'); if(msgEl) msgEl.style.display='none';
+  agvShow('agv-landing');
+}
 function showAuth(tab){ agvShow('agv-auth'); agvTab(tab||'login'); }
 
 function agvTab(tab){
@@ -706,6 +710,103 @@ function agvPreviewLogo(inp){
       if(img){img.src=e.target.result;img.style.display='block';}if(ph)ph.style.display='none';
     };r.readAsDataURL(inp.files[0]);
   }
+}
+
+// ===== CONCEPTEUR ACCESS =====
+var _concepteurClicks = 0;
+var _concepteurTimer = null;
+function agvConcepteurAccess(){
+  // Triple-clic dans les 2 secondes pour ouvrir le modal
+  _concepteurClicks++;
+  clearTimeout(_concepteurTimer);
+  _concepteurTimer = setTimeout(function(){ _concepteurClicks=0; }, 2000);
+  if(_concepteurClicks < 3) return;
+  _concepteurClicks = 0;
+
+  var ov=document.createElement('div');
+  ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:99999;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(6px)';
+  var d=document.createElement('div');
+  d.style.cssText='background:#0a1628;border:1px solid rgba(37,99,235,0.3);border-radius:16px;padding:28px;max-width:420px;width:90%;max-height:80vh;overflow-y:auto';
+  d.innerHTML=
+    '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px">'+
+    '<h3 style="color:#fff;font-size:16px;font-weight:700">&#x1F527; Acces Concepteur</h3>'+
+    '<button id="close-dev" style="background:none;border:none;color:#64748b;font-size:18px;cursor:pointer">&#x2715;</button>'+
+    '</div>'+
+    '<label style="display:block;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:#475569;margin-bottom:6px">Mot de passe</label>'+
+    '<input id="dev-pwd" type="password" placeholder="••••••••" style="width:100%;padding:11px 14px;background:#060d24;border:1px solid rgba(37,99,235,0.3);border-radius:9px;color:#e2e8f0;font-size:14px;font-family:inherit;outline:none;margin-bottom:12px" onkeydown="agvDevOnEnter(event)">'+
+    '<button onclick="agvDevVerify()" style="width:100%;padding:12px;border:none;border-radius:9px;background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#fff;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit">Acceder</button>'+
+    '<div id="dev-msg" style="display:none;margin-top:10px;padding:9px 12px;border-radius:7px;font-size:12px;color:#ef4444;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.2)"></div>';
+  ov.appendChild(d);
+  document.body.appendChild(ov);
+  document.getElementById('close-dev').onclick=function(){ov.remove();};
+  ov.onclick=function(e){if(e.target===ov)ov.remove();};
+  setTimeout(function(){var i=document.getElementById('dev-pwd');if(i)i.focus();},100);
+  window._devOverlay=ov;
+}
+
+function agvDevCopy(btn){
+  var c=btn.getAttribute('data-code');
+  if(navigator.clipboard){navigator.clipboard.writeText(c).then(function(){btn.textContent='Copie !';btn.style.background='#22c55e';setTimeout(function(){btn.textContent='Copier';btn.style.background='#2563eb';},1500);});}
+  else{btn.textContent=c;}
+}
+function agvCloseDevModal(){if(window._devOverlay)window._devOverlay.remove();}
+function agvDevOnEnter(e){if(e.key==='Enter')agvDevVerify();}
+function agvDevVerify(){
+  var pwd=document.getElementById('dev-pwd');
+  var msg=document.getElementById('dev-msg');
+  if(!pwd||!msg) return;
+  // Mot de passe concepteur
+  if(pwd.value !== 'AGVDev2026#') {
+    msg.style.display='block';
+    msg.textContent='Mot de passe incorrect.';
+    pwd.value='';
+    return;
+  }
+  // Charger toutes les boutiques
+  msg.style.display='none';
+  var box=document.getElementById('dev-pwd').closest('div');
+  if(box) box.innerHTML='<div style="text-align:center;color:#64748b;padding:20px">Chargement...</div>';
+  db.ref('gdv_shops').once('value',function(snap){
+    var shops=[];
+    snap.forEach(function(c){var info=c.val()&&c.val().info;if(info)shops.push(info);});
+    shops.sort(function(a,b){return new Date(b.dateCreation)-new Date(a.dateCreation);});
+    var h='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">'+
+      '<h3 style="color:#fff;font-size:15px;font-weight:700">&#x1F4CB; Toutes les boutiques ('+shops.length+')</h3>'+
+      '<button onclick="agvCloseDevModal()" style="background:none;border:none;color:#64748b;font-size:18px;cursor:pointer">&#x2715;</button>'+
+      '</div>'+
+      '<input oninput="agvDevFilter(this.value)" placeholder="Rechercher boutique / email..." style="width:100%;padding:10px 12px;background:#060d24;border:1px solid rgba(37,99,235,0.2);border-radius:8px;color:#e2e8f0;font-size:13px;font-family:inherit;outline:none;margin-bottom:14px">'+
+      '<div id="dev-shop-list">';
+    shops.forEach(function(s){
+      h+='<div class="dev-shop-item" data-search="'+(s.entreprise+' '+s.email+' '+s.nom).toLowerCase()+'" style="background:#060d24;border:1px solid rgba(37,99,235,0.15);border-radius:10px;padding:14px;margin-bottom:10px">'+
+        '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px">'+
+        '<div style="flex:1">'+
+        (s.logo?'<img src="'+s.logo+'" style="height:28px;object-fit:contain;margin-bottom:8px;display:block">':'')+
+        '<div style="font-weight:700;color:#e2e8f0;font-size:14px">'+s.entreprise+'</div>'+
+        '<div style="font-size:12px;color:#64748b;margin-bottom:6px">'+s.nom+' · '+s.email+'</div>'+
+        (s.tel?'<div style="font-size:11px;color:#475569">'+s.tel+(s.ville?' · '+s.ville:'')+'</div>':'')+
+        '<div style="font-size:10px;color:#334155;margin-top:4px">'+new Date(s.dateCreation).toLocaleString('fr-FR')+'</div>'+
+        '</div>'+
+        '<div style="text-align:right;flex-shrink:0">'+
+        '<div style="font-family:monospace;font-size:13px;font-weight:800;color:#60a5fa;background:rgba(37,99,235,0.12);padding:6px 10px;border-radius:7px;margin-bottom:6px;letter-spacing:.1em">'+s.codeAcces+'</div>'+
+        '<button data-code="'+s.codeAcces+'" onclick="agvDevCopy(this)" style="padding:5px 12px;border:none;border-radius:6px;background:#2563eb;color:#fff;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit">Copier</button>'+
+        '</div></div></div>';
+    });
+    h+='</div>';
+    var ov=window._devOverlay;
+    if(ov){
+      var d=ov.querySelector('div');
+      if(d) d.innerHTML=h;
+      d.style.maxWidth='600px';
+    }
+  });
+}
+
+function agvDevFilter(q){
+  var items=document.querySelectorAll('.dev-shop-item');
+  var lq=q.toLowerCase();
+  items.forEach(function(el){
+    el.style.display=(!q||el.dataset.search.indexOf(lq)>=0)?'block':'none';
+  });
 }
 
 // PWA
@@ -2382,6 +2483,13 @@ function doLogout(){
   document.getElementById('app').classList.remove('visible');
   document.getElementById('syncIndicator').style.display='none';
   var ls=document.getElementById('login-screen'); if(ls)ls.style.display='none';
+  // Vider le champ code et restaurer l'écran auth
+  var codeField=document.getElementById('l-code'); if(codeField) codeField.value='';
+  var loginBtn=document.getElementById('l-btn'); if(loginBtn){loginBtn.disabled=false;loginBtn.textContent='Se connecter';}
+  var msgEl=document.getElementById('agv-msg'); if(msgEl) msgEl.style.display='none';
+  // Restaurer le formulaire auth si on était sur l'écran succès
+  var box=document.getElementById('agv-auth-box');
+  if(box && window._savedAuthHTML) box.innerHTML=window._savedAuthHTML;
   agvShow('agv-landing');
   setTimeout(function(){window._boutiqueLoggedOut=false;},3000);
 }
@@ -5731,6 +5839,13 @@ function doLogout(){
   document.getElementById('app').classList.remove('visible');
   document.getElementById('syncIndicator').style.display='none';
   var ls=document.getElementById('login-screen'); if(ls)ls.style.display='none';
+  // Vider le champ code et restaurer l'écran auth
+  var codeField=document.getElementById('l-code'); if(codeField) codeField.value='';
+  var loginBtn=document.getElementById('l-btn'); if(loginBtn){loginBtn.disabled=false;loginBtn.textContent='Se connecter';}
+  var msgEl=document.getElementById('agv-msg'); if(msgEl) msgEl.style.display='none';
+  // Restaurer le formulaire auth si on était sur l'écran succès
+  var box=document.getElementById('agv-auth-box');
+  if(box && window._savedAuthHTML) box.innerHTML=window._savedAuthHTML;
   agvShow('agv-landing');
   setTimeout(function(){window._boutiqueLoggedOut=false;},3000);
 }
