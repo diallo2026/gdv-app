@@ -522,7 +522,6 @@ function agvRegister(){
         entreprise:ent,email:email,tel:tel,ville:ville,logo:logo,
         codeAcces:code,
         codeFondateur:fondCode,
-        codeFondateurHash:agvSimpleHash(fondCode),
         dateCreation:new Date().toISOString()};
       db.ref('gdv_shops/'+uid+'/info').set(shop).then(function(){
         // Envoyer email
@@ -686,12 +685,8 @@ function agvLaunchApp(shop){
   updateBrand();
   setTimeout(updateBrand,300);
   setTimeout(updateBrand,1000);
-  // Synchroniser le code fondateur avec le moteur boutique
-  if(shop.codeFondateur){
-    window.FONDATEUR_CODE = shop.codeFondateur;
-    // Sauvegarder aussi en localStorage pour le moteur
-    localStorage.setItem(window.AGV_KEY('fondateur_code'), shop.codeFondateur);
-  }
+  // Code fondateur disponible pour le moteur
+  if(shop.codeFondateur) window.FONDATEUR_CODE = shop.codeFondateur;
 
   // Cacher le login-screen du moteur
   var ls=document.getElementById('login-screen'); if(ls)ls.style.display='none';
@@ -880,9 +875,7 @@ function agvLoginGerant(role){
     if(!code){showMsg('Entrez votre code fondateur',false);return;}
     // Vérifier via le code fondateur sauvegardé dans Firebase
     var shopInfo = window._currentShop;
-    var hashMatch = shopInfo && shopInfo.codeFondateurHash && agvSimpleHash(code)===shopInfo.codeFondateurHash;
-    var plainMatch = shopInfo && shopInfo.codeFondateur && code===shopInfo.codeFondateur;
-    if(hashMatch || plainMatch){
+    if(shopInfo && shopInfo.codeFondateur && code===shopInfo.codeFondateur){
       currentRole='fondateur'; currentGerantId=null;
       if(typeof applyRoleUI==='function')applyRoleUI();
       showMsg('Connecté en tant que Fondateur ✓', true);
@@ -989,15 +982,12 @@ function agvChangeDevPwd(){
     if(!oldP||!newP||!con){showM('Remplissez tous les champs',false);return;}
     if(newP!==con){showM('Les mots de passe ne correspondent pas',false);return;}
     if(newP.length<6){showM('Minimum 6 caractères',false);return;}
-    db.ref('agv_config/dev_pwd_hash').once('value',function(snap){
-      var stored=snap.val()||agvSimpleHash('AGVDev2026#');
-      if(agvSimpleHash(oldP)!==stored){showM('Ancien mot de passe incorrect',false);return;}
-      db.ref('agv_config/dev_pwd_hash').set(agvSimpleHash(newP)).then(function(){
-        window._devPwdHash = agvSimpleHash(newP); // Mettre à jour le cache
-        showM('Mot de passe modifié !',true);
-        setTimeout(function(){ov.remove();},1500);
-      });
-    });
+    // Vérification locale instantanée
+    var currentPwd = window._DEV_PWD || 'AGVDev2026#';
+    if(oldP !== currentPwd){showM('Ancien mot de passe incorrect',false);return;}
+    window._DEV_PWD = newP;
+    showM('Mot de passe modifié !', true);
+    setTimeout(function(){ov.remove();},1000);
   };
 }
 function agvDevOnEnter(e){if(e.key==='Enter')agvDevVerify();}
@@ -1007,15 +997,11 @@ function agvDevVerify(){
   if(!pwd||!msg) return;
   var entered=pwd.value;
   pwd.value='';
-  msg.style.display='block';
-  msg.textContent='Verification...';
-  msg.style.cssText='display:block;margin-top:10px;padding:9px 12px;border-radius:7px;font-size:12px;color:#60a5fa;background:rgba(37,99,235,0.08);border:1px solid rgba(37,99,235,0.2)';
-  // Vérification instantanée via cache local
-  var storedHash = window._devPwdHash || agvSimpleHash('AGVDev2026#');
-  var enteredHash = agvSimpleHash(entered);
-  if(enteredHash !== storedHash){
-    msg.textContent='Mot de passe incorrect.';
+  // Vérification LOCALE instantanée
+  var currentPwd = window._DEV_PWD || 'AGVDev2026#';
+  if(entered !== currentPwd){
     msg.style.cssText='display:block;margin-top:10px;padding:9px 12px;border-radius:7px;font-size:12px;color:#ef4444;background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.2)';
+    msg.textContent='Mot de passe incorrect.';
     return;
   }
   msg.style.display='none';
@@ -1316,8 +1302,7 @@ function agvShopLogin(role){
     var pwd=(document.getElementById('sl-fondateur-pwd')||{}).value||'';
     pwd=pwd.trim();
     if(!pwd){agvShopLoginMsg('Entrez votre code fondateur',false);return;}
-    var match = (shop.codeFondateurHash && agvSimpleHash(pwd)===shop.codeFondateurHash) ||
-                 (shop.codeFondateur && pwd===shop.codeFondateur);
+    var match = shop.codeFondateur && pwd===shop.codeFondateur;
     if(match){
       agvShopLoginMsg('Connexion réussie !', true);
       window._currentShop=shop;
@@ -1364,12 +1349,8 @@ window.addEventListener('DOMContentLoaded',function(){
   // Supprimer les clés neindi_ au démarrage
   var k=[];for(var i=0;i<localStorage.length;i++){var key=localStorage.key(i);if(key&&key.indexOf('neindi_')===0)k.push(key);}
   k.forEach(function(key){localStorage.removeItem(key);});
-  // Hash par défaut disponible immédiatement (pas d'attente Firebase)
-  window._devPwdHash = "a0455d7c_agv_11";
-  // Si le mdp a été changé, Firebase le remplace silencieusement
-  db.ref('agv_config/dev_pwd_hash').once('value',function(snap){
-    if(snap.val()) window._devPwdHash = snap.val();
-  });
+  // Mot de passe concepteur local
+  window._DEV_PWD = 'AGVDev2026#';
   // Précharger la liste des boutiques en arrière-plan (pour accès concepteur instantané)
   setTimeout(function(){
     // D'abord charger depuis localStorage
