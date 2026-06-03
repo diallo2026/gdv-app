@@ -528,6 +528,7 @@ function agvRegister(){
       // Sauvegarder la boutique ET l'index code->uid pour recherche rapide
       db.ref('gdv_shops/'+uid+'/info').set(shop);
       db.ref('gdv_codes/'+code).set(uid); // Index pour recherche instantanée
+      window._lastCreatedShop = shop; // Disponible immédiatement
       db.ref('gdv_shops/'+uid+'/info').once('value').then(function(){
         // Envoyer email
         emailjs.send('service_xl8rdum','gdv_welcome',{
@@ -604,9 +605,9 @@ function agvShowSuccess(shop, code){
     '<div style="font-size:10px;color:#475569;margin-top:6px">Partagez ce lien avec vos gérants pour accéder directement à votre boutique</div>'+
     '</div>'+
 
-    // Bouton Se connecter
-    '<button onclick="agvGoLogin()" style="width:100%;padding:14px;border:none;border-radius:10px;background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#fff;font-size:15px;font-weight:700;cursor:pointer;font-family:inherit;margin-bottom:10px;box-shadow:0 4px 16px rgba(37,99,235,0.35)">'+
-    'Se connecter avec mon code</button>'+
+    // Bouton Se connecter -> ouvre directement la page connexion boutique
+    '<button onclick="agvGoToShopLogin()" style="width:100%;padding:14px;border:none;border-radius:10px;background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#fff;font-size:15px;font-weight:700;cursor:pointer;font-family:inherit;margin-bottom:10px;box-shadow:0 4px 16px rgba(37,99,235,0.35)">'+
+    'Acceder a ma boutique →</button>'+
     
     // WhatsApp
     '<a href="'+waLink+'" target="_blank" style="display:flex;align-items:center;justify-content:center;gap:8px;width:100%;padding:12px;border:none;border-radius:10px;background:#25D366;color:#fff;font-size:14px;font-weight:700;text-decoration:none;box-sizing:border-box">'+
@@ -624,7 +625,22 @@ function agvShowSuccess(shop, code){
   },100);
 }
 
-// Retour vers l'écran de connexion (après avoir vu ses infos)
+// Aller directement à la page de connexion de la boutique créée
+function agvGoToShopLogin(){
+  if(window._lastCreatedShop){
+    var shop = window._lastCreatedShop;
+    window._lastShopCode = shop.codeAcces;
+    window._shopLoginData = shop;
+    agvShow('agv-shop-login');
+    agvRenderShopLogin(shop, document.getElementById('agv-shop-login'));
+  } else {
+    // Fallback - retour au login
+    var box=document.getElementById('agv-auth-box');
+    if(box && window._savedAuthHTML) box.innerHTML=window._savedAuthHTML;
+    agvTab('login');
+  }
+}
+
 function agvGoLogin(){
   var box=document.getElementById('agv-auth-box');
   if(box && window._savedAuthHTML) box.innerHTML=window._savedAuthHTML;
@@ -700,6 +716,18 @@ function agvLaunchApp(shop){
   setTimeout(updateBrand,1000);
   // Code fondateur disponible pour le moteur
   if(shop.codeFondateur) window.FONDATEUR_CODE = shop.codeFondateur;
+  // Mettre à jour le cache dev avec les infos de cette boutique
+  try{
+    var devShops = JSON.parse(localStorage.getItem('agv_dev_shops')||'[]');
+    var found = false;
+    devShops = devShops.map(function(s){
+      if(s.uid === shop.uid){ found=true; return Object.assign(s, shop); }
+      return s;
+    });
+    if(!found) devShops.push(shop);
+    localStorage.setItem('agv_dev_shops', JSON.stringify(devShops));
+    window._devShopsCache = devShops;
+  }catch(e){}
 
   // Cacher le login-screen du moteur
   var ls=document.getElementById('login-screen'); if(ls)ls.style.display='none';
@@ -1371,21 +1399,22 @@ window.addEventListener('DOMContentLoaded',function(){
   k.forEach(function(key){localStorage.removeItem(key);});
   // Mot de passe concepteur local
   window._DEV_PWD = 'AGVDev2026#';
-  // Précharger la liste des boutiques en arrière-plan (pour accès concepteur instantané)
+  // Charger le cache dev depuis localStorage immédiatement (0ms)
+  try{
+    var devCached=JSON.parse(localStorage.getItem('agv_dev_shops')||'null');
+    if(devCached) window._devShopsCache=devCached;
+  }catch(e){}
+  // Syncer Firebase en arrière-plan après 3s (pas bloquant)
   setTimeout(function(){
-    // D'abord charger depuis localStorage
-    try{
-      var cached=JSON.parse(localStorage.getItem('agv_dev_shops')||'null');
-      if(cached) window._devShopsCache=cached;
-    }catch(e){}
-    // Puis syncer avec Firebase silencieusement
     db.ref('gdv_shops').once('value',function(snap){
       var shops=[];
       snap.forEach(function(c){var info=c.val()&&c.val().info;if(info)shops.push(info);});
-      window._devShopsCache=shops;
-      try{localStorage.setItem('agv_dev_shops',JSON.stringify(shops));}catch(e){}
+      if(shops.length > 0){
+        window._devShopsCache=shops;
+        try{localStorage.setItem('agv_dev_shops',JSON.stringify(shops));}catch(e){}
+      }
     });
-  }, 2000); // Délai 2s pour ne pas bloquer le chargement principal
+  }, 3000);
 
   // Sauvegarder le HTML de l'auth
   setTimeout(function(){
