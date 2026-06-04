@@ -4902,6 +4902,23 @@ function openVenteRapide(){
   document.getElementById('vr-stock-info').textContent='';
   vrUpdateRecent();
   vrUpdateDayTotals();
+  // Initialiser les sélecteurs de date à aujourd'hui
+  const today = new Date();
+  vrUpdateDays(today.getMonth(), today.getFullYear(), today.getDate());
+  const monthSel = document.getElementById('vr-date-month');
+  if(monthSel) monthSel.value = today.getMonth();
+  // Années dynamiques : N-2 → N+1 (se met à jour automatiquement chaque année)
+  const yearSel = document.getElementById('vr-date-year');
+  if(yearSel){
+    yearSel.innerHTML = '';
+    const yr = today.getFullYear();
+    for(let y = yr-2; y <= yr+1; y++){
+      const opt = document.createElement('option');
+      opt.value = y; opt.textContent = y;
+      if(y === yr) opt.selected = true;
+      yearSel.appendChild(opt);
+    }
+  }
   document.getElementById('vrapide-overlay').classList.add('open');
   setTimeout(()=>document.getElementById('vr-product').focus(),120);
 }
@@ -4954,6 +4971,34 @@ function updateVRPreview(){
     prev.textContent='Sélectionnez un produit';
   }
 }
+// Recalcule les jours disponibles selon mois et année (gère les mois courts + bissextile)
+function vrUpdateDays(month, year, selectedDay){
+  const daySelect = document.getElementById('vr-date-day');
+  if(!daySelect) return;
+  const currentDay = selectedDay || parseInt(daySelect.value) || 1;
+  const daysInMonth = new Date(parseInt(year), parseInt(month)+1, 0).getDate();
+  daySelect.innerHTML = '';
+  for(let d=1; d<=daysInMonth; d++){
+    const opt = document.createElement('option');
+    opt.value = d; opt.textContent = String(d).padStart(2,'0');
+    if(d === Math.min(currentDay, daysInMonth)) opt.selected = true;
+    daySelect.appendChild(opt);
+  }
+}
+
+// Retourne l'ISO string de la date choisie (avec l'heure actuelle)
+function vrGetSelectedDate(){
+  const day = document.getElementById('vr-date-day');
+  const month = document.getElementById('vr-date-month');
+  const year = document.getElementById('vr-date-year');
+  if(day && month && year){
+    const d = new Date(parseInt(year.value), parseInt(month.value), parseInt(day.value),
+      new Date().getHours(), new Date().getMinutes(), new Date().getSeconds());
+    if(!isNaN(d.getTime())) return d.toISOString();
+  }
+  return new Date().toISOString();
+}
+
 function saveVenteRapide(){
   const val=document.getElementById('vr-product').value;
   const qty=parseInt(document.getElementById('vr-qty').value)||1;
@@ -4967,11 +5012,11 @@ function saveVenteRapide(){
   if(isSortie){
     products[idx].stock_initial-=qty;
     products[idx].total=products[idx].stock_initial*products[idx].prix_achat;
-    ventes.unshift({id:Date.now(),name:p.designation,ref:p.reference,qty,prixU,prixAchat:p.prix_achat||0,total:qty*prixU,benefice:qty*(prixU-(p.prix_achat||0)),type:'sortie',ts:new Date().toISOString(),gerantId:currentGerantId});
+    ventes.unshift({id:Date.now(),name:p.designation,ref:p.reference,qty,prixU,prixAchat:p.prix_achat||0,total:qty*prixU,benefice:qty*(prixU-(p.prix_achat||0)),type:'sortie',ts:vrGetSelectedDate(),gerantId:currentGerantId});
   } else {
     products[idx].stock_initial+=qty;
     products[idx].total=products[idx].stock_initial*products[idx].prix_achat;
-    ventes.unshift({id:Date.now(),name:p.designation,ref:p.reference,qty,prixU:0,total:0,type:'entree',ts:new Date().toISOString(),gerantId:currentGerantId});
+    ventes.unshift({id:Date.now(),name:p.designation,ref:p.reference,qty,prixU:0,total:0,type:'entree',ts:vrGetSelectedDate(),gerantId:currentGerantId});
   }
   saveAll();renderDashboard();refreshVentesHistory();
   document.getElementById('vr-product').value='';
@@ -6260,6 +6305,32 @@ function saveRepConfig(){
         </div>
       </div>
       <div id="vr-preview" style="background:var(--green-bg);border:1px solid var(--green-border);border-radius:var(--r-sm);padding:10px 14px;font-size:13px;color:var(--green);font-weight:600;text-align:center;min-height:36px;margin-bottom:14px">Sélectionnez un produit</div>
+      <!-- Date modifiable -->
+      <div class="form-group" style="margin-bottom:10px">
+        <label class="form-label" style="display:flex;align-items:center;gap:6px">
+          📅 Date de la vente
+          <span style="font-size:10px;color:var(--text3);font-weight:400">(modifiable)</span>
+        </label>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+          <div>
+            <label style="font-size:10px;color:var(--text3);display:block;margin-bottom:3px">Jour</label>
+            <select class="form-input" id="vr-date-day" style="padding:8px 6px;font-size:13px"></select>
+          </div>
+          <div>
+            <label style="font-size:10px;color:var(--text3);display:block;margin-bottom:3px">Mois</label>
+            <select class="form-input" id="vr-date-month" style="padding:8px 6px;font-size:13px" onchange="vrUpdateDays(this.value, document.getElementById('vr-date-year').value)">
+              <option value="0">Janvier</option><option value="1">Février</option><option value="2">Mars</option>
+              <option value="3">Avril</option><option value="4">Mai</option><option value="5">Juin</option>
+              <option value="6">Juillet</option><option value="7">Août</option><option value="8">Septembre</option>
+              <option value="9">Octobre</option><option value="10">Novembre</option><option value="11">Décembre</option>
+            </select>
+          </div>
+          <div>
+            <label style="font-size:10px;color:var(--text3);display:block;margin-bottom:3px">Année</label>
+            <select class="form-input" id="vr-date-year" style="padding:8px 6px;font-size:13px" onchange="vrUpdateDays(document.getElementById('vr-date-month').value, this.value)"></select>
+          </div>
+        </div>
+      </div>
       <button class="btn btn-success" id="vr-confirm-btn" onclick="saveVenteRapide()" style="width:100%;padding:11px;font-size:15px;font-weight:700">✓ Confirmer la sortie</button>
       <!-- Totaux journaliers - bas du modal -->
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px;border-top:2px solid var(--border);padding-top:12px">
@@ -8259,6 +8330,23 @@ function openVenteRapide(){
   document.getElementById('vr-stock-info').textContent='';
   vrUpdateRecent();
   vrUpdateDayTotals();
+  // Initialiser les sélecteurs de date à aujourd'hui
+  const today = new Date();
+  vrUpdateDays(today.getMonth(), today.getFullYear(), today.getDate());
+  const monthSel = document.getElementById('vr-date-month');
+  if(monthSel) monthSel.value = today.getMonth();
+  // Années dynamiques : N-2 → N+1 (se met à jour automatiquement chaque année)
+  const yearSel = document.getElementById('vr-date-year');
+  if(yearSel){
+    yearSel.innerHTML = '';
+    const yr = today.getFullYear();
+    for(let y = yr-2; y <= yr+1; y++){
+      const opt = document.createElement('option');
+      opt.value = y; opt.textContent = y;
+      if(y === yr) opt.selected = true;
+      yearSel.appendChild(opt);
+    }
+  }
   document.getElementById('vrapide-overlay').classList.add('open');
   setTimeout(()=>document.getElementById('vr-product').focus(),120);
 }
@@ -8311,6 +8399,34 @@ function updateVRPreview(){
     prev.textContent='Sélectionnez un produit';
   }
 }
+// Recalcule les jours disponibles selon mois et année (gère les mois courts + bissextile)
+function vrUpdateDays(month, year, selectedDay){
+  const daySelect = document.getElementById('vr-date-day');
+  if(!daySelect) return;
+  const currentDay = selectedDay || parseInt(daySelect.value) || 1;
+  const daysInMonth = new Date(parseInt(year), parseInt(month)+1, 0).getDate();
+  daySelect.innerHTML = '';
+  for(let d=1; d<=daysInMonth; d++){
+    const opt = document.createElement('option');
+    opt.value = d; opt.textContent = String(d).padStart(2,'0');
+    if(d === Math.min(currentDay, daysInMonth)) opt.selected = true;
+    daySelect.appendChild(opt);
+  }
+}
+
+// Retourne l'ISO string de la date choisie (avec l'heure actuelle)
+function vrGetSelectedDate(){
+  const day = document.getElementById('vr-date-day');
+  const month = document.getElementById('vr-date-month');
+  const year = document.getElementById('vr-date-year');
+  if(day && month && year){
+    const d = new Date(parseInt(year.value), parseInt(month.value), parseInt(day.value),
+      new Date().getHours(), new Date().getMinutes(), new Date().getSeconds());
+    if(!isNaN(d.getTime())) return d.toISOString();
+  }
+  return new Date().toISOString();
+}
+
 function saveVenteRapide(){
   const val=document.getElementById('vr-product').value;
   const qty=parseInt(document.getElementById('vr-qty').value)||1;
@@ -8324,11 +8440,11 @@ function saveVenteRapide(){
   if(isSortie){
     products[idx].stock_initial-=qty;
     products[idx].total=products[idx].stock_initial*products[idx].prix_achat;
-    ventes.unshift({id:Date.now(),name:p.designation,ref:p.reference,qty,prixU,prixAchat:p.prix_achat||0,total:qty*prixU,benefice:qty*(prixU-(p.prix_achat||0)),type:'sortie',ts:new Date().toISOString(),gerantId:currentGerantId});
+    ventes.unshift({id:Date.now(),name:p.designation,ref:p.reference,qty,prixU,prixAchat:p.prix_achat||0,total:qty*prixU,benefice:qty*(prixU-(p.prix_achat||0)),type:'sortie',ts:vrGetSelectedDate(),gerantId:currentGerantId});
   } else {
     products[idx].stock_initial+=qty;
     products[idx].total=products[idx].stock_initial*products[idx].prix_achat;
-    ventes.unshift({id:Date.now(),name:p.designation,ref:p.reference,qty,prixU:0,total:0,type:'entree',ts:new Date().toISOString(),gerantId:currentGerantId});
+    ventes.unshift({id:Date.now(),name:p.designation,ref:p.reference,qty,prixU:0,total:0,type:'entree',ts:vrGetSelectedDate(),gerantId:currentGerantId});
   }
   saveAll();renderDashboard();refreshVentesHistory();
   document.getElementById('vr-product').value='';
