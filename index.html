@@ -439,7 +439,33 @@ function landingGoShop(){
     db.ref('gdv_shops/'+uid+'/info').once('value',function(snap){
       var found=snap.val();
       if(!found){if(msg){msg.textContent='Boutique introuvable.';msg.style.display='block';}return;}
-      if(found.blocked){if(msg){msg.textContent='⛔ Accès suspendu.';msg.style.display='block';}return;}
+      if(found.blocked){
+        if(msg){
+          msg.style.display='block';
+          var _bDiv=document.createElement('div');
+          _bDiv.style.fontSize='12px';_bDiv.style.lineHeight='1.6';
+          _bDiv.innerHTML='<strong>Acces suspendu.</strong><br>Votre boutique a ete bloquee suite au non-paiement de votre licence dutilisation.<br>Contactez: <strong>+224 623 030 403</strong> ou <strong>neindimultiservice@gmail.com</strong> ou WhatsApp <strong>623 030 403</strong>';
+          msg.textContent='';msg.appendChild(_bDiv);
+        }
+        return;
+      }
+      // Verification expiration licence
+      if(found.dateExpiration && found.licenceStatut!=='actif'){
+        var _expD=new Date(found.dateExpiration);
+        var _nowD=new Date();
+        if(_nowD>_expD){
+          db.ref('gdv_shops/'+uid+'/info/blocked').set(true);
+          db.ref('gdv_shops/'+uid+'/info/licenceStatut').set('expire');
+          if(msg){
+            msg.style.display='block';
+            var _eDiv=document.createElement('div');
+            _eDiv.style.fontSize='12px';_eDiv.style.lineHeight='1.6';
+            _eDiv.innerHTML='<strong>Licence expiree - Acces suspendu.</strong><br>Votre boutique a ete bloquee suite au non-paiement de votre licence dutilisation. Veuillez contacter le service de gestion des paiements au <strong>+224 623 030 403</strong>, effectuer votre paiement et envoyer une capture decran a <strong>neindimultiservice@gmail.com</strong> ou par WhatsApp au <strong>623 030 403</strong> pour retablir votre connexion.';
+            msg.textContent='';msg.appendChild(_eDiv);
+          }
+          return;
+        }
+      }
       try{localStorage.setItem('agv_shop_'+code,JSON.stringify(found));}catch(e){}
       window._lastShopCode=code;
       window._shopLoginData=found;
@@ -520,11 +546,16 @@ function agvRegister(){
     var uid='shop_'+Date.now()+'_'+Math.random().toString(36).substr(2,5);
     var logoInput=document.getElementById('r-logo');
     function save(logo){
+      var _nowR=new Date();
+      var _expR=new Date(_nowR.getTime()+60*24*60*60*1000);
       var shop={uid:uid,nom:prenom+' '+nom,prenom:prenom,nomFamille:nom,
         entreprise:ent,email:email,tel:tel,ville:ville,logo:logo,
         codeAcces:code,
         codeFondateur:fondCode,
-        dateCreation:new Date().toISOString()};
+        dateCreation:new Date().toISOString(),
+        dateExpiration:_expR.toISOString(),
+        licenceStatut:'essai',
+        licencePeriode:'essai_60j'};
       // Sauvegarder la boutique ET l'index code->uid pour recherche rapide
       db.ref('gdv_shops/'+uid+'/info').set(shop);
       db.ref('gdv_codes/'+code).set(uid); // Index pour recherche instantanée
@@ -995,6 +1026,184 @@ function agvDevCopy(btn){
 }
 function agvCloseDevModal(){if(window._devOverlay)window._devOverlay.remove();}
 
+
+// ===== LICENCE AGV =====
+
+// Générer le bloc HTML de licence pour une boutique dans le panel dev
+function agvLicenceCard(s){
+  var _e=s.dateExpiration?new Date(s.dateExpiration):null;
+  var _n=new Date();
+  var _ok=s.licenceStatut==='actif';
+  var _j=_e?Math.max(0,Math.ceil((_e-_n)/(1000*60*60*24))):null;
+  var _c=_j===null?'#64748b':_ok?'#22c55e':_j>30?'#22c55e':_j>10?'#f59e0b':'#ef4444';
+  var _t=_j===null?'Sans licence':_ok?'Active ('+_j+' j restants)':(_j<=0?'Expiree':_j+' j essai restants');
+  var _d=s.dateDernierPaiement?'Paiement: '+new Date(s.dateDernierPaiement).toLocaleDateString('fr-FR'):'';
+  return '<div style="margin-top:8px;padding:8px 10px;background:rgba(0,0,0,0.2);border-radius:8px;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">'
+    +'<div><span style="font-size:10px;font-weight:700;color:'+_c+'">Licence: '+_t+'</span>'
+    +(_d?'<div style="font-size:9px;color:#475569;margin-top:2px">'+_d+'</div>':'')+'</div>'
+    +'<div style="display:flex;gap:4px">'
+    +'<button data-uid="'+s.uid+'" data-nom="'+s.entreprise+'" onclick="agvDevPayer(this)" style="padding:4px 9px;border:none;border-radius:5px;background:'+(_ok?'#22c55e':'#64748b')+';color:#fff;font-size:10px;font-weight:700;cursor:pointer;font-family:inherit">'+(_ok?'Paye':'Payer')+'</button>'
+    +'<button data-uid="'+s.uid+'" data-nom="'+s.entreprise+'" onclick="agvDevImPayer(this)" style="padding:4px 9px;border:1px solid rgba(239,68,68,0.4);border-radius:5px;background:transparent;color:#ef4444;font-size:10px;font-weight:700;cursor:pointer;font-family:inherit">Impaye</button>'
+    +'</div></div>';
+}
+
+// Chronomètre dans l'app boutique
+function agvAfficherChrono(shop){
+  var ex=document.getElementById('agv-chrono-banner');
+  if(ex) ex.remove();
+  if(!shop||!shop.dateExpiration) return;
+  var expD=new Date(shop.dateExpiration);
+  var nowD=new Date();
+  var isPaye=shop.licenceStatut==='actif';
+  var jours=Math.ceil((expD-nowD)/(1000*60*60*24));
+  if(isPaye&&jours>30) return;
+  if(jours<=0&&!isPaye) return;
+  var bg=jours>30?'#f59e0b':jours>10?'#f97316':'#ef4444';
+  var txt=isPaye?
+    'Licence active - expire le '+expD.toLocaleDateString('fr-FR')+' ('+jours+' jours)':
+    'Essai: '+jours+' jour'+(jours>1?'s':'')+' restant'+(jours>1?'s':'')+' - Contactez +224 623 030 403';
+  var ban=document.createElement('div');
+  ban.id='agv-chrono-banner';
+  ban.style.cssText='position:fixed;bottom:0;left:0;right:0;z-index:8888;background:'+bg+';color:#fff;padding:8px 16px;font-size:12px;font-weight:700;font-family:sans-serif;display:flex;align-items:center;justify-content:center;gap:10px;text-align:center';
+  var sp=document.createElement('span');sp.textContent='Licence: '+txt;
+  var cl=document.createElement('button');
+  cl.textContent='X';
+  cl.style.cssText='background:rgba(255,255,255,0.25);border:none;color:#fff;border-radius:4px;padding:2px 8px;cursor:pointer;font-size:11px';
+  cl.onclick=function(){ban.remove();};
+  ban.appendChild(sp);ban.appendChild(cl);
+  document.body.appendChild(ban);
+}
+
+// Modifier logo après création
+function agvModifierLogo(){
+  var shop=window._currentShop;
+  if(!shop){alert('Aucune boutique connectee');return;}
+  var ov=document.createElement('div');
+  ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,0.8);z-index:9999;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px)';
+  var d=document.createElement('div');
+  d.style.cssText='background:#0a1628;border:1px solid rgba(37,99,235,0.3);border-radius:14px;padding:24px;max-width:360px;width:90%;text-align:center';
+  var html='<h3 style="color:#fff;font-size:15px;font-weight:700;margin-bottom:6px">Logo de la boutique</h3>'
+    +'<p style="color:#64748b;font-size:12px;margin-bottom:16px">'+shop.entreprise+'</p>';
+  if(shop.logo) html+='<img src="'+shop.logo+'" style="height:60px;object-fit:contain;border-radius:10px;margin-bottom:12px;display:block;margin-left:auto;margin-right:auto">';
+  else html+='<div style="font-size:11px;color:#475569;margin-bottom:12px">Aucun logo actuellement</div>';
+  html+='<div id="agv-logo-zone" style="border:2px dashed rgba(37,99,235,0.3);border-radius:10px;padding:16px;cursor:pointer;background:rgba(37,99,235,0.03);margin-bottom:14px">'
+    +'<input type="file" id="agv-logo-file-mod" accept="image/*" style="display:none">'
+    +'<img id="agv-logo-preview-mod" style="max-height:60px;display:none;margin:0 auto">'
+    +'<div id="agv-logo-ph-mod" style="color:#475569;font-size:12px">Cliquer pour choisir un logo</div></div>'
+    +'<div id="agv-logo-msg-mod" style="display:none;font-size:12px;padding:8px;border-radius:6px;margin-bottom:10px"></div>'
+    +'<div style="display:flex;gap:8px">'
+    +'<button id="agv-logo-cancel" style="flex:1;padding:10px;border:1px solid rgba(255,255,255,0.1);border-radius:8px;background:transparent;color:#64748b;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit">Annuler</button>'
+    +'<button id="agv-logo-save" style="flex:1;padding:10px;border:none;border-radius:8px;background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#fff;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit">Enregistrer</button></div>';
+  d.innerHTML=html;ov.appendChild(d);document.body.appendChild(ov);
+  ov.onclick=function(e){if(e.target===ov)ov.remove();};
+  document.getElementById('agv-logo-cancel').onclick=function(){ov.remove();};
+  document.getElementById('agv-logo-zone').onclick=function(){document.getElementById('agv-logo-file-mod').click();};
+  document.getElementById('agv-logo-file-mod').onchange=function(){
+    var f=this.files[0];if(!f)return;
+    var rd=new FileReader();rd.onload=function(e){
+      var img=document.getElementById('agv-logo-preview-mod');var ph=document.getElementById('agv-logo-ph-mod');
+      if(img){img.src=e.target.result;img.style.display='block';}if(ph)ph.style.display='none';
+    };rd.readAsDataURL(f);
+  };
+  document.getElementById('agv-logo-save').onclick=function(){
+    var file=document.getElementById('agv-logo-file-mod').files[0];
+    var msg=document.getElementById('agv-logo-msg-mod');
+    function sm(t,ok){msg.style.display='block';msg.style.cssText='display:block;font-size:12px;padding:8px;border-radius:6px;margin-bottom:10px;'+(ok?'background:rgba(34,197,94,0.1);color:#22c55e':'background:rgba(239,68,68,0.1);color:#ef4444');msg.textContent=t;}
+    if(!file){sm('Choisissez une image',false);return;}
+    var btn=document.getElementById('agv-logo-save');
+    btn.disabled=true;btn.textContent='Enregistrement...';
+    var rd=new FileReader();
+    rd.onload=function(ev){
+      var logoData=ev.target.result;
+      // UNIQUEMENT le champ logo - rien d'autre touche
+      db.ref('gdv_shops/'+shop.uid+'/info/logo').set(logoData).then(function(){
+        shop.logo=logoData;if(window._currentShop)window._currentShop.logo=logoData;
+        try{var code=shop.codeAcces;var c=JSON.parse(localStorage.getItem('agv_shop_'+code)||'null');if(c){c.logo=logoData;localStorage.setItem('agv_shop_'+code,JSON.stringify(c));}}catch(ex){}
+        var hl=document.getElementById('agv-sidebar-logo');if(hl)hl.src=logoData;
+        sm('Logo mis a jour !',true);setTimeout(function(){ov.remove();},1200);
+      }).catch(function(err){btn.disabled=false;btn.textContent='Enregistrer';sm('Erreur: '+err.message,false);});
+    };rd.readAsDataURL(file);
+  };
+}
+
+// Marquer boutique comme payée (12 mois)
+function agvDevPayer(btn){
+  var uid=btn.getAttribute('data-uid');
+  var nom=btn.getAttribute('data-nom');
+  var now=new Date();
+  var exp=new Date(now.getTime()+365*24*60*60*1000);
+  var mois=now.toLocaleDateString('fr-FR',{month:'long',year:'numeric'});
+  var expStr=exp.toLocaleDateString('fr-FR');
+  if(!confirm('Confirmer paiement pour '+nom+' ? Licence renouvelee 12 mois jusqu au '+expStr)) return;
+  btn.disabled=true;btn.textContent='...';
+  // UNIQUEMENT champs licence - rien d'autre
+  db.ref('gdv_shops/'+uid+'/info/licenceStatut').set('actif');
+  db.ref('gdv_shops/'+uid+'/info/dateExpiration').set(exp.toISOString());
+  db.ref('gdv_shops/'+uid+'/info/dateDernierPaiement').set(now.toISOString());
+  db.ref('gdv_shops/'+uid+'/info/licencePeriode').set(mois);
+  db.ref('gdv_shops/'+uid+'/info/blocked').set(false).then(function(){
+    alert('Paiement confirme ! Licence active jusqu au '+expStr);
+    // Recharger le panel dev
+    if(window._devOverlay){
+      var ov=window._devOverlay;
+      db.ref('gdv_shops').once('value',function(snap){
+        var shops=[];
+        snap.forEach(function(c){var info=c.val()&&c.val().info;if(info)shops.push(info);});
+        agvRenderDevShops(shops);
+      });
+    }
+  }).catch(function(e){btn.disabled=false;btn.textContent='Payer';alert('Erreur: '+e.message);});
+}
+
+// Marquer boutique comme impayée
+function agvDevImPayer(btn){
+  var uid=btn.getAttribute('data-uid');
+  var nom=btn.getAttribute('data-nom');
+  if(!confirm('Marquer '+nom+' comme impayee ?')) return;
+  btn.disabled=true;
+  db.ref('gdv_shops/'+uid+'/info/licenceStatut').set('impaye').then(function(){
+    alert('Boutique marquee comme impayee.');
+    btn.disabled=false;btn.textContent='Impaye';
+  }).catch(function(e){btn.disabled=false;alert('Erreur: '+e.message);});
+}
+
+// Initialiser licences pour les boutiques existantes sans dateExpiration
+function agvInitLicences(){
+  if(!confirm('Initialiser les licences pour toutes les boutiques sans date expiration ?\nCela donnera 60 jours a partir de leur date de creation.')) return;
+  db.ref('gdv_shops').once('value',function(snap){
+    var count=0,updated=0;
+    var promises=[];
+    snap.forEach(function(child){
+      var info=child.val()&&child.val().info;
+      if(!info) return;
+      count++;
+      if(!info.dateExpiration){
+        var dateCreation=info.dateCreation?new Date(info.dateCreation):new Date();
+        var dateExp=new Date(dateCreation.getTime()+60*24*60*60*1000);
+        var uid=info.uid||child.key;
+        // UNIQUEMENT les champs manquants - rien d'autre
+        promises.push(
+          db.ref('gdv_shops/'+uid+'/info/dateExpiration').set(dateExp.toISOString()).then(function(){
+            return db.ref('gdv_shops/'+uid+'/info/licenceStatut').set('essai');
+          }).then(function(){
+            return db.ref('gdv_shops/'+uid+'/info/licencePeriode').set('essai_60j');
+          }).then(function(){updated++;})
+        );
+      }
+    });
+    Promise.all(promises).then(function(){
+      alert('Initialisation terminee !\n'+count+' boutique(s) trouvee(s)\n'+updated+' boutique(s) mise(s) a jour avec 60 jours dessai.');
+      if(window._devOverlay){
+        db.ref('gdv_shops').once('value',function(snap2){
+          var shops=[];
+          snap2.forEach(function(c){var info=c.val()&&c.val().info;if(info)shops.push(info);});
+          agvRenderDevShops(shops);
+        });
+      }
+    }).catch(function(e){alert('Erreur: '+e.message);});
+  });
+}
+
 function agvChangeDevPwd(){
   var ov=document.createElement('div');
   ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:9999999;display:flex;align-items:center;justify-content:center';
@@ -1062,6 +1271,7 @@ function agvRenderDevShops(shops){
     var h='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">'+
         '<h3 style="color:#fff;font-size:15px;font-weight:700">Toutes les boutiques ('+shops.length+')</h3>'+
         '<div style="display:flex;gap:6px">'+
+        '<button onclick="agvInitLicences()" style="padding:5px 10px;border:1px solid rgba(249,115,22,0.4);border-radius:6px;background:rgba(249,115,22,0.08);color:#fb923c;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit">Init licences</button>'+
         '<button onclick="agvChangeDevPwd()" style="padding:5px 10px;border:1px solid rgba(37,99,235,0.3);border-radius:6px;background:transparent;color:#60a5fa;font-size:11px;cursor:pointer;font-family:inherit">Changer mdp</button>'+
         '<button onclick="agvCloseDevModal()" style="background:none;border:none;color:#64748b;font-size:18px;cursor:pointer">&#x2715;</button>'+
         '</div></div>'+
@@ -1618,7 +1828,7 @@ window.addEventListener('DOMContentLoaded',function(){
   <aside class="sidebar">
     <div class="brand">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-        <img id="agv-sidebar-logo" src="" style="height:32px;width:32px;object-fit:contain;border-radius:6px;display:none">
+        <img id="agv-sidebar-logo" src="" style="height:32px;width:32px;object-fit:contain;border-radius:6px;display:none;cursor:pointer" onclick="agvModifierLogo()" title="Cliquer pour modifier le logo">
         <div>
           <div class="brand-title" id="agv-brand-name">Ma Boutique</div>
           <div class="brand-sub" id="brand-year-sub">App AGV</div>
@@ -1636,7 +1846,7 @@ window.addEventListener('DOMContentLoaded',function(){
       <button class="nav-item" id="nav-produits" onclick="showView('produits')">
         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" stroke-width="1.5"/></svg>
         Produits
-        <span class="nav-badge" id="nb-produits">203</span>
+        <span class="nav-badge" id="nb-produits">0</span>
       </button>
       <button class="nav-item" id="nav-inventaire" onclick="showView('inventaire')">
         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" stroke-width="1.5"/></svg>
@@ -6005,8 +6215,21 @@ function genererFacturePDF(factureId){
   <div class="total-box"><div class="t-label">TOTAL À PAYER</div><div class="t-val">${fmtGNF(f.total)}</div></div>
   <div class="footer">Merci de votre confiance — ' + (window._currentShop ? window._currentShop.entreprise : 'Ma Boutique') + ' · ' + (window._currentShop ? (window._currentShop.ville || '') : '')</div>
   </body></html>`;
-  const w=window.open('','_blank');
-  if(w){ w.document.write(html); w.document.close(); }
+  // Methode robuste: blob URL au lieu de window.open
+  try{
+    var blob=new Blob([html],{type:'text/html'});
+    var url=URL.createObjectURL(blob);
+    var a=document.createElement('a');
+    a.href=url;a.target='_blank';a.rel='noopener';
+    document.body.appendChild(a);a.click();
+    document.body.removeChild(a);
+    setTimeout(function(){URL.revokeObjectURL(url);},5000);
+  }catch(e){
+    // Fallback: data URI
+    var w=window.open('','_blank');
+    if(w){w.document.write(html);w.document.close();}
+    else{alert('Activez les popups pour imprimer la facture.');}
+  }
 }
 
 function renderFactures(){
@@ -9433,8 +9656,21 @@ function genererFacturePDF(factureId){
   <div class="total-box"><div class="t-label">TOTAL À PAYER</div><div class="t-val">${fmtGNF(f.total)}</div></div>
   <div class="footer">Merci de votre confiance — ' + (window._currentShop ? window._currentShop.entreprise : 'Ma Boutique') + ' · ' + (window._currentShop ? (window._currentShop.ville || '') : '')</div>
   </body></html>`;
-  const w=window.open('','_blank');
-  if(w){ w.document.write(html); w.document.close(); }
+  // Methode robuste: blob URL au lieu de window.open
+  try{
+    var blob=new Blob([html],{type:'text/html'});
+    var url=URL.createObjectURL(blob);
+    var a=document.createElement('a');
+    a.href=url;a.target='_blank';a.rel='noopener';
+    document.body.appendChild(a);a.click();
+    document.body.removeChild(a);
+    setTimeout(function(){URL.revokeObjectURL(url);},5000);
+  }catch(e){
+    // Fallback: data URI
+    var w=window.open('','_blank');
+    if(w){w.document.write(html);w.document.close();}
+    else{alert('Activez les popups pour imprimer la facture.');}
+  }
 }
 
 function renderFactures(){
