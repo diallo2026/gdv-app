@@ -1161,18 +1161,22 @@ function agvDevImPayer(btn){
   var nom=btn.getAttribute('data-nom');
   if(!confirm('Marquer '+nom+' comme impayee ?')) return;
   btn.disabled=true;
-  db.ref('gdv_shops/'+uid+'/info/licenceStatut').set('impaye').then(function(){
+  db.ref('gdv_shops/'+uid+'/info/licenceStatut').set('impaye',function(err){
+    btn.disabled=false;
+    if(err){alert('Erreur: '+err.message);return;}
+    btn.textContent='Impaye';
     alert('Boutique marquee comme impayee.');
-    btn.disabled=false;btn.textContent='Impaye';
-  }).catch(function(e){btn.disabled=false;alert('Erreur: '+e.message);});
+  });
 }
 
 // Initialiser licences pour les boutiques existantes sans dateExpiration
 function agvInitLicences(){
   if(!confirm('Initialiser les licences pour toutes les boutiques sans date expiration ?\nCela donnera 60 jours a partir de leur date de creation.')) return;
+  var btn=event&&event.target?event.target:null;
+  if(btn){btn.disabled=true;btn.textContent='Chargement...';}
   db.ref('gdv_shops').once('value',function(snap){
-    var count=0,updated=0;
-    var promises=[];
+    var count=0;
+    var toUpdate=[];
     snap.forEach(function(child){
       var info=child.val()&&child.val().info;
       if(!info) return;
@@ -1181,26 +1185,41 @@ function agvInitLicences(){
         var dateCreation=info.dateCreation?new Date(info.dateCreation):new Date();
         var dateExp=new Date(dateCreation.getTime()+60*24*60*60*1000);
         var uid=info.uid||child.key;
-        // UNIQUEMENT les champs manquants - rien d'autre
-        promises.push(
-          db.ref('gdv_shops/'+uid+'/info/dateExpiration').set(dateExp.toISOString()).then(function(){
-            return db.ref('gdv_shops/'+uid+'/info/licenceStatut').set('essai');
-          }).then(function(){
-            return db.ref('gdv_shops/'+uid+'/info/licencePeriode').set('essai_60j');
-          }).then(function(){updated++;})
-        );
+        toUpdate.push({uid:uid,dateExp:dateExp.toISOString()});
       }
     });
-    Promise.all(promises).then(function(){
-      alert('Initialisation terminee !\n'+count+' boutique(s) trouvee(s)\n'+updated+' boutique(s) mise(s) a jour avec 60 jours dessai.');
-      if(window._devOverlay){
+    if(toUpdate.length===0){
+      if(btn){btn.disabled=false;btn.textContent='Init licences';}
+      alert('Toutes les boutiques ont deja une licence. Rien a mettre a jour.');
+      return;
+    }
+    // Mise a jour sequentielle simple sans Promise.all
+    var idx=0;
+    function updateNext(){
+      if(idx>=toUpdate.length){
+        if(btn){btn.disabled=false;btn.textContent='Init licences';}
+        alert('Initialisation terminee !\n'+count+' boutique(s) au total\n'+toUpdate.length+' boutique(s) mise(s) a jour avec 60 jours dessai.');
+        // Recharger le panel
         db.ref('gdv_shops').once('value',function(snap2){
           var shops=[];
-          snap2.forEach(function(c){var info=c.val()&&c.val().info;if(info)shops.push(info);});
+          snap2.forEach(function(c){var i2=c.val()&&c.val().info;if(i2)shops.push(i2);});
           agvRenderDevShops(shops);
         });
+        return;
       }
-    }).catch(function(e){alert('Erreur: '+e.message);});
+      var item=toUpdate[idx];idx++;
+      db.ref('gdv_shops/'+item.uid+'/info/dateExpiration').set(item.dateExp,function(){
+        db.ref('gdv_shops/'+item.uid+'/info/licenceStatut').set('essai',function(){
+          db.ref('gdv_shops/'+item.uid+'/info/licencePeriode').set('essai_60j',function(){
+            updateNext();
+          });
+        });
+      });
+    }
+    updateNext();
+  },function(err){
+    if(btn){btn.disabled=false;btn.textContent='Init licences';}
+    alert('Erreur Firebase: '+err.message);
   });
 }
 
