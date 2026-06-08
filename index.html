@@ -421,12 +421,29 @@ function landingGoShop(){
   var cachedShop=null;
   try{ cachedShop=JSON.parse(localStorage.getItem('agv_shop_'+code)||'null'); }catch(e){}
   if(cachedShop && !cachedShop.blocked){
-    if(btn){ btn.textContent='Accéder →'; btn.disabled=false; }
-    window._lastShopCode=code;
-    window._shopLoginData=cachedShop;
-    agvShow('agv-shop-login');
-    agvLoadShopLogin(code); // Charge depuis cache instantanément
-    return;
+    // Vérifier expiration même depuis le cache
+    if(cachedShop.dateExpiration && cachedShop.licenceStatut!=='actif'){
+      var _expC=new Date(cachedShop.dateExpiration);
+      if(new Date()>_expC){
+        // Forcer rechargement depuis Firebase pour bloquer
+        try{localStorage.removeItem('agv_shop_'+code);}catch(e){}
+        // Continuer vers Firebase ci-dessous
+      } else {
+        if(btn){ btn.textContent='Accéder →'; btn.disabled=false; }
+        window._lastShopCode=code;
+        window._shopLoginData=cachedShop;
+        agvShow('agv-shop-login');
+        agvLoadShopLogin(code);
+        return;
+      }
+    } else {
+      if(btn){ btn.textContent='Accéder →'; btn.disabled=false; }
+      window._lastShopCode=code;
+      window._shopLoginData=cachedShop;
+      agvShow('agv-shop-login');
+      agvLoadShopLogin(code);
+      return;
+    }
   }
   // Recherche via index (rapide) ou Firebase complet
   db.ref('gdv_codes/'+code).once('value',function(snapCode){
@@ -829,6 +846,8 @@ function agvLaunchApp(shop){
 
   currentRole='fondateur';
   currentGerantId=null;
+  // Afficher le chronometre de licence
+  setTimeout(function(){ agvAfficherChrono(shop); }, 1200);
 }
 
 // ===== ADMIN =====
@@ -1330,6 +1349,7 @@ function agvRenderDevShops(shops){
           '</div>'+
           '<button data-uid="'+s.uid+'" data-blocked="'+(isBlocked?'1':'0')+'" onclick="agvToggleBlock(this)" style="padding:5px 10px;border:none;border-radius:6px;background:'+toggleBg+';color:#fff;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit">'+toggleLabel+'</button>'+
           '<button data-uid="'+s.uid+'" data-name="'+s.entreprise+'" onclick="agvDeleteShop(this)" style="padding:5px 10px;border:1px solid rgba(239,68,68,0.4);border-radius:6px;background:transparent;color:#ef4444;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit">Supprimer</button>'+
+          agvLicenceCard(s)+
           '</div></div></div>';
       });
       h+='</div>';
