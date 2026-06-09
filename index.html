@@ -1,103 +1,3 @@
-function refreshVentesHistory(){
-  var _filtre = window._venteFiltre || 'tout';
-  var _filtreDate = window._venteDate || '';
-  var _filtreMois = window._venteMois || '';
-  var nowD = new Date();
-  var isFond = currentRole==='fondateur';
-  var gRef = getCurrentGerant();
-  var canDel = isFond||(gRef&&gRef.permDel);
-
-  // Trier toutes les ventes par date decroissante
-  var _sorted = [...ventes].sort((a,b)=>{
-    const ta = a.ts ? new Date(a.ts).getTime() : (a.date ? new Date(a.date).getTime() : 0);
-    const tb = b.ts ? new Date(b.ts).getTime() : (b.date ? new Date(b.date).getTime() : 0);
-    return tb - ta;
-  });
-
-  // Appliquer le filtre
-  var _filtered = _sorted.filter(v=>{
-    const vDate = v.ts ? new Date(v.ts) : (v.date ? new Date(v.date) : null);
-    if(!vDate) return _filtre === 'tout';
-    if(_filtre === 'jour'){
-      const d = _filtreDate || nowD.toISOString().slice(0,10);
-      return vDate.toISOString().slice(0,10) === d;
-    }
-    if(_filtre === 'mois'){
-      const m = _filtreMois || (nowD.getFullYear()+'-'+String(nowD.getMonth()+1).padStart(2,'0'));
-      return vDate.toISOString().slice(0,7) === m;
-    }
-    return true;
-  });
-
-  const sorties = _filtered.filter(v=>v.type!=='entree');
-  const totalV = sorties.reduce((s,v)=>s+v.total,0);
-  const depMk = getMonthKey(new Date());
-  const depsMois = depenses.filter(d=>getMonthKey(d.date)===depMk);
-  const totalDep = depsMois.reduce((s,d)=>s+d.montant,0);
-  const totalBeneficeV = sorties.reduce((s,v)=>s+(v.benefice!=null?v.benefice:v.total),0);
-  const benNet = totalBeneficeV - totalDep;
-  const todayISO = nowD.toISOString().slice(0,10);
-
-  // Options mois disponibles
-  const moisDispo = {};
-  ventes.forEach(v=>{
-    const d = v.ts ? new Date(v.ts) : (v.date ? new Date(v.date) : null);
-    if(d){const mk=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');moisDispo[mk]=d.toLocaleDateString('fr-FR',{month:'long',year:'numeric'});}
-  });
-  const moisOpts = Object.keys(moisDispo).sort().reverse().map(mk=>
-    `<option value="${mk}"${(_filtreMois===mk)?' selected':''}>${moisDispo[mk]}</option>`
-  ).join('');
-
-  const barreFiltre = `<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:10px;padding:8px;background:var(--bg2);border-radius:8px">
-    <span style="font-size:11px;font-weight:700;color:var(--text3)">Filtrer:</span>
-    <button onclick="agvVenteFiltre('tout')" style="padding:4px 10px;border:none;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;background:${_filtre==='tout'?'var(--accent)':'var(--border)'};color:${_filtre==='tout'?'#fff':'var(--text2)'}">Tout (${ventes.length})</button>
-    <button onclick="agvVenteFiltre('jour')" style="padding:4px 10px;border:none;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;background:${_filtre==='jour'?'var(--accent)':'var(--border)'};color:${_filtre==='jour'?'#fff':'var(--text2)'}">Jour</button>
-    <input type="date" id="agv-vente-date" value="${_filtreDate||todayISO}" onchange="agvVenteDateChange(this.value)" style="padding:3px 7px;border:1px solid var(--border);border-radius:6px;font-size:11px;font-family:inherit;background:var(--bg);color:var(--text)">
-    <button onclick="agvVenteFiltre('mois')" style="padding:4px 10px;border:none;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;background:${_filtre==='mois'?'var(--accent)':'var(--border)'};color:${_filtre==='mois'?'#fff':'var(--text2)'}">Mois</button>
-    ${moisOpts?`<select onchange="agvVenteMoisChange(this.value)" style="padding:3px 7px;border:1px solid var(--border);border-radius:6px;font-size:11px;font-family:inherit;background:var(--bg);color:var(--text)">${moisOpts}</select>`:''}
-    <span style="margin-left:auto;font-size:11px;color:var(--text3)">${_filtered.length} mouvement(s)</span>
-  </div>`;
-
-  const historiqueHtml = _filtered.length ? _filtered.map(v=>{
-    const vDate = v.ts ? new Date(v.ts) : (v.date ? new Date(v.date) : null);
-    const dateStr = vDate ? vDate.toLocaleDateString('fr-FR') : '—';
-    return `<div class="sale-log-item">
-      <div style="font-size:10px;padding:1px 5px;border-radius:3px;background:${v.type==='entree'?'var(--green-bg)':'var(--red-bg)'};color:${v.type==='entree'?'var(--green)':'var(--red)'};font-weight:700;white-space:nowrap;flex-shrink:0">${v.type==='entree'?'📥 ENT':'📤 SOR'}</div>
-      <div style="font-size:11px;font-family:DM Mono,monospace;color:var(--text3);width:52px">${v.ref||''}</div>
-      <div class="sale-log-name">${v.name}</div>
-      <div class="sale-log-qty">${v.type==='entree'?'+':'×'}${v.qty}</div>
-      <div class="sale-log-amount">${v.type==='entree'?'—':fmtGNF(v.total)}</div>
-      <div style="font-size:11px;color:var(--text3);margin-left:4px">${dateStr}</div>
-      ${isFond?`<button class='row-btn' onclick='openEditVente(${v.id})' style='opacity:1;margin-left:4px;width:22px;height:22px;font-size:10px;color:var(--accent)'>✏</button>`:''}
-      ${canDel?`<button class='row-btn del' onclick='deleteVente(${v.id})' style='opacity:1;margin-left:2px;width:22px;height:22px;font-size:10px'>🗑</button>`:''}
-    </div>`;
-  }).join('') : `<div class="empty"><div class="empty-icon">📋</div><div class="empty-text">Aucun mouvement${_filtre==='jour'?' pour ce jour':_filtre==='mois'?' pour ce mois':''}</div></div>`;
-
-  const container = document.getElementById('ventes-history');
-  if(container) container.innerHTML = barreFiltre + historiqueHtml;
-
-  document.getElementById('ventes-total').innerHTML=`
-    <div style="display:flex;gap:16px;justify-content:flex-end;flex-wrap:wrap">
-      <div style="text-align:right"><div style="font-size:11px;color:var(--text3);text-transform:uppercase;font-weight:600">💰 Chiffre d'affaires</div><div style="font-size:16px;font-weight:700;color:var(--green)">${fmtGNF(totalV)}</div></div>
-      <div style="text-align:right"><div style="font-size:11px;color:var(--text3);text-transform:uppercase;font-weight:600">📈 Bénéfice net</div><div style="font-size:16px;font-weight:700;color:${benNet>=0?'var(--blue)':'var(--red)'}">${fmtGNF(benNet)}</div><div style="font-size:10px;color:var(--text3)">CA−achat−dépenses</div></div>
-    </div>`;
-}
-
-function agvVenteFiltre(f){
-  window._venteFiltre=f;
-  if(f==='tout'){window._venteDate='';window._venteMois='';}
-  refreshVentesHistory();
-}
-function agvVenteDateChange(d){
-  window._venteFiltre='jour';
-  window._venteDate=d;
-  refreshVentesHistory();
-}
-function agvVenteMoisChange(m){
-  window._venteFiltre='mois';
-  window._venteMois=m;
-  refreshVentesHistory();
-}
 <!DOCTYPE html>
 <html lang="fr">
 <head>
@@ -917,10 +817,8 @@ function agvLaunchApp(shop){
     if(typeof renderDashboard==='function')renderDashboard();
     if(typeof buildCatFilters==='function')buildCatFilters();
     if(typeof renderAlerts==='function')renderAlerts();
-    // MAJ badge nb-produits
-    var _nbP=document.getElementById('nb-produits');
-    if(_nbP) _nbP.textContent=products.length;
-    // MAJ historique ventes si onglet ventes actif
+    const _nb=document.getElementById('nb-produits');
+    if(_nb) _nb.textContent=products.length;
     if(typeof refreshVentesHistory==='function') refreshVentesHistory();
   }
   // 1. Charger le cache IMMEDIATEMENT (0ms d'attente)
@@ -1184,8 +1082,8 @@ function agvAfficherChrono(shop){
   if(jours<=0&&!isPaye) return;
   var bg=jours>30?'#f59e0b':jours>10?'#f97316':'#ef4444';
   var txt=isPaye?
-    'Licence active - expire le '+expD.toLocaleDateString('fr-FR')+' ('+jours+' jours)':
-    'Essai: '+jours+' jour'+(jours>1?'s':'')+' restant'+(jours>1?'s':'')+' - Contactez +224 623 030 403';
+    'Licence active - expire le '+expD.toLocaleDateString('fr-FR')+' | '+jours+' jour'+(jours>1?'s':'')+' restant'+(jours>1?'s':''):
+    jours+' jour'+(jours>1?'s':'')+' restant'+(jours>1?'s':'')+' | Expire le '+expD.toLocaleDateString('fr-FR')+' | Contactez +224 623 030 403';
   var ban=document.createElement('div');
   ban.id='agv-chrono-banner';
   ban.style.cssText='position:fixed;bottom:0;left:0;right:0;z-index:8888;background:'+bg+';color:#fff;padding:8px 16px;font-size:12px;font-weight:700;font-family:sans-serif;display:flex;align-items:center;justify-content:center;gap:10px;text-align:center';
@@ -5185,105 +5083,273 @@ function deleteVente(id){
 
 // ==================== refreshVentesHistory ====================
 function refreshVentesHistory(){
-  var _filtre = window._venteFiltre || 'tout';
-  var _filtreDate = window._venteDate || '';
-  var _filtreMois = window._venteMois || '';
-  var nowD = new Date();
-  var isFond = currentRole==='fondateur';
-  var gRef = getCurrentGerant();
-  var canDel = isFond||(gRef&&gRef.permDel);
+  const _f = window._ventF||'tout';
+  const _fd = window._ventD||'';
+  const _fm = window._ventM||'';
+  const nowD = new Date();
+  const todayISO = nowD.toISOString().slice(0,10);
+  const isFond=currentRole==='fondateur';
+  const gRef=getCurrentGerant();
+  const canDel=isFond||(gRef&&gRef.permDel);
 
-  // Trier toutes les ventes par date decroissante
-  var _sorted = [...ventes].sort((a,b)=>{
-    const ta = a.ts ? new Date(a.ts).getTime() : (a.date ? new Date(a.date).getTime() : 0);
-    const tb = b.ts ? new Date(b.ts).getTime() : (b.date ? new Date(b.date).getTime() : 0);
-    return tb - ta;
+  // Trier par date decroissante
+  const _sorted=[...ventes].sort((a,b)=>{
+    const ta=a.ts?new Date(a.ts).getTime():(a.date?new Date(a.date).getTime():0);
+    const tb=b.ts?new Date(b.ts).getTime():(b.date?new Date(b.date).getTime():0);
+    return tb-ta;
   });
 
-  // Appliquer le filtre
-  var _filtered = _sorted.filter(v=>{
-    const vDate = v.ts ? new Date(v.ts) : (v.date ? new Date(v.date) : null);
-    if(!vDate) return _filtre === 'tout';
-    if(_filtre === 'jour'){
-      const d = _filtreDate || nowD.toISOString().slice(0,10);
-      return vDate.toISOString().slice(0,10) === d;
-    }
-    if(_filtre === 'mois'){
-      const m = _filtreMois || (nowD.getFullYear()+'-'+String(nowD.getMonth()+1).padStart(2,'0'));
-      return vDate.toISOString().slice(0,7) === m;
-    }
+  // Filtrer
+  const _vf=_sorted.filter(v=>{
+    const vd=v.ts?new Date(v.ts):(v.date?new Date(v.date):null);
+    if(!vd) return _f==='tout';
+    if(_f==='jour'){const d=_fd||todayISO;return vd.toISOString().slice(0,10)===d;}
+    if(_f==='mois'){const m=_fm||(nowD.getFullYear()+'-'+String(nowD.getMonth()+1).padStart(2,'0'));return vd.toISOString().slice(0,7)===m;}
     return true;
   });
 
-  const sorties = _filtered.filter(v=>v.type!=='entree');
-  const totalV = sorties.reduce((s,v)=>s+v.total,0);
-  const depMk = getMonthKey(new Date());
-  const depsMois = depenses.filter(d=>getMonthKey(d.date)===depMk);
-  const totalDep = depsMois.reduce((s,d)=>s+d.montant,0);
-  const totalBeneficeV = sorties.reduce((s,v)=>s+(v.benefice!=null?v.benefice:v.total),0);
-  const benNet = totalBeneficeV - totalDep;
-  const todayISO = nowD.toISOString().slice(0,10);
+  const sorties=_vf.filter(v=>v.type!=='entree');
+  const totalV=sorties.reduce((s,v)=>s+v.total,0);
+  const depMk=getMonthKey(new Date());
+  const depsMois=depenses.filter(d=>getMonthKey(d.date)===depMk);
+  const totalDep=depsMois.reduce((s,d)=>s+d.montant,0);
+  const totalBeneficeV=sorties.reduce((s,v)=>s+(v.benefice!=null?v.benefice:v.total),0);
+  const benNet=totalBeneficeV-totalDep;
 
-  // Options mois disponibles
-  const moisDispo = {};
+  // Mois disponibles depuis les ventes
+  const _mois={};
   ventes.forEach(v=>{
-    const d = v.ts ? new Date(v.ts) : (v.date ? new Date(v.date) : null);
-    if(d){const mk=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');moisDispo[mk]=d.toLocaleDateString('fr-FR',{month:'long',year:'numeric'});}
+    const d=v.ts?new Date(v.ts):(v.date?new Date(v.date):null);
+    if(d){const mk=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');_mois[mk]=d.toLocaleDateString('fr-FR',{month:'long',year:'numeric'});}
   });
-  const moisOpts = Object.keys(moisDispo).sort().reverse().map(mk=>
-    `<option value="${mk}"${(_filtreMois===mk)?' selected':''}>${moisDispo[mk]}</option>`
-  ).join('');
+  const moisOpts=Object.keys(_mois).sort().reverse().map(mk=>`<option value="${mk}"${_fm===mk?' selected':''}>${_mois[mk]}</option>`).join('');
 
-  const barreFiltre = `<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:10px;padding:8px;background:var(--bg2);border-radius:8px">
-    <span style="font-size:11px;font-weight:700;color:var(--text3)">Filtrer:</span>
-    <button onclick="agvVenteFiltre('tout')" style="padding:4px 10px;border:none;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;background:${_filtre==='tout'?'var(--accent)':'var(--border)'};color:${_filtre==='tout'?'#fff':'var(--text2)'}">Tout (${ventes.length})</button>
-    <button onclick="agvVenteFiltre('jour')" style="padding:4px 10px;border:none;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;background:${_filtre==='jour'?'var(--accent)':'var(--border)'};color:${_filtre==='jour'?'#fff':'var(--text2)'}">Jour</button>
-    <input type="date" id="agv-vente-date" value="${_filtreDate||todayISO}" onchange="agvVenteDateChange(this.value)" style="padding:3px 7px;border:1px solid var(--border);border-radius:6px;font-size:11px;font-family:inherit;background:var(--bg);color:var(--text)">
-    <button onclick="agvVenteFiltre('mois')" style="padding:4px 10px;border:none;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;background:${_filtre==='mois'?'var(--accent)':'var(--border)'};color:${_filtre==='mois'?'#fff':'var(--text2)'}">Mois</button>
-    ${moisOpts?`<select onchange="agvVenteMoisChange(this.value)" style="padding:3px 7px;border:1px solid var(--border);border-radius:6px;font-size:11px;font-family:inherit;background:var(--bg);color:var(--text)">${moisOpts}</select>`:''}
-    <span style="margin-left:auto;font-size:11px;color:var(--text3)">${_filtered.length} mouvement(s)</span>
+  const btnStyle=(active)=>`padding:4px 9px;border:none;border-radius:5px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit;background:${active?'var(--accent)':'var(--border)'};color:${active?'#fff':'var(--text2)'}`;
+
+  const barre=`<div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;margin-bottom:8px;padding:7px 8px;background:var(--bg2);border-radius:8px">
+    <span style="font-size:11px;font-weight:700;color:var(--text3)">Tri:</span>
+    <button onclick="window._ventF='tout';window._ventD='';window._ventM='';refreshVentesHistory()" style="${btnStyle(_f==='tout')}">Tout (${ventes.length})</button>
+    <button onclick="window._ventF='jour';refreshVentesHistory()" style="${btnStyle(_f==='jour')}">Par jour</button>
+    <input type="date" value="${_fd||todayISO}" onchange="window._ventF='jour';window._ventD=this.value;refreshVentesHistory()" style="padding:3px 6px;border:1px solid var(--border);border-radius:5px;font-size:11px;background:var(--bg);color:var(--text)">
+    <button onclick="window._ventF='mois';refreshVentesHistory()" style="${btnStyle(_f==='mois')}">Par mois</button>
+    ${moisOpts?`<select onchange="window._ventF='mois';window._ventM=this.value;refreshVentesHistory()" style="padding:3px 6px;border:1px solid var(--border);border-radius:5px;font-size:11px;background:var(--bg);color:var(--text)">${moisOpts}</select>`:''}
+    <span style="margin-left:auto;font-size:10px;color:var(--text3)">${_vf.length} mouv.</span>
   </div>`;
 
-  const historiqueHtml = _filtered.length ? _filtered.map(v=>{
-    const vDate = v.ts ? new Date(v.ts) : (v.date ? new Date(v.date) : null);
-    const dateStr = vDate ? vDate.toLocaleDateString('fr-FR') : '—';
+  document.getElementById('ventes-history').innerHTML=barre+(_vf.length?_vf.map(v=>{
+    const vd=v.ts?new Date(v.ts):(v.date?new Date(v.date):null);
+    const ds=vd?vd.toLocaleDateString('fr-FR'):'—';
     return `<div class="sale-log-item">
       <div style="font-size:10px;padding:1px 5px;border-radius:3px;background:${v.type==='entree'?'var(--green-bg)':'var(--red-bg)'};color:${v.type==='entree'?'var(--green)':'var(--red)'};font-weight:700;white-space:nowrap;flex-shrink:0">${v.type==='entree'?'📥 ENT':'📤 SOR'}</div>
       <div style="font-size:11px;font-family:DM Mono,monospace;color:var(--text3);width:52px">${v.ref||''}</div>
       <div class="sale-log-name">${v.name}</div>
       <div class="sale-log-qty">${v.type==='entree'?'+':'×'}${v.qty}</div>
       <div class="sale-log-amount">${v.type==='entree'?'—':fmtGNF(v.total)}</div>
-      <div style="font-size:11px;color:var(--text3);margin-left:4px">${dateStr}</div>
+      <div style="font-size:11px;color:var(--text3);margin-left:4px">${ds}</div>
       ${isFond?`<button class='row-btn' onclick='openEditVente(${v.id})' style='opacity:1;margin-left:4px;width:22px;height:22px;font-size:10px;color:var(--accent)'>✏</button>`:''}
       ${canDel?`<button class='row-btn del' onclick='deleteVente(${v.id})' style='opacity:1;margin-left:2px;width:22px;height:22px;font-size:10px'>🗑</button>`:''}
     </div>`;
-  }).join('') : `<div class="empty"><div class="empty-icon">📋</div><div class="empty-text">Aucun mouvement${_filtre==='jour'?' pour ce jour':_filtre==='mois'?' pour ce mois':''}</div></div>`;
+  }).join(''):`<div class="empty"><div class="empty-icon">📋</div><div class="empty-text">Aucun mouvement${_f==='jour'?' ce jour':_f==='mois'?' ce mois':''}</div></div>`);
 
-  const container = document.getElementById('ventes-history');
-  if(container) container.innerHTML = barreFiltre + historiqueHtml;
-
+  const benNetGlobal=ventes.filter(v=>v.type!=='entree').reduce((s,v)=>s+(v.benefice!=null?v.benefice:v.total),0)-totalDep;
   document.getElementById('ventes-total').innerHTML=`
     <div style="display:flex;gap:16px;justify-content:flex-end;flex-wrap:wrap">
       <div style="text-align:right"><div style="font-size:11px;color:var(--text3);text-transform:uppercase;font-weight:600">💰 Chiffre d'affaires</div><div style="font-size:16px;font-weight:700;color:var(--green)">${fmtGNF(totalV)}</div></div>
-      <div style="text-align:right"><div style="font-size:11px;color:var(--text3);text-transform:uppercase;font-weight:600">📈 Bénéfice net</div><div style="font-size:16px;font-weight:700;color:${benNet>=0?'var(--blue)':'var(--red)'}">${fmtGNF(benNet)}</div><div style="font-size:10px;color:var(--text3)">CA−achat−dépenses</div></div>
+      <div style="text-align:right"><div style="font-size:11px;color:var(--text3);text-transform:uppercase;font-weight:600">📈 Bénéfice net</div><div style="font-size:16px;font-weight:700;color:${benNetGlobal>=0?'var(--blue)':'var(--red)'}">${fmtGNF(benNetGlobal)}</div><div style="font-size:10px;color:var(--text3)">CA−achat−dépenses</div></div>
     </div>`;
 }
 
-function agvVenteFiltre(f){
-  window._venteFiltre=f;
-  if(f==='tout'){window._venteDate='';window._venteMois='';}
-  refreshVentesHistory();
+
+// ==================== RESET ====================
+function resetAllData(){
+  if(currentRole!=='fondateur'){showToast('Réservé au Fondateur');return}
+  document.getElementById('reset-code-confirm').value='';
+  document.getElementById('reset-overlay').classList.add('open');
 }
-function agvVenteDateChange(d){
-  window._venteFiltre='jour';
-  window._venteDate=d;
-  refreshVentesHistory();
+function closeResetModal(e){
+  if(e&&e.target!==document.getElementById('reset-overlay'))return;
+  document.getElementById('reset-overlay').classList.remove('open');
 }
-function agvVenteMoisChange(m){
-  window._venteFiltre='mois';
-  window._venteMois=m;
-  refreshVentesHistory();
+function confirmReset(){
+  const code=document.getElementById('reset-code-confirm').value.trim();
+  const savedCode=localStorage.getItem(window.AGV_KEY ? window.AGV_KEY('fondateur_code') : 'agv_fondateur_code')||FONDATEUR_CODE;
+  if(code!==savedCode){showToast('Code incorrect');return}
+  if(!confirm('DERNIÈRE CONFIRMATION : toutes les données seront effacées. Continuer ?'))return;
+  // Réinitialisation
+  ventes=[];
+  depenses=[];
+  gerants=[{id:1,nom:'Fondateur',code:savedCode,type:'salaire',salaire:0,pct:0,bloque:false,permVentes:true,permDep:true}];
+  products=RAW_DATA.map((p,i)=>({...p,id:i+1}));
+  saveAll();
+  buildCatFilters();buildDatalist();renderDashboard();renderAlerts();buildMonthFilters();
+  document.getElementById('reset-overlay').classList.remove('open');
+  showToast('✓ Toutes les données ont été réinitialisées');
 }
+
+// ==================== VENTE RAPIDE ====================
+function openVenteRapide(){
+  const g=getCurrentGerant();
+  const isFondateur=currentRole==='fondateur';
+  if(!isFondateur&&(!g||!g.permVentes)){showToast('Vous n\'avez pas la permission de saisir des ventes.');return}
+  const dl=document.getElementById('vr-product-list');
+  dl.innerHTML=products.map(p=>`<option value="${p.designation} (${p.reference})">`).join('');
+  document.getElementById('vr-type-sortie').checked=true;
+  vrTypeChange();
+  document.getElementById('vr-product').value='';
+  document.getElementById('vr-qty').value=1;
+  document.getElementById('vr-prix').value='';
+  document.getElementById('vr-preview').textContent='Sélectionnez un produit';
+  document.getElementById('vr-stock-info').textContent='';
+  vrUpdateRecent();
+  vrUpdateDayTotals();
+  // Initialiser les sélecteurs de date à aujourd'hui
+  const today = new Date();
+  vrUpdateDays(today.getMonth(), today.getFullYear(), today.getDate());
+  const monthSel = document.getElementById('vr-date-month');
+  if(monthSel) monthSel.value = today.getMonth();
+  // Années dynamiques : N-2 → N+1 (se met à jour automatiquement chaque année)
+  const yearSel = document.getElementById('vr-date-year');
+  if(yearSel){
+    yearSel.innerHTML = '';
+    const yr = today.getFullYear();
+    for(let y = yr-2; y <= yr+1; y++){
+      const opt = document.createElement('option');
+      opt.value = y; opt.textContent = y;
+      if(y === yr) opt.selected = true;
+      yearSel.appendChild(opt);
+    }
+  }
+  document.getElementById('vrapide-overlay').classList.add('open');
+  setTimeout(()=>document.getElementById('vr-product').focus(),120);
+}
+function closeVenteRapide(e){
+  if(e&&e.target!==document.getElementById('vrapide-overlay'))return;
+  document.getElementById('vrapide-overlay').classList.remove('open');
+}
+function vrTypeChange(){
+  const isSortie=document.getElementById('vr-type-sortie').checked;
+  const lblS=document.getElementById('vr-type-sortie-label');
+  const lblE=document.getElementById('vr-type-entree-label');
+  const btn=document.getElementById('vr-confirm-btn');
+  const prixG=document.getElementById('vr-prix-group');
+  if(isSortie){
+    lblS.style.border='2px solid var(--red)';lblS.style.color='var(--red)';lblS.style.background='var(--red-bg)';
+    lblE.style.border='2px solid var(--border)';lblE.style.color='var(--text3)';lblE.style.background='transparent';
+    btn.textContent='✓ Confirmer la sortie';btn.className='btn btn-primary';
+    prixG.style.display='';
+  } else {
+    lblE.style.border='2px solid var(--green)';lblE.style.color='var(--green)';lblE.style.background='var(--green-bg)';
+    lblS.style.border='2px solid var(--border)';lblS.style.color='var(--text3)';lblS.style.background='transparent';
+    btn.textContent='✓ Confirmer l\'entrée';btn.className='btn btn-success';
+    prixG.style.display='none';
+  }
+  updateVRPreview();
+}
+function updateVRPreview(){
+  const val=document.getElementById('vr-product').value;
+  const p=getProductFromInput(val);
+  const qty=parseInt(document.getElementById('vr-qty').value)||1;
+  const stockInfo=document.getElementById('vr-stock-info');
+  const prev=document.getElementById('vr-preview');
+  const isSortie=document.getElementById('vr-type-sortie').checked;
+  if(p){
+    if(isSortie){
+      if(!document.getElementById('vr-prix').value)document.getElementById('vr-prix').value=p.prix_vente||p.prix_achat;
+      const prixU=parseInt(document.getElementById('vr-prix').value)||0;
+      const ok=p.stock_initial>=qty;
+      stockInfo.innerHTML=`<span style="color:${ok?'var(--green)':'var(--red)'}">📦 Stock : <strong>${p.stock_initial}</strong> ${p.unite||''}</span>`;
+      prev.style.background=ok?'var(--accent-light)':'var(--red-bg)';prev.style.border=ok?'':'1px solid var(--red-border)';prev.style.color=ok?'var(--accent)':'var(--red)';
+      prev.textContent=ok?`${p.designation} × ${qty} = ${fmtGNF(qty*prixU)}`:`⚠ Stock insuffisant (dispo : ${p.stock_initial})`;
+    } else {
+      stockInfo.innerHTML=`<span style="color:var(--green)">📦 Stock actuel : <strong>${p.stock_initial}</strong> → après entrée : <strong>${p.stock_initial+qty}</strong></span>`;
+      prev.style.background='var(--green-bg)';prev.style.border='1px solid var(--green-border)';prev.style.color='var(--green)';
+      prev.textContent=`${p.designation} + ${qty} unité(s)`;
+    }
+  } else {
+    stockInfo.textContent='';
+    prev.style.background='var(--green-bg)';prev.style.border='1px solid var(--green-border)';prev.style.color='var(--green)';
+    prev.textContent='Sélectionnez un produit';
+  }
+}
+// Recalcule les jours disponibles selon mois et année (gère les mois courts + bissextile)
+function vrUpdateDays(month, year, selectedDay){
+  const daySelect = document.getElementById('vr-date-day');
+  if(!daySelect) return;
+  const currentDay = selectedDay || parseInt(daySelect.value) || 1;
+  const daysInMonth = new Date(parseInt(year), parseInt(month)+1, 0).getDate();
+  daySelect.innerHTML = '';
+  for(let d=1; d<=daysInMonth; d++){
+    const opt = document.createElement('option');
+    opt.value = d; opt.textContent = String(d).padStart(2,'0');
+    if(d === Math.min(currentDay, daysInMonth)) opt.selected = true;
+    daySelect.appendChild(opt);
+  }
+}
+
+// Retourne l'ISO string de la date choisie (avec l'heure actuelle)
+function vrGetSelectedDate(){
+  const day = document.getElementById('vr-date-day');
+  const month = document.getElementById('vr-date-month');
+  const year = document.getElementById('vr-date-year');
+  if(day && month && year){
+    const d = new Date(parseInt(year.value), parseInt(month.value), parseInt(day.value),
+      new Date().getHours(), new Date().getMinutes(), new Date().getSeconds());
+    if(!isNaN(d.getTime())) return d.toISOString();
+  }
+  return new Date().toISOString();
+}
+
+function saveVenteRapide(){
+  const val=document.getElementById('vr-product').value;
+  const qty=parseInt(document.getElementById('vr-qty').value)||1;
+  const prixU=parseInt(document.getElementById('vr-prix').value)||0;
+  const isSortie=document.getElementById('vr-type-sortie').checked;
+  const p=getProductFromInput(val);
+  if(!p){showToast('Produit introuvable');return}
+  if(isSortie&&p.stock_initial<qty){showToast('Stock insuffisant');return}
+  if(isSortie&&!prixU){showToast('Entrez un prix unitaire');return}
+  const idx=products.findIndex(x=>x.id===p.id);
+  if(isSortie){
+    products[idx].stock_initial-=qty;
+    products[idx].total=products[idx].stock_initial*products[idx].prix_achat;
+    ventes.unshift({id:Date.now(),name:p.designation,ref:p.reference,qty,prixU,prixAchat:p.prix_achat||0,total:qty*prixU,benefice:qty*(prixU-(p.prix_achat||0)),type:'sortie',ts:vrGetSelectedDate(),gerantId:currentGerantId});
+  } else {
+    products[idx].stock_initial+=qty;
+    products[idx].total=products[idx].stock_initial*products[idx].prix_achat;
+    ventes.unshift({id:Date.now(),name:p.designation,ref:p.reference,qty,prixU:0,total:0,type:'entree',ts:vrGetSelectedDate(),gerantId:currentGerantId});
+  }
+  saveAll();renderDashboard();refreshVentesHistory();
+  document.getElementById('vr-product').value='';
+  document.getElementById('vr-qty').value=1;
+  document.getElementById('vr-prix').value='';
+  document.getElementById('vr-preview').textContent='Sélectionnez un produit';
+  document.getElementById('vr-stock-info').textContent='';
+  vrUpdateRecent();
+  showToast(isSortie?`📤 ${p.designation} ×${qty} — ${fmtGNF(qty*prixU)}`:`📥 Entrée : ${p.designation} +${qty}`);
+  setTimeout(()=>document.getElementById('vr-product').focus(),100);
+}
+function vrUpdateRecent(){
+  const recent=ventes.slice(0,5);
+  const wrap=document.getElementById('vr-recent');
+  const list=document.getElementById('vr-recent-list');
+  if(!wrap||!list)return;
+  if(!recent.length){wrap.style.display='none';vrUpdateDayTotals();return;}
+  wrap.style.display='block';
+  list.innerHTML=recent.map(v=>`<div style="display:flex;align-items:center;gap:6px;padding:5px 0;border-bottom:1px solid var(--border);font-size:12px"><span style="font-size:10px;padding:1px 4px;border-radius:3px;background:${v.type==='entree'?'var(--green-bg)':'var(--red-bg)'};color:${v.type==='entree'?'var(--green)':'var(--red)'};font-weight:700">${v.type==='entree'?'ENT':'SOR'}</span><div style="font-family:DM Mono,monospace;color:var(--text3);width:48px">${v.ref||''}</div><div style="flex:1;font-weight:500">${v.name}</div><div style="color:var(--text3)">${v.type==='entree'?'+':'×'}${v.qty}</div><div style="font-weight:700;color:${v.type==='entree'?'var(--green)':'var(--accent)'}">${v.type==='entree'?'—':fmtGNF(v.total)}</div></div>`).join('');
+  vrUpdateDayTotals();
+}
+function vrUpdateDayTotals(){
+  const today=new Date().toISOString().slice(0,10);
+  const ventesAujourdhui=ventes.filter(v=>v.type!=='entree'&&getDayKey(v.ts)===today);
+  const caJour=ventesAujourdhui.reduce((s,v)=>s+v.total,0);
+  const benJour=ventesAujourdhui.reduce((s,v)=>s+(v.benefice!=null?v.benefice:v.total),0);
+  const boxCA=document.getElementById('vr-ca-jour');
+  const boxBen=document.getElementById('vr-ben-jour');
+  if(boxCA) boxCA.innerHTML=`<div style="font-size:10px;color:var(--text3);text-transform:uppercase;font-weight:600;letter-spacing:.05em;margin-bottom:3px">💰 CA du jour</div><div style="font-size:16px;font-weight:700;color:var(--green)">${fmtGNF(caJour)}</div><div style="font-size:10px;color:var(--text3)">${ventesAujourdhui.length} vente(s)</div>`;
+  if(boxBen) boxBen.innerHTML=`<div style="font-size:10px;color:var(--text3);text-transform:uppercase;font-weight:600;letter-spacing:.05em;margin-bottom:3px">📈 Bénéfice du jour</div><div style="font-size:16px;font-weight:700;color:${benJour>=0?'var(--blue)':'var(--red)'}">${fmtGNF(benJour)}</div><div style="font-size:10px;color:var(--text3)">vente − achat</div>`;
+}
+
+
 // ==================== LISTE DE COMMANDE ====================
 function renderCommandes(){
   const jours = parseInt(document.getElementById('cmd-periode')?document.getElementById('cmd-periode').value:'10')||10;
@@ -8506,40 +8572,82 @@ function deleteVente(id){
 
 // ==================== refreshVentesHistory ====================
 function refreshVentesHistory(){
-  const sorties=ventes.filter(v=>v.type!=='entree');
+  const _f = window._ventF||'tout';
+  const _fd = window._ventD||'';
+  const _fm = window._ventM||'';
+  const nowD = new Date();
+  const todayISO = nowD.toISOString().slice(0,10);
+  const isFond=currentRole==='fondateur';
+  const gRef=getCurrentGerant();
+  const canDel=isFond||(gRef&&gRef.permDel);
+
+  // Trier par date decroissante
+  const _sorted=[...ventes].sort((a,b)=>{
+    const ta=a.ts?new Date(a.ts).getTime():(a.date?new Date(a.date).getTime():0);
+    const tb=b.ts?new Date(b.ts).getTime():(b.date?new Date(b.date).getTime():0);
+    return tb-ta;
+  });
+
+  // Filtrer
+  const _vf=_sorted.filter(v=>{
+    const vd=v.ts?new Date(v.ts):(v.date?new Date(v.date):null);
+    if(!vd) return _f==='tout';
+    if(_f==='jour'){const d=_fd||todayISO;return vd.toISOString().slice(0,10)===d;}
+    if(_f==='mois'){const m=_fm||(nowD.getFullYear()+'-'+String(nowD.getMonth()+1).padStart(2,'0'));return vd.toISOString().slice(0,7)===m;}
+    return true;
+  });
+
+  const sorties=_vf.filter(v=>v.type!=='entree');
   const totalV=sorties.reduce((s,v)=>s+v.total,0);
   const depMk=getMonthKey(new Date());
   const depsMois=depenses.filter(d=>getMonthKey(d.date)===depMk);
   const totalDep=depsMois.reduce((s,d)=>s+d.montant,0);
-  const ben=sorties.reduce((s,v)=>s+(v.benefice!=null?v.benefice:v.total),0)-totalDep;
-  const isFond=currentRole==='fondateur';
-  const gRef=getCurrentGerant();
-  const canDel=isFond||(gRef&&gRef.permDel);
-  // Trier par date décroissante - les plus récentes en haut
-  const _ventesTriees = [...ventes].sort((a,b)=>{
-    const ta = a.ts ? new Date(a.ts).getTime() : (a.date ? new Date(a.date).getTime() : 0);
-    const tb = b.ts ? new Date(b.ts).getTime() : (b.date ? new Date(b.date).getTime() : 0);
-    return tb - ta;
+  const totalBeneficeV=sorties.reduce((s,v)=>s+(v.benefice!=null?v.benefice:v.total),0);
+  const benNet=totalBeneficeV-totalDep;
+
+  // Mois disponibles depuis les ventes
+  const _mois={};
+  ventes.forEach(v=>{
+    const d=v.ts?new Date(v.ts):(v.date?new Date(v.date):null);
+    if(d){const mk=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');_mois[mk]=d.toLocaleDateString('fr-FR',{month:'long',year:'numeric'});}
   });
-  document.getElementById('ventes-history').innerHTML=_ventesTriees.length?_ventesTriees.map(v=>`
-    <div class="sale-log-item">
+  const moisOpts=Object.keys(_mois).sort().reverse().map(mk=>`<option value="${mk}"${_fm===mk?' selected':''}>${_mois[mk]}</option>`).join('');
+
+  const btnStyle=(active)=>`padding:4px 9px;border:none;border-radius:5px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit;background:${active?'var(--accent)':'var(--border)'};color:${active?'#fff':'var(--text2)'}`;
+
+  const barre=`<div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;margin-bottom:8px;padding:7px 8px;background:var(--bg2);border-radius:8px">
+    <span style="font-size:11px;font-weight:700;color:var(--text3)">Tri:</span>
+    <button onclick="window._ventF='tout';window._ventD='';window._ventM='';refreshVentesHistory()" style="${btnStyle(_f==='tout')}">Tout (${ventes.length})</button>
+    <button onclick="window._ventF='jour';refreshVentesHistory()" style="${btnStyle(_f==='jour')}">Par jour</button>
+    <input type="date" value="${_fd||todayISO}" onchange="window._ventF='jour';window._ventD=this.value;refreshVentesHistory()" style="padding:3px 6px;border:1px solid var(--border);border-radius:5px;font-size:11px;background:var(--bg);color:var(--text)">
+    <button onclick="window._ventF='mois';refreshVentesHistory()" style="${btnStyle(_f==='mois')}">Par mois</button>
+    ${moisOpts?`<select onchange="window._ventF='mois';window._ventM=this.value;refreshVentesHistory()" style="padding:3px 6px;border:1px solid var(--border);border-radius:5px;font-size:11px;background:var(--bg);color:var(--text)">${moisOpts}</select>`:''}
+    <span style="margin-left:auto;font-size:10px;color:var(--text3)">${_vf.length} mouv.</span>
+  </div>`;
+
+  document.getElementById('ventes-history').innerHTML=barre+(_vf.length?_vf.map(v=>{
+    const vd=v.ts?new Date(v.ts):(v.date?new Date(v.date):null);
+    const ds=vd?vd.toLocaleDateString('fr-FR'):'—';
+    return `<div class="sale-log-item">
       <div style="font-size:10px;padding:1px 5px;border-radius:3px;background:${v.type==='entree'?'var(--green-bg)':'var(--red-bg)'};color:${v.type==='entree'?'var(--green)':'var(--red)'};font-weight:700;white-space:nowrap;flex-shrink:0">${v.type==='entree'?'📥 ENT':'📤 SOR'}</div>
       <div style="font-size:11px;font-family:DM Mono,monospace;color:var(--text3);width:52px">${v.ref||''}</div>
       <div class="sale-log-name">${v.name}</div>
       <div class="sale-log-qty">${v.type==='entree'?'+':'×'}${v.qty}</div>
       <div class="sale-log-amount">${v.type==='entree'?'—':fmtGNF(v.total)}</div>
-      <div style="font-size:11px;color:var(--text3);margin-left:4px">${new Date(v.ts).toLocaleDateString('fr-FR')}</div>
+      <div style="font-size:11px;color:var(--text3);margin-left:4px">${ds}</div>
       ${isFond?`<button class='row-btn' onclick='openEditVente(${v.id})' style='opacity:1;margin-left:4px;width:22px;height:22px;font-size:10px;color:var(--accent)'>✏</button>`:''}
-      ${isFond?`<button class='row-btn' onclick='openEditVente(${v.id})' title='Modifier' style='opacity:1;margin-left:2px;width:22px;height:22px;font-size:10px;color:var(--accent)'>✏</button>`:''}
-      ${canDel?`<button class='row-btn del' onclick='deleteVente(${v.id})' style='opacity:1;margin-left:2px;width:22px;height:22px;font-size:10px'>🗑</button>`:''}</div>`).join(''):'<div class="empty"><div class="empty-icon">📋</div><div class="empty-text">Aucun mouvement enregistré</div></div>';
-  const totalBeneficeV=ventes.filter(v=>v.type!=='entree').reduce((s,v)=>s+(v.benefice!=null?v.benefice:v.total),0);
-  const benNet=totalBeneficeV-totalDep;
+      ${canDel?`<button class='row-btn del' onclick='deleteVente(${v.id})' style='opacity:1;margin-left:2px;width:22px;height:22px;font-size:10px'>🗑</button>`:''}
+    </div>`;
+  }).join(''):`<div class="empty"><div class="empty-icon">📋</div><div class="empty-text">Aucun mouvement${_f==='jour'?' ce jour':_f==='mois'?' ce mois':''}</div></div>`);
+
+  const benNetGlobal=ventes.filter(v=>v.type!=='entree').reduce((s,v)=>s+(v.benefice!=null?v.benefice:v.total),0)-totalDep;
   document.getElementById('ventes-total').innerHTML=`
     <div style="display:flex;gap:16px;justify-content:flex-end;flex-wrap:wrap">
       <div style="text-align:right"><div style="font-size:11px;color:var(--text3);text-transform:uppercase;font-weight:600">💰 Chiffre d'affaires</div><div style="font-size:16px;font-weight:700;color:var(--green)">${fmtGNF(totalV)}</div></div>
-      <div style="text-align:right"><div style="font-size:11px;color:var(--text3);text-transform:uppercase;font-weight:600">📈 Bénéfice net</div><div style="font-size:16px;font-weight:700;color:${benNet>=0?'var(--blue)':'var(--red)'}">${fmtGNF(benNet)}</div><div style="font-size:10px;color:var(--text3)">CA−achat−dépenses</div></div>
+      <div style="text-align:right"><div style="font-size:11px;color:var(--text3);text-transform:uppercase;font-weight:600">📈 Bénéfice net</div><div style="font-size:16px;font-weight:700;color:${benNetGlobal>=0?'var(--blue)':'var(--red)'}">${fmtGNF(benNetGlobal)}</div><div style="font-size:10px;color:var(--text3)">CA−achat−dépenses</div></div>
     </div>`;
 }
+
 
 // ==================== RESET ====================
 function resetAllData(){
