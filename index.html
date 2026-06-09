@@ -803,6 +803,11 @@ function agvLaunchApp(shop){
       if(data.ventes) ventes=toA(data.ventes);
       if(data.depenses) depenses=toA(data.depenses);
       if(data.gerants) gerants=toA(data.gerants);
+      // Verifier que le gerant connecte existe toujours
+      if(currentRole==='gerant' && currentGerantId){
+        var _g=gerants.find(function(g){return g.id==currentGerantId;});
+        if(!_g){currentRole='fondateur';currentGerantId=null;}
+      }
       if(data.entrees) entrees=toA(data.entrees);
       if(data.appros) appros=toA(data.appros);
       if(data.repConfig) repConfig=toA(data.repConfig);
@@ -847,8 +852,7 @@ function agvLaunchApp(shop){
       setTimeout(function(){ind.textContent='Cloud actif';ind.style.color='#2563eb';},1500);}
   });
 
-  currentRole='fondateur';
-  currentGerantId=null;
+  // NE PAS ecraser currentRole ici - il est defini apres agvLaunchApp()
   // Afficher le chronometre de licence
   setTimeout(function(){ agvAfficherChrono(shop); }, 1200);
 }
@@ -3839,7 +3843,13 @@ function renderAppro(){
 
 
 function showView(v){
-  if(v==='gerants' && currentRole!=='fondateur'){showToast('Accès réservé au Fondateur');return;}
+  if(v==='gerants' && currentRole!=='fondateur'){showToast('Acces reserve au Fondateur');return;}
+  // Verifier permissions gerant
+  if(currentRole==='gerant'){
+    const _gv=getCurrentGerant();
+    if(v==='ventes' && _gv && !_gv.permVentes){showToast('Permission ventes non accordee');return;}
+    if(v==='depenses' && _gv && !_gv.permDep){showToast('Permission depenses non accordee');return;}
+  }
   document.querySelectorAll('.view').forEach(el=>el.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(el=>el.classList.remove('active'));
   const viewEl=document.getElementById('view-'+v);
@@ -7348,7 +7358,13 @@ function renderAppro(){
 
 
 function showView(v){
-  if(v==='gerants' && currentRole!=='fondateur'){showToast('Accès réservé au Fondateur');return;}
+  if(v==='gerants' && currentRole!=='fondateur'){showToast('Acces reserve au Fondateur');return;}
+  // Verifier permissions gerant
+  if(currentRole==='gerant'){
+    const _gv=getCurrentGerant();
+    if(v==='ventes' && _gv && !_gv.permVentes){showToast('Permission ventes non accordee');return;}
+    if(v==='depenses' && _gv && !_gv.permDep){showToast('Permission depenses non accordee');return;}
+  }
   document.querySelectorAll('.view').forEach(el=>el.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(el=>el.classList.remove('active'));
   const viewEl=document.getElementById('view-'+v);
