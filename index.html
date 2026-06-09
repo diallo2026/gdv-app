@@ -3844,7 +3844,7 @@ function renderSorties(){
   const tbody=document.getElementById('sorties-tbody');
   if(!tbody) return;
   if(!list.length){ tbody.innerHTML='<tr><td colspan="8" style="text-align:center;padding:24px;color:var(--text3)">Aucune sortie ce mois</td></tr>'; return; }
-  tbody.innerHTML=list.map(v=>'<tr><td>'+new Date(v.date).toLocaleDateString('fr-FR')+'</td><td style="font-weight:600">'+(v.produit||v.product||'—')+'</td><td><span style="padding:2px 8px;border-radius:10px;background:var(--surface2);font-size:11px">'+(v.categorie||'—')+'</span></td><td style="text-align:center;font-weight:700">'+(v.qte||v.qty||1)+'</td><td style="text-align:right">'+fmtGNF(v.prix_unitaire||Math.round((v.total||0)/(v.qte||v.qty||1)))+'</td><td style="text-align:right;font-weight:700;color:var(--green)">'+fmtGNF(v.total||0)+'</td><td style="text-align:right;color:#7c3aed">'+fmtGNF(v.benefice||0)+'</td><td style="font-size:11px;color:var(--text3)">'+(v.gerant||'—')+'</td></tr>').join('');
+  tbody.innerHTML=list.map(v=>'<tr><td>'+new Date(v.date||v.ts||new Date()).toLocaleDateString('fr-FR')+'</td><td style="font-weight:600">'+(v.produit||v.product||'—')+'</td><td><span style="padding:2px 8px;border-radius:10px;background:var(--surface2);font-size:11px">'+(v.categorie||'—')+'</span></td><td style="text-align:center;font-weight:700">'+(v.qte||v.qty||1)+'</td><td style="text-align:right">'+fmtGNF(v.prix_unitaire||Math.round((v.total||0)/(v.qte||v.qty||1)))+'</td><td style="text-align:right;font-weight:700;color:var(--green)">'+fmtGNF(v.total||0)+'</td><td style="text-align:right;color:#7c3aed">'+fmtGNF(v.benefice||0)+'</td><td style="font-size:11px;color:var(--text3)">'+(v.gerant||'—')+'</td></tr>').join('');
 }
 
 function renderAppro(){
@@ -3896,14 +3896,27 @@ function showView(v){
   if(v==='commandes'){renderCommandes()}
   if(v==='gerants'){renderGerants()}
   if(v==='entrees'){
-    buildYearOptions(document.getElementById('ent-year-filter'), entrees.length?entrees:[{date:new Date().toISOString()}],'date');
-    buildMonthOptions(document.getElementById('ent-month-filter'));
+    const ee=entrees.map(x=>({...x,date:x.date||x.ts||new Date().toISOString()}));
+    buildYearOptions(document.getElementById('ent-year-filter'), ee.length?ee:[{date:new Date().toISOString()}],'date');
+    var _ment=document.getElementById('ent-month-filter');
+    buildMonthOptions(_ment);
+    if(_ment && !_ment.value){
+      var _menow=String(new Date().getMonth()+1).padStart(2,'0');
+      _ment.value=_menow;
+    }
     renderEntrees();
   }
   if(v==='sorties'){
-    const ss=ventes.filter(x=>x.type!=='entree');
+    // Normaliser ts->date pour les ventes
+    const ss=ventes.filter(x=>x.type!=='entree').map(x=>({...x,date:x.date||x.ts||new Date().toISOString()}));
     buildYearOptions(document.getElementById('sort-year-filter'), ss.length?ss:[{date:new Date().toISOString()}],'date');
-    buildMonthOptions(document.getElementById('sort-month-filter'));
+    var _msort=document.getElementById('sort-month-filter');
+    buildMonthOptions(_msort);
+    // Mettre le mois courant par defaut
+    if(_msort && !_msort.value){
+      var _mnow=String(new Date().getMonth()+1).padStart(2,'0');
+      _msort.value=_mnow;
+    }
     renderSorties();
   }
   if(v==='appro'){
@@ -6520,9 +6533,15 @@ function saveEntree(){
   entrees.unshift({id:Date.now(),date,produitId:p.id,produit:p.designation,ref:p.ref,categorie:p.categorie||'',qte,ancienPrix,nouveauPrix,total:qte*nouveauPrix,note,gerant:currentRole==='fondateur'?'Fondateur':(gerants.find(g=>g.id===currentGerantId)||{}).nom||'—'});
   const idx=products.findIndex(x=>x.id===pid);
   if(idx>=0){ products[idx].stock_initial=(products[idx].stock_initial||0)+qte; products[idx].prix_achat=nouveauPrix; products[idx].total=products[idx].stock_initial*nouveauPrix; }
-  saveAll(); renderEntrees(); renderDashboard();
+  saveAll(); renderDashboard();
   document.getElementById('entree-overlay').style.display='none';
-  showToast(`✅ Entrée enregistrée — nouveau prix d'achat : ${fmtGNF(nouveauPrix)}`);
+  // Mettre le filtre sur le mois courant et rafraichir
+  var _ys=document.getElementById('ent-year-filter');
+  var _ms=document.getElementById('ent-month-filter');
+  if(_ys) _ys.value=new Date().getFullYear();
+  if(_ms) _ms.value=String(new Date().getMonth()+1).padStart(2,'0');
+  renderEntrees();
+  showToast('Entree enregistree!');
 }
 
 // ===== APPROVISIONNEMENT =====
@@ -7394,7 +7413,7 @@ function renderSorties(){
   const tbody=document.getElementById('sorties-tbody');
   if(!tbody) return;
   if(!list.length){ tbody.innerHTML='<tr><td colspan="8" style="text-align:center;padding:24px;color:var(--text3)">Aucune sortie ce mois</td></tr>'; return; }
-  tbody.innerHTML=list.map(v=>'<tr><td>'+new Date(v.date).toLocaleDateString('fr-FR')+'</td><td style="font-weight:600">'+(v.produit||v.product||'—')+'</td><td><span style="padding:2px 8px;border-radius:10px;background:var(--surface2);font-size:11px">'+(v.categorie||'—')+'</span></td><td style="text-align:center;font-weight:700">'+(v.qte||v.qty||1)+'</td><td style="text-align:right">'+fmtGNF(v.prix_unitaire||Math.round((v.total||0)/(v.qte||v.qty||1)))+'</td><td style="text-align:right;font-weight:700;color:var(--green)">'+fmtGNF(v.total||0)+'</td><td style="text-align:right;color:#7c3aed">'+fmtGNF(v.benefice||0)+'</td><td style="font-size:11px;color:var(--text3)">'+(v.gerant||'—')+'</td></tr>').join('');
+  tbody.innerHTML=list.map(v=>'<tr><td>'+new Date(v.date||v.ts||new Date()).toLocaleDateString('fr-FR')+'</td><td style="font-weight:600">'+(v.produit||v.product||'—')+'</td><td><span style="padding:2px 8px;border-radius:10px;background:var(--surface2);font-size:11px">'+(v.categorie||'—')+'</span></td><td style="text-align:center;font-weight:700">'+(v.qte||v.qty||1)+'</td><td style="text-align:right">'+fmtGNF(v.prix_unitaire||Math.round((v.total||0)/(v.qte||v.qty||1)))+'</td><td style="text-align:right;font-weight:700;color:var(--green)">'+fmtGNF(v.total||0)+'</td><td style="text-align:right;color:#7c3aed">'+fmtGNF(v.benefice||0)+'</td><td style="font-size:11px;color:var(--text3)">'+(v.gerant||'—')+'</td></tr>').join('');
 }
 
 function renderAppro(){
@@ -7446,14 +7465,27 @@ function showView(v){
   if(v==='commandes'){renderCommandes()}
   if(v==='gerants'){renderGerants()}
   if(v==='entrees'){
-    buildYearOptions(document.getElementById('ent-year-filter'), entrees.length?entrees:[{date:new Date().toISOString()}],'date');
-    buildMonthOptions(document.getElementById('ent-month-filter'));
+    const ee=entrees.map(x=>({...x,date:x.date||x.ts||new Date().toISOString()}));
+    buildYearOptions(document.getElementById('ent-year-filter'), ee.length?ee:[{date:new Date().toISOString()}],'date');
+    var _ment=document.getElementById('ent-month-filter');
+    buildMonthOptions(_ment);
+    if(_ment && !_ment.value){
+      var _menow=String(new Date().getMonth()+1).padStart(2,'0');
+      _ment.value=_menow;
+    }
     renderEntrees();
   }
   if(v==='sorties'){
-    const ss=ventes.filter(x=>x.type!=='entree');
+    // Normaliser ts->date pour les ventes
+    const ss=ventes.filter(x=>x.type!=='entree').map(x=>({...x,date:x.date||x.ts||new Date().toISOString()}));
     buildYearOptions(document.getElementById('sort-year-filter'), ss.length?ss:[{date:new Date().toISOString()}],'date');
-    buildMonthOptions(document.getElementById('sort-month-filter'));
+    var _msort=document.getElementById('sort-month-filter');
+    buildMonthOptions(_msort);
+    // Mettre le mois courant par defaut
+    if(_msort && !_msort.value){
+      var _mnow=String(new Date().getMonth()+1).padStart(2,'0');
+      _msort.value=_mnow;
+    }
     renderSorties();
   }
   if(v==='appro'){
@@ -10070,9 +10102,15 @@ function saveEntree(){
   entrees.unshift({id:Date.now(),date,produitId:p.id,produit:p.designation,ref:p.ref,categorie:p.categorie||'',qte,ancienPrix,nouveauPrix,total:qte*nouveauPrix,note,gerant:currentRole==='fondateur'?'Fondateur':(gerants.find(g=>g.id===currentGerantId)||{}).nom||'—'});
   const idx=products.findIndex(x=>x.id===pid);
   if(idx>=0){ products[idx].stock_initial=(products[idx].stock_initial||0)+qte; products[idx].prix_achat=nouveauPrix; products[idx].total=products[idx].stock_initial*nouveauPrix; }
-  saveAll(); renderEntrees(); renderDashboard();
+  saveAll(); renderDashboard();
   document.getElementById('entree-overlay').style.display='none';
-  showToast(`✅ Entrée enregistrée — nouveau prix d'achat : ${fmtGNF(nouveauPrix)}`);
+  // Mettre le filtre sur le mois courant et rafraichir
+  var _ys=document.getElementById('ent-year-filter');
+  var _ms=document.getElementById('ent-month-filter');
+  if(_ys) _ys.value=new Date().getFullYear();
+  if(_ms) _ms.value=String(new Date().getMonth()+1).padStart(2,'0');
+  renderEntrees();
+  showToast('Entree enregistree!');
 }
 
 // ===== APPROVISIONNEMENT =====
