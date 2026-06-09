@@ -860,6 +860,25 @@ function agvLaunchApp(shop){
   }, 1200);
 }
 
+
+// ===== IMPRESSION PROPRE =====
+function printView(){
+  // Forcer l'affichage complet avant impression
+  var histEl=document.getElementById('ventes-history');
+  var histOld='';
+  if(histEl){histOld=histEl.style.maxHeight;histEl.style.maxHeight='none';histEl.style.overflow='visible';}
+  var ventesContent=document.getElementById('ventes-content');
+  var vcOld='';
+  if(ventesContent){vcOld=ventesContent.style.display;ventesContent.style.display='block';}
+  // Cacher les barres de filtres
+  var filtreBarre=document.querySelector('[style*="Trier"]');
+  // Lancer impression
+  window.print();
+  // Restaurer
+  if(histEl){histEl.style.maxHeight=histOld;histEl.style.overflow='auto';}
+  if(ventesContent){ventesContent.style.display=vcOld;}
+}
+
 // ===== ADMIN =====
 function agvLoadAdmin(){
   agvShow('agv-admin');
@@ -2047,7 +2066,7 @@ window.addEventListener('DOMContentLoaded',function(){
           <svg class="search-ico" width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35" stroke-width="2"/></svg>
           <input type="text" id="search-input" placeholder="Référence, désignation..." oninput="renderTable()">
         </div>
-        <button class="btn-print" onclick="window.print()">🖨️ Imprimer</button>
+        <button class="btn-print" onclick="printView()">🖨️ Imprimer</button>
         <button class="btn btn-primary" id="btn-add-prod" onclick="openAdd()">+ Ajouter</button>
       </div>
       <div class="filters" id="cat-filters"></div>
@@ -2093,7 +2112,7 @@ window.addEventListener('DOMContentLoaded',function(){
       <div class="topbar">
         <h1>Gestion des ventes</h1>
         <div style="display:flex;gap:8px">
-          <button class="btn-print" onclick="window.print()">🖨️ Imprimer</button>
+          <button class="btn-print" onclick="printView()">🖨️ Imprimer</button>
           <button class="btn btn-success" onclick="openVenteRapide()" style="display:flex;align-items:center;gap:6px">⚡ Vente rapide</button>
         </div>
       </div>
@@ -2373,7 +2392,7 @@ window.addEventListener('DOMContentLoaded',function(){
       <div style="display:flex;gap:8px;align-items:center">
         <select class="filter-sel" id="ent-year-filter" onchange="onEntYearChange()" style="border-radius:6px;padding:5px 10px"></select>
         <select class="filter-sel" id="ent-month-filter" onchange="renderEntrees()" style="border-radius:6px;padding:5px 28px 5px 10px"></select>
-        <button class="btn-print" onclick="window.print()">🖨️ Imprimer</button>
+        <button class="btn-print" onclick="printView()">🖨️ Imprimer</button>
         <button class="btn btn-primary btn-sm" onclick="openEntreeModal()">+ Nouvelle entrée</button>
       </div>
     </div>
@@ -2415,7 +2434,7 @@ window.addEventListener('DOMContentLoaded',function(){
       <div style="display:flex;gap:8px;align-items:center">
         <select class="filter-sel" id="sort-year-filter" onchange="onSortYearChange()" style="border-radius:6px;padding:5px 10px"></select>
         <select class="filter-sel" id="sort-month-filter" onchange="renderSorties()" style="border-radius:6px;padding:5px 28px 5px 10px"></select>
-        <button class="btn-print" onclick="window.print()">🖨️ Imprimer</button>
+        <button class="btn-print" onclick="printView()">🖨️ Imprimer</button>
       </div>
     </div>
     <div class="stats" id="sorties-stats-cards" style="margin-bottom:16px"></div>
@@ -2457,7 +2476,7 @@ window.addEventListener('DOMContentLoaded',function(){
       <div style="display:flex;gap:8px;align-items:center">
         <select class="filter-sel" id="appro-year-filter" onchange="onApproYearChange()" style="border-radius:6px;padding:5px 10px"></select>
         <select class="filter-sel" id="appro-month-filter" onchange="renderAppro()" style="border-radius:6px;padding:5px 28px 5px 10px"></select>
-        <button class="btn-print" onclick="window.print()">🖨️ Imprimer</button>
+        <button class="btn-print" onclick="printView()">🖨️ Imprimer</button>
         <button class="btn btn-primary btn-sm" id="btn-add-appro" onclick="openApproModal()">+ Nouvel approvisionnement</button>
       </div>
     </div>
@@ -2565,7 +2584,7 @@ window.addEventListener('DOMContentLoaded',function(){
   <div id="view-dettes" class="view">
     <div class="topbar">
       <h1>💳 Gestion des Dettes</h1>
-      <button class="btn-print" onclick="window.print()">🖨️ Imprimer</button>
+      <button class="btn-print" onclick="printView()">🖨️ Imprimer</button>
     </div>
     <!-- Stats globales -->
     <div class="stats" id="dettes-stats" style="margin-bottom:16px"></div>
