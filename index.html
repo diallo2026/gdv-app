@@ -1442,8 +1442,8 @@ function agvDevFilter(q){
 function agvLoadShopLogin(code){
   var container=document.getElementById('agv-shop-login');
   if(!container) return;
-  // Si on a deja les donnees (depuis landingGoShop), afficher immediatement
-  if(window._shopLoginData && !window._shopLoginData.blocked){
+  // Si donnees deja disponibles, afficher immediatement sans spinner
+  if(window._shopLoginData && window._shopLoginData.codeAcces===code && !window._shopLoginData.blocked){
     agvRenderShopLogin(window._shopLoginData, container);
     return;
   }
@@ -3309,22 +3309,11 @@ const FONDATEUR_CODE = '0000'; // code fondateur par défaut
 
 // Charger les gérants depuis Firebase ou localStorage pour la page de login
 function preloadGerantsForLogin(){
-  // Priorité 0: cache boutique depuis localStorage (le plus rapide)
-  if(window._shopLoginData && window._shopLoginData.uid){
-    var cacheKey='agv_shop_data_'+window._shopLoginData.uid;
-    try{
-      var cached=JSON.parse(localStorage.getItem(cacheKey)||'null');
-      if(cached && cached.gerants){
-        var g=cached.gerants;
-        gerants=Array.isArray(g)?g:Object.values(g);
-        if(gerants.length>0) return;
-      }
-    }catch(e){}
-  }
   // Priorité 1 : données Firebase si disponibles
   if (window._firebaseData && window._firebaseData.gerants) {
     var g = window._firebaseData.gerants;
     gerants = Array.isArray(g) ? g : Object.values(g);
+    console.log('👥 Gérants depuis Firebase:', gerants.length);
     return;
   }
   // Priorité 2 : localStorage
@@ -3441,9 +3430,13 @@ function applyRoleUI(){
 
   // Ventes & dépenses
   if(!isFondateur){
+    // Cacher/montrer onglets selon permissions gerant
     const canVentes = g && g.permVentes;
     const canDep = g && g.permDep;
-    // on gère l'affichage dans renderVentes/renderDepenses
+    var navVentes = document.getElementById('nav-ventes');
+    if(navVentes) navVentes.style.opacity = canVentes ? '1' : '0.4';
+    var navDep = document.getElementById('nav-depenses');
+    if(navDep) navDep.style.opacity = canDep ? '1' : '0.4';
   }
 
   if(isFondateur){
@@ -3956,18 +3949,32 @@ function renderVentesView(){
   const g=getCurrentGerant();
   const canVente = currentRole==='gerant' && g && g.permVentes;
   const isFondateur = currentRole==='fondateur';
-  document.getElementById('ventes-blocked-msg').style.display = (!isFondateur && !canVente) ? 'block':'none';
-  document.getElementById('ventes-content').style.display = (isFondateur||!canVente) ? 'none':'grid';
-  if(!isFondateur&&canVente) refreshVentesHistory();
-  // fondateur: show read-only history
+  const container=document.getElementById('ventes-content');
+
   if(isFondateur){
-    const container=document.getElementById('ventes-content');
-    container.style.display='block';
-    container.style.gridTemplateColumns='1fr';
-    // hide form card, show only history
-    container.children[0].style.display='none';
-    container.children[1].style.display='block';
+    // Fondateur: voir historique uniquement
+    document.getElementById('ventes-blocked-msg').style.display='none';
+    if(container){
+      container.style.display='block';
+      container.style.gridTemplateColumns='1fr';
+      if(container.children[0]) container.children[0].style.display='none';
+      if(container.children[1]) container.children[1].style.display='block';
+    }
     refreshVentesHistory();
+  } else if(canVente){
+    // Gerant avec permission ventes: acces complet
+    document.getElementById('ventes-blocked-msg').style.display='none';
+    if(container){
+      container.style.display='grid';
+      container.style.gridTemplateColumns='';
+      if(container.children[0]) container.children[0].style.display='';
+      if(container.children[1]) container.children[1].style.display='';
+    }
+    refreshVentesHistory();
+  } else {
+    // Pas de permission
+    document.getElementById('ventes-blocked-msg').style.display='block';
+    if(container) container.style.display='none';
   }
 }
 
@@ -4257,6 +4264,7 @@ function recordVente(){
   document.getElementById('ventes-total').innerHTML=`<div style="display:flex;gap:16px;justify-content:flex-end;flex-wrap:wrap"><div style="text-align:right"><div style="font-size:11px;color:var(--text3);text-transform:uppercase;font-weight:600">💰 Chiffre d'affaires</div><div style="font-size:16px;font-weight:700;color:var(--green)">${fmtGNF(totalV)}</div></div><div style="text-align:right"><div style="font-size:11px;color:var(--text3);text-transform:uppercase;font-weight:600">📈 Bénéfice net</div><div style="font-size:16px;font-weight:700;color:${benNet2>=0?'var(--blue)':'var(--red)'}">${fmtGNF(benNet2)}</div><div style="font-size:10px;color:var(--text3)">CA−achat−dépenses</div></div></div>`;
   refreshVentesHistory();
   showToast(isSortie?`📤 Sortie — ${p.designation} ×${qty} = ${fmtGNF(qty*prixU)}`:`📥 Entrée — ${p.designation} +${qty} à ${fmtGNF(prixU)}/u`);
+  setTimeout(function(){if(typeof refreshVentesHistory==='function')refreshVentesHistory();},100);
 }
 
 // ==================== DÉPENSES ====================
@@ -4539,7 +4547,21 @@ function togglePermDep(id){
   const idx=gerants.findIndex(g=>g.id===id);
   gerants[idx].permDep=!gerants[idx].permDep;
   saveAll();renderGerants();
-  showToast(gerants[idx].permDep?'Saisie dépenses autorisée':'Saisie dépenses retirée');
+  showToast(gerants[idx].permDep?'Saisie depenses autorisee':'Saisie depenses retiree');
+}
+function togglePermEdit(id){
+  const idx=gerants.findIndex(g=>g.id===id);
+  if(idx<0) return;
+  gerants[idx].permEdit=!gerants[idx].permEdit;
+  saveAll();renderGerants();
+  showToast(gerants[idx].permEdit?'Modification autorisee':'Modification retiree');
+}
+function togglePermDel(id){
+  const idx=gerants.findIndex(g=>g.id===id);
+  if(idx<0) return;
+  gerants[idx].permDel=!gerants[idx].permDel;
+  saveAll();renderGerants();
+  showToast(gerants[idx].permDel?'Suppression autorisee':'Suppression retiree');
 }
 
 function renderGerants(){
@@ -4567,7 +4589,9 @@ function renderGerants(){
       <div class="gerant-actions">
         <button class="btn btn-ghost btn-sm" onclick="openBulletin(${g.id})" title="Bulletin de paie" style="font-size:12px">📄 Bulletin</button>
         <button class="btn btn-ghost btn-sm" onclick="togglePermVentes(${g.id})" title="Basculer permission ventes" style="font-size:12px">🛒</button>
-        <button class="btn btn-ghost btn-sm" onclick="togglePermDep(${g.id})" title="Basculer permission dépenses" style="font-size:12px">💸</button>
+        <button class="btn btn-ghost btn-sm" onclick="togglePermDep(${g.id})" title="Basculer permission depenses" style="font-size:12px">💸</button>
+        <button class="btn btn-ghost btn-sm" onclick="togglePermEdit(${g.id})" title="Basculer permission modification" style="font-size:12px;background:${g.permEdit?'var(--amber-bg)':'var(--bg2)'}">✏</button>
+        <button class="btn btn-ghost btn-sm" onclick="togglePermDel(${g.id})" title="Basculer permission suppression" style="font-size:12px;background:${g.permDel?'var(--red-bg)':'var(--bg2)'}">🗑</button>
         <button class="btn ${g.bloque?'btn-success':'btn-danger'} btn-sm" onclick="toggleBloque(${g.id})">${g.bloque?'Débloquer':'Bloquer'}</button>
         <button class="btn btn-ghost btn-sm" onclick="openEditGerant(${g.id})">✏ Modifier</button>
       </div>
@@ -5107,13 +5131,11 @@ function refreshVentesHistory(){
   const isFond=currentRole==='fondateur';
   const gRef=getCurrentGerant();
   const canDel=isFond||(gRef&&gRef.permDel);
-  // Tri decroissant par date
   const _sorted=[...ventes].sort((a,b)=>{
     const ta=a.ts?new Date(a.ts).getTime():(a.date?new Date(a.date).getTime():0);
     const tb=b.ts?new Date(b.ts).getTime():(b.date?new Date(b.date).getTime():0);
     return tb-ta;
   });
-  // Filtre date/mois/tout
   const _vf=_sorted.filter(v=>{
     const vd=v.ts?new Date(v.ts):(v.date?new Date(v.date):null);
     if(!vd) return _f==='tout';
@@ -5126,8 +5148,6 @@ function refreshVentesHistory(){
   const depMk=getMonthKey(new Date());
   const depsMois=depenses.filter(d=>getMonthKey(d.date)===depMk);
   const totalDep=depsMois.reduce((s,d)=>s+d.montant,0);
-  const benNetV=sorties.reduce((s,v)=>s+(v.benefice!=null?v.benefice:v.total),0);
-  // Mois disponibles
   const _mo={};
   ventes.forEach(v=>{
     const d=v.ts?new Date(v.ts):(v.date?new Date(v.date):null);
@@ -5331,6 +5351,7 @@ function saveVenteRapide(){
   vrUpdateRecent();
   showToast(isSortie?`📤 ${p.designation} ×${qty} — ${fmtGNF(qty*prixU)}`:`📥 Entrée : ${p.designation} +${qty}`);
   setTimeout(()=>document.getElementById('vr-product').focus(),100);
+  setTimeout(function(){if(typeof refreshVentesHistory==='function')refreshVentesHistory();},150);
 }
 function vrUpdateRecent(){
   const recent=ventes.slice(0,5);
@@ -6797,22 +6818,11 @@ const FONDATEUR_CODE = '0000'; // code fondateur par défaut
 
 // Charger les gérants depuis Firebase ou localStorage pour la page de login
 function preloadGerantsForLogin(){
-  // Priorité 0: cache boutique depuis localStorage (le plus rapide)
-  if(window._shopLoginData && window._shopLoginData.uid){
-    var cacheKey='agv_shop_data_'+window._shopLoginData.uid;
-    try{
-      var cached=JSON.parse(localStorage.getItem(cacheKey)||'null');
-      if(cached && cached.gerants){
-        var g=cached.gerants;
-        gerants=Array.isArray(g)?g:Object.values(g);
-        if(gerants.length>0) return;
-      }
-    }catch(e){}
-  }
   // Priorité 1 : données Firebase si disponibles
   if (window._firebaseData && window._firebaseData.gerants) {
     var g = window._firebaseData.gerants;
     gerants = Array.isArray(g) ? g : Object.values(g);
+    console.log('👥 Gérants depuis Firebase:', gerants.length);
     return;
   }
   // Priorité 2 : localStorage
@@ -6929,9 +6939,13 @@ function applyRoleUI(){
 
   // Ventes & dépenses
   if(!isFondateur){
+    // Cacher/montrer onglets selon permissions gerant
     const canVentes = g && g.permVentes;
     const canDep = g && g.permDep;
-    // on gère l'affichage dans renderVentes/renderDepenses
+    var navVentes = document.getElementById('nav-ventes');
+    if(navVentes) navVentes.style.opacity = canVentes ? '1' : '0.4';
+    var navDep = document.getElementById('nav-depenses');
+    if(navDep) navDep.style.opacity = canDep ? '1' : '0.4';
   }
 
   if(isFondateur){
@@ -7444,18 +7458,32 @@ function renderVentesView(){
   const g=getCurrentGerant();
   const canVente = currentRole==='gerant' && g && g.permVentes;
   const isFondateur = currentRole==='fondateur';
-  document.getElementById('ventes-blocked-msg').style.display = (!isFondateur && !canVente) ? 'block':'none';
-  document.getElementById('ventes-content').style.display = (isFondateur||!canVente) ? 'none':'grid';
-  if(!isFondateur&&canVente) refreshVentesHistory();
-  // fondateur: show read-only history
+  const container=document.getElementById('ventes-content');
+
   if(isFondateur){
-    const container=document.getElementById('ventes-content');
-    container.style.display='block';
-    container.style.gridTemplateColumns='1fr';
-    // hide form card, show only history
-    container.children[0].style.display='none';
-    container.children[1].style.display='block';
+    // Fondateur: voir historique uniquement
+    document.getElementById('ventes-blocked-msg').style.display='none';
+    if(container){
+      container.style.display='block';
+      container.style.gridTemplateColumns='1fr';
+      if(container.children[0]) container.children[0].style.display='none';
+      if(container.children[1]) container.children[1].style.display='block';
+    }
     refreshVentesHistory();
+  } else if(canVente){
+    // Gerant avec permission ventes: acces complet
+    document.getElementById('ventes-blocked-msg').style.display='none';
+    if(container){
+      container.style.display='grid';
+      container.style.gridTemplateColumns='';
+      if(container.children[0]) container.children[0].style.display='';
+      if(container.children[1]) container.children[1].style.display='';
+    }
+    refreshVentesHistory();
+  } else {
+    // Pas de permission
+    document.getElementById('ventes-blocked-msg').style.display='block';
+    if(container) container.style.display='none';
   }
 }
 
@@ -7745,6 +7773,7 @@ function recordVente(){
   document.getElementById('ventes-total').innerHTML=`<div style="display:flex;gap:16px;justify-content:flex-end;flex-wrap:wrap"><div style="text-align:right"><div style="font-size:11px;color:var(--text3);text-transform:uppercase;font-weight:600">💰 Chiffre d'affaires</div><div style="font-size:16px;font-weight:700;color:var(--green)">${fmtGNF(totalV)}</div></div><div style="text-align:right"><div style="font-size:11px;color:var(--text3);text-transform:uppercase;font-weight:600">📈 Bénéfice net</div><div style="font-size:16px;font-weight:700;color:${benNet2>=0?'var(--blue)':'var(--red)'}">${fmtGNF(benNet2)}</div><div style="font-size:10px;color:var(--text3)">CA−achat−dépenses</div></div></div>`;
   refreshVentesHistory();
   showToast(isSortie?`📤 Sortie — ${p.designation} ×${qty} = ${fmtGNF(qty*prixU)}`:`📥 Entrée — ${p.designation} +${qty} à ${fmtGNF(prixU)}/u`);
+  setTimeout(function(){if(typeof refreshVentesHistory==='function')refreshVentesHistory();},100);
 }
 
 // ==================== DÉPENSES ====================
@@ -8027,7 +8056,21 @@ function togglePermDep(id){
   const idx=gerants.findIndex(g=>g.id===id);
   gerants[idx].permDep=!gerants[idx].permDep;
   saveAll();renderGerants();
-  showToast(gerants[idx].permDep?'Saisie dépenses autorisée':'Saisie dépenses retirée');
+  showToast(gerants[idx].permDep?'Saisie depenses autorisee':'Saisie depenses retiree');
+}
+function togglePermEdit(id){
+  const idx=gerants.findIndex(g=>g.id===id);
+  if(idx<0) return;
+  gerants[idx].permEdit=!gerants[idx].permEdit;
+  saveAll();renderGerants();
+  showToast(gerants[idx].permEdit?'Modification autorisee':'Modification retiree');
+}
+function togglePermDel(id){
+  const idx=gerants.findIndex(g=>g.id===id);
+  if(idx<0) return;
+  gerants[idx].permDel=!gerants[idx].permDel;
+  saveAll();renderGerants();
+  showToast(gerants[idx].permDel?'Suppression autorisee':'Suppression retiree');
 }
 
 function renderGerants(){
@@ -8055,7 +8098,9 @@ function renderGerants(){
       <div class="gerant-actions">
         <button class="btn btn-ghost btn-sm" onclick="openBulletin(${g.id})" title="Bulletin de paie" style="font-size:12px">📄 Bulletin</button>
         <button class="btn btn-ghost btn-sm" onclick="togglePermVentes(${g.id})" title="Basculer permission ventes" style="font-size:12px">🛒</button>
-        <button class="btn btn-ghost btn-sm" onclick="togglePermDep(${g.id})" title="Basculer permission dépenses" style="font-size:12px">💸</button>
+        <button class="btn btn-ghost btn-sm" onclick="togglePermDep(${g.id})" title="Basculer permission depenses" style="font-size:12px">💸</button>
+        <button class="btn btn-ghost btn-sm" onclick="togglePermEdit(${g.id})" title="Basculer permission modification" style="font-size:12px;background:${g.permEdit?'var(--amber-bg)':'var(--bg2)'}">✏</button>
+        <button class="btn btn-ghost btn-sm" onclick="togglePermDel(${g.id})" title="Basculer permission suppression" style="font-size:12px;background:${g.permDel?'var(--red-bg)':'var(--bg2)'}">🗑</button>
         <button class="btn ${g.bloque?'btn-success':'btn-danger'} btn-sm" onclick="toggleBloque(${g.id})">${g.bloque?'Débloquer':'Bloquer'}</button>
         <button class="btn btn-ghost btn-sm" onclick="openEditGerant(${g.id})">✏ Modifier</button>
       </div>
@@ -8595,13 +8640,11 @@ function refreshVentesHistory(){
   const isFond=currentRole==='fondateur';
   const gRef=getCurrentGerant();
   const canDel=isFond||(gRef&&gRef.permDel);
-  // Tri decroissant par date
   const _sorted=[...ventes].sort((a,b)=>{
     const ta=a.ts?new Date(a.ts).getTime():(a.date?new Date(a.date).getTime():0);
     const tb=b.ts?new Date(b.ts).getTime():(b.date?new Date(b.date).getTime():0);
     return tb-ta;
   });
-  // Filtre date/mois/tout
   const _vf=_sorted.filter(v=>{
     const vd=v.ts?new Date(v.ts):(v.date?new Date(v.date):null);
     if(!vd) return _f==='tout';
@@ -8614,8 +8657,6 @@ function refreshVentesHistory(){
   const depMk=getMonthKey(new Date());
   const depsMois=depenses.filter(d=>getMonthKey(d.date)===depMk);
   const totalDep=depsMois.reduce((s,d)=>s+d.montant,0);
-  const benNetV=sorties.reduce((s,v)=>s+(v.benefice!=null?v.benefice:v.total),0);
-  // Mois disponibles
   const _mo={};
   ventes.forEach(v=>{
     const d=v.ts?new Date(v.ts):(v.date?new Date(v.date):null);
@@ -8819,6 +8860,7 @@ function saveVenteRapide(){
   vrUpdateRecent();
   showToast(isSortie?`📤 ${p.designation} ×${qty} — ${fmtGNF(qty*prixU)}`:`📥 Entrée : ${p.designation} +${qty}`);
   setTimeout(()=>document.getElementById('vr-product').focus(),100);
+  setTimeout(function(){if(typeof refreshVentesHistory==='function')refreshVentesHistory();},150);
 }
 function vrUpdateRecent(){
   const recent=ventes.slice(0,5);
