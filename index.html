@@ -819,7 +819,7 @@ function agvLaunchApp(shop){
     if(typeof renderAlerts==='function')renderAlerts();
     var _nb=document.getElementById('nb-produits');
     if(_nb) _nb.textContent=products.length;
-    if(typeof refreshVentesHistory==='function') setTimeout(function(){refreshVentesHistory();},100);
+    setTimeout(function(){if(typeof refreshVentesHistory==='function')refreshVentesHistory();},100);
   }
   // 1. Charger le cache IMMEDIATEMENT (0ms d'attente)
   try {
@@ -1442,6 +1442,11 @@ function agvDevFilter(q){
 function agvLoadShopLogin(code){
   var container=document.getElementById('agv-shop-login');
   if(!container) return;
+  // Si on a deja les donnees (depuis landingGoShop), afficher immediatement
+  if(window._shopLoginData && !window._shopLoginData.blocked){
+    agvRenderShopLogin(window._shopLoginData, container);
+    return;
+  }
   container.innerHTML='<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#060d24;padding:20px"><div style="color:#60a5fa;font-size:14px">Chargement...</div></div>';
 
   // Chercher d'abord dans le cache local (instantané)
@@ -3304,11 +3309,22 @@ const FONDATEUR_CODE = '0000'; // code fondateur par défaut
 
 // Charger les gérants depuis Firebase ou localStorage pour la page de login
 function preloadGerantsForLogin(){
+  // Priorité 0: cache boutique depuis localStorage (le plus rapide)
+  if(window._shopLoginData && window._shopLoginData.uid){
+    var cacheKey='agv_shop_data_'+window._shopLoginData.uid;
+    try{
+      var cached=JSON.parse(localStorage.getItem(cacheKey)||'null');
+      if(cached && cached.gerants){
+        var g=cached.gerants;
+        gerants=Array.isArray(g)?g:Object.values(g);
+        if(gerants.length>0) return;
+      }
+    }catch(e){}
+  }
   // Priorité 1 : données Firebase si disponibles
   if (window._firebaseData && window._firebaseData.gerants) {
     var g = window._firebaseData.gerants;
     gerants = Array.isArray(g) ? g : Object.values(g);
-    console.log('👥 Gérants depuis Firebase:', gerants.length);
     return;
   }
   // Priorité 2 : localStorage
@@ -5091,13 +5107,13 @@ function refreshVentesHistory(){
   const isFond=currentRole==='fondateur';
   const gRef=getCurrentGerant();
   const canDel=isFond||(gRef&&gRef.permDel);
-  // Tri decroissant
+  // Tri decroissant par date
   const _sorted=[...ventes].sort((a,b)=>{
     const ta=a.ts?new Date(a.ts).getTime():(a.date?new Date(a.date).getTime():0);
     const tb=b.ts?new Date(b.ts).getTime():(b.date?new Date(b.date).getTime():0);
     return tb-ta;
   });
-  // Filtre
+  // Filtre date/mois/tout
   const _vf=_sorted.filter(v=>{
     const vd=v.ts?new Date(v.ts):(v.date?new Date(v.date):null);
     if(!vd) return _f==='tout';
@@ -5110,46 +5126,42 @@ function refreshVentesHistory(){
   const depMk=getMonthKey(new Date());
   const depsMois=depenses.filter(d=>getMonthKey(d.date)===depMk);
   const totalDep=depsMois.reduce((s,d)=>s+d.montant,0);
-  const totalBeneficeV=sorties.reduce((s,v)=>s+(v.benefice!=null?v.benefice:v.total),0);
-  const benNet=totalBeneficeV-totalDep;
+  const benNetV=sorties.reduce((s,v)=>s+(v.benefice!=null?v.benefice:v.total),0);
   // Mois disponibles
-  const _mois={};
+  const _mo={};
   ventes.forEach(v=>{
     const d=v.ts?new Date(v.ts):(v.date?new Date(v.date):null);
-    if(d){const mk=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');_mois[mk]=d.toLocaleDateString('fr-FR',{month:'long',year:'numeric'});}
+    if(d){const mk=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');_mo[mk]=d.toLocaleDateString('fr-FR',{month:'long',year:'numeric'});}
   });
-  const moisOpts=Object.keys(_mois).sort().reverse().map(mk=>`<option value="${mk}"${_fm===mk?' selected':''}>${_mois[mk]}</option>`).join('');
-  const btnS=(a)=>`padding:4px 9px;border:none;border-radius:5px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit;background:${a?'var(--accent)':'var(--border)'};color:${a?'#fff':'var(--text2)'}`;
-  const barre=`<div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;margin-bottom:8px;padding:7px 8px;background:var(--bg2);border-radius:8px">
-    <span style="font-size:11px;font-weight:700;color:var(--text3)">Trier:</span>
-    <button onclick="window._ventF='tout';window._ventD='';window._ventM='';refreshVentesHistory()" style="${btnS(_f==='tout')}">Tout (${ventes.length})</button>
-    <button onclick="window._ventF='jour';refreshVentesHistory()" style="${btnS(_f==='jour')}">Jour</button>
-    <input type="date" value="${_fd||todayISO}" onchange="window._ventF='jour';window._ventD=this.value;refreshVentesHistory()" style="padding:3px 6px;border:1px solid var(--border);border-radius:5px;font-size:11px;background:var(--bg);color:var(--text)">
-    <button onclick="window._ventF='mois';refreshVentesHistory()" style="${btnS(_f==='mois')}">Mois</button>
-    ${moisOpts?`<select onchange="window._ventF='mois';window._ventM=this.value;refreshVentesHistory()" style="padding:3px 6px;border:1px solid var(--border);border-radius:5px;font-size:11px;background:var(--bg);color:var(--text)">${moisOpts}</select>`:''}
-    <span style="margin-left:auto;font-size:10px;color:var(--text3)">${_vf.length} mouv.</span>
-  </div>`;
-  const container=document.getElementById('ventes-history');
-  if(container) container.innerHTML=barre+(_vf.length?_vf.map(v=>{
+  const moisOpts=Object.keys(_mo).sort().reverse().map(mk=>`<option value="${mk}"${_fm===mk?' selected':''}>${_mo[mk]}</option>`).join('');
+  const aS=(a)=>`padding:4px 8px;border:none;border-radius:5px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit;background:${a?'var(--accent)':'var(--border)'};color:${a?'#fff':'var(--text2)'}`;
+  const barre=`<div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;margin-bottom:8px;padding:6px 8px;background:var(--bg2);border-radius:8px">
+<span style="font-size:11px;font-weight:700;color:var(--text3)">Trier:</span>
+<button onclick="window._ventF='tout';window._ventD='';window._ventM='';refreshVentesHistory()" style="${aS(_f==='tout')}">Tout(${ventes.length})</button>
+<button onclick="window._ventF='jour';refreshVentesHistory()" style="${aS(_f==='jour')}">Jour</button>
+<input type="date" value="${_fd||todayISO}" onchange="window._ventF='jour';window._ventD=this.value;refreshVentesHistory()" style="padding:2px 5px;border:1px solid var(--border);border-radius:5px;font-size:11px;background:var(--bg);color:var(--text)">
+<button onclick="window._ventF='mois';refreshVentesHistory()" style="${aS(_f==='mois')}">Mois</button>
+${moisOpts?`<select onchange="window._ventF='mois';window._ventM=this.value;refreshVentesHistory()" style="padding:2px 5px;border:1px solid var(--border);border-radius:5px;font-size:11px;background:var(--bg);color:var(--text)">${moisOpts}</select>`:''}
+<span style="margin-left:auto;font-size:10px;color:var(--text3)">${_vf.length}mvt</span>
+</div>`;
+  const histo=_vf.length?_vf.map(v=>{
     const vd=v.ts?new Date(v.ts):(v.date?new Date(v.date):null);
-    const ds=vd?vd.toLocaleDateString('fr-FR'):'---';
+    const ds=vd?vd.toLocaleDateString('fr-FR'):'--';
     return `<div class="sale-log-item">
-      <div style="font-size:10px;padding:1px 5px;border-radius:3px;background:${v.type==='entree'?'var(--green-bg)':'var(--red-bg)'};color:${v.type==='entree'?'var(--green)':'var(--red)'};font-weight:700;white-space:nowrap;flex-shrink:0">${v.type==='entree'?'ENT':'SOR'}</div>
-      <div style="font-size:11px;font-family:DM Mono,monospace;color:var(--text3);width:52px">${v.ref||''}</div>
-      <div class="sale-log-name">${v.name}</div>
-      <div class="sale-log-qty">${v.type==='entree'?'+':'x'}${v.qty}</div>
-      <div class="sale-log-amount">${v.type==='entree'?'---':fmtGNF(v.total)}</div>
-      <div style="font-size:11px;color:var(--text3);margin-left:4px">${ds}</div>
-      ${isFond?`<button class='row-btn' onclick='openEditVente(${v.id})' style='opacity:1;margin-left:4px;width:22px;height:22px;font-size:10px;color:var(--accent)'>✏</button>`:''}
-      ${canDel?`<button class='row-btn del' onclick='deleteVente(${v.id})' style='opacity:1;margin-left:2px;width:22px;height:22px;font-size:10px'>X</button>`:''}
-    </div>`;
-  }).join(''):`<div class="empty"><div class="empty-icon">📋</div><div class="empty-text">Aucun mouvement${_f==='jour'?' ce jour':_f==='mois'?' ce mois':''}</div></div>`);
+<div style="font-size:10px;padding:1px 4px;border-radius:3px;background:${v.type==='entree'?'var(--green-bg)':'var(--red-bg)'};color:${v.type==='entree'?'var(--green)':'var(--red)'};font-weight:700;flex-shrink:0">${v.type==='entree'?'ENT':'SOR'}</div>
+<div style="font-size:11px;font-family:DM Mono,monospace;color:var(--text3);width:50px">${v.ref||''}</div>
+<div class="sale-log-name">${v.name}</div>
+<div class="sale-log-qty">${v.type==='entree'?'+':'x'}${v.qty}</div>
+<div class="sale-log-amount">${v.type==='entree'?'---':fmtGNF(v.total)}</div>
+<div style="font-size:10px;color:var(--text3);margin-left:2px">${ds}</div>
+${isFond?`<button class='row-btn' onclick='openEditVente(${v.id})' style='opacity:1;margin-left:2px;width:20px;height:20px;font-size:10px;color:var(--accent)'>&#x270F;</button>`:''}
+${canDel?`<button class='row-btn del' onclick='deleteVente(${v.id})' style='opacity:1;margin-left:1px;width:20px;height:20px;font-size:9px'>X</button>`:''}
+</div>`;
+  }).join(''):`<div class="empty"><div class="empty-icon">&#x1F4CB;</div><div class="empty-text">Aucun mouvement${_f==='jour'?' ce jour':_f==='mois'?' ce mois':''}</div></div>`;
+  const el=document.getElementById('ventes-history');
+  if(el) el.innerHTML=barre+histo;
   const benNetG=ventes.filter(v=>v.type!=='entree').reduce((s,v)=>s+(v.benefice!=null?v.benefice:v.total),0)-totalDep;
-  document.getElementById('ventes-total').innerHTML=`
-    <div style="display:flex;gap:16px;justify-content:flex-end;flex-wrap:wrap">
-      <div style="text-align:right"><div style="font-size:11px;color:var(--text3);text-transform:uppercase;font-weight:600">Chiffre affaires</div><div style="font-size:16px;font-weight:700;color:var(--green)">${fmtGNF(totalV)}</div></div>
-      <div style="text-align:right"><div style="font-size:11px;color:var(--text3);text-transform:uppercase;font-weight:600">Benefice net</div><div style="font-size:16px;font-weight:700;color:${benNetG>=0?'var(--blue)':'var(--red)'}">${fmtGNF(benNetG)}</div><div style="font-size:10px;color:var(--text3)">CA-achat-depenses</div></div>
-    </div>`;
+  document.getElementById('ventes-total').innerHTML=`<div style="display:flex;gap:12px;justify-content:flex-end;flex-wrap:wrap"><div style="text-align:right"><div style="font-size:11px;color:var(--text3);text-transform:uppercase;font-weight:600">CA</div><div style="font-size:15px;font-weight:700;color:var(--green)">${fmtGNF(totalV)}</div></div><div style="text-align:right"><div style="font-size:11px;color:var(--text3);text-transform:uppercase;font-weight:600">Benefice net</div><div style="font-size:15px;font-weight:700;color:${benNetG>=0?'var(--blue)':'var(--red)'}">${fmtGNF(benNetG)}</div></div></div>`;
 }
 
 // ==================== RESET ====================
@@ -6785,11 +6797,22 @@ const FONDATEUR_CODE = '0000'; // code fondateur par défaut
 
 // Charger les gérants depuis Firebase ou localStorage pour la page de login
 function preloadGerantsForLogin(){
+  // Priorité 0: cache boutique depuis localStorage (le plus rapide)
+  if(window._shopLoginData && window._shopLoginData.uid){
+    var cacheKey='agv_shop_data_'+window._shopLoginData.uid;
+    try{
+      var cached=JSON.parse(localStorage.getItem(cacheKey)||'null');
+      if(cached && cached.gerants){
+        var g=cached.gerants;
+        gerants=Array.isArray(g)?g:Object.values(g);
+        if(gerants.length>0) return;
+      }
+    }catch(e){}
+  }
   // Priorité 1 : données Firebase si disponibles
   if (window._firebaseData && window._firebaseData.gerants) {
     var g = window._firebaseData.gerants;
     gerants = Array.isArray(g) ? g : Object.values(g);
-    console.log('👥 Gérants depuis Firebase:', gerants.length);
     return;
   }
   // Priorité 2 : localStorage
@@ -8572,13 +8595,13 @@ function refreshVentesHistory(){
   const isFond=currentRole==='fondateur';
   const gRef=getCurrentGerant();
   const canDel=isFond||(gRef&&gRef.permDel);
-  // Tri decroissant
+  // Tri decroissant par date
   const _sorted=[...ventes].sort((a,b)=>{
     const ta=a.ts?new Date(a.ts).getTime():(a.date?new Date(a.date).getTime():0);
     const tb=b.ts?new Date(b.ts).getTime():(b.date?new Date(b.date).getTime():0);
     return tb-ta;
   });
-  // Filtre
+  // Filtre date/mois/tout
   const _vf=_sorted.filter(v=>{
     const vd=v.ts?new Date(v.ts):(v.date?new Date(v.date):null);
     if(!vd) return _f==='tout';
@@ -8591,46 +8614,42 @@ function refreshVentesHistory(){
   const depMk=getMonthKey(new Date());
   const depsMois=depenses.filter(d=>getMonthKey(d.date)===depMk);
   const totalDep=depsMois.reduce((s,d)=>s+d.montant,0);
-  const totalBeneficeV=sorties.reduce((s,v)=>s+(v.benefice!=null?v.benefice:v.total),0);
-  const benNet=totalBeneficeV-totalDep;
+  const benNetV=sorties.reduce((s,v)=>s+(v.benefice!=null?v.benefice:v.total),0);
   // Mois disponibles
-  const _mois={};
+  const _mo={};
   ventes.forEach(v=>{
     const d=v.ts?new Date(v.ts):(v.date?new Date(v.date):null);
-    if(d){const mk=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');_mois[mk]=d.toLocaleDateString('fr-FR',{month:'long',year:'numeric'});}
+    if(d){const mk=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');_mo[mk]=d.toLocaleDateString('fr-FR',{month:'long',year:'numeric'});}
   });
-  const moisOpts=Object.keys(_mois).sort().reverse().map(mk=>`<option value="${mk}"${_fm===mk?' selected':''}>${_mois[mk]}</option>`).join('');
-  const btnS=(a)=>`padding:4px 9px;border:none;border-radius:5px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit;background:${a?'var(--accent)':'var(--border)'};color:${a?'#fff':'var(--text2)'}`;
-  const barre=`<div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;margin-bottom:8px;padding:7px 8px;background:var(--bg2);border-radius:8px">
-    <span style="font-size:11px;font-weight:700;color:var(--text3)">Trier:</span>
-    <button onclick="window._ventF='tout';window._ventD='';window._ventM='';refreshVentesHistory()" style="${btnS(_f==='tout')}">Tout (${ventes.length})</button>
-    <button onclick="window._ventF='jour';refreshVentesHistory()" style="${btnS(_f==='jour')}">Jour</button>
-    <input type="date" value="${_fd||todayISO}" onchange="window._ventF='jour';window._ventD=this.value;refreshVentesHistory()" style="padding:3px 6px;border:1px solid var(--border);border-radius:5px;font-size:11px;background:var(--bg);color:var(--text)">
-    <button onclick="window._ventF='mois';refreshVentesHistory()" style="${btnS(_f==='mois')}">Mois</button>
-    ${moisOpts?`<select onchange="window._ventF='mois';window._ventM=this.value;refreshVentesHistory()" style="padding:3px 6px;border:1px solid var(--border);border-radius:5px;font-size:11px;background:var(--bg);color:var(--text)">${moisOpts}</select>`:''}
-    <span style="margin-left:auto;font-size:10px;color:var(--text3)">${_vf.length} mouv.</span>
-  </div>`;
-  const container=document.getElementById('ventes-history');
-  if(container) container.innerHTML=barre+(_vf.length?_vf.map(v=>{
+  const moisOpts=Object.keys(_mo).sort().reverse().map(mk=>`<option value="${mk}"${_fm===mk?' selected':''}>${_mo[mk]}</option>`).join('');
+  const aS=(a)=>`padding:4px 8px;border:none;border-radius:5px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit;background:${a?'var(--accent)':'var(--border)'};color:${a?'#fff':'var(--text2)'}`;
+  const barre=`<div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;margin-bottom:8px;padding:6px 8px;background:var(--bg2);border-radius:8px">
+<span style="font-size:11px;font-weight:700;color:var(--text3)">Trier:</span>
+<button onclick="window._ventF='tout';window._ventD='';window._ventM='';refreshVentesHistory()" style="${aS(_f==='tout')}">Tout(${ventes.length})</button>
+<button onclick="window._ventF='jour';refreshVentesHistory()" style="${aS(_f==='jour')}">Jour</button>
+<input type="date" value="${_fd||todayISO}" onchange="window._ventF='jour';window._ventD=this.value;refreshVentesHistory()" style="padding:2px 5px;border:1px solid var(--border);border-radius:5px;font-size:11px;background:var(--bg);color:var(--text)">
+<button onclick="window._ventF='mois';refreshVentesHistory()" style="${aS(_f==='mois')}">Mois</button>
+${moisOpts?`<select onchange="window._ventF='mois';window._ventM=this.value;refreshVentesHistory()" style="padding:2px 5px;border:1px solid var(--border);border-radius:5px;font-size:11px;background:var(--bg);color:var(--text)">${moisOpts}</select>`:''}
+<span style="margin-left:auto;font-size:10px;color:var(--text3)">${_vf.length}mvt</span>
+</div>`;
+  const histo=_vf.length?_vf.map(v=>{
     const vd=v.ts?new Date(v.ts):(v.date?new Date(v.date):null);
-    const ds=vd?vd.toLocaleDateString('fr-FR'):'---';
+    const ds=vd?vd.toLocaleDateString('fr-FR'):'--';
     return `<div class="sale-log-item">
-      <div style="font-size:10px;padding:1px 5px;border-radius:3px;background:${v.type==='entree'?'var(--green-bg)':'var(--red-bg)'};color:${v.type==='entree'?'var(--green)':'var(--red)'};font-weight:700;white-space:nowrap;flex-shrink:0">${v.type==='entree'?'ENT':'SOR'}</div>
-      <div style="font-size:11px;font-family:DM Mono,monospace;color:var(--text3);width:52px">${v.ref||''}</div>
-      <div class="sale-log-name">${v.name}</div>
-      <div class="sale-log-qty">${v.type==='entree'?'+':'x'}${v.qty}</div>
-      <div class="sale-log-amount">${v.type==='entree'?'---':fmtGNF(v.total)}</div>
-      <div style="font-size:11px;color:var(--text3);margin-left:4px">${ds}</div>
-      ${isFond?`<button class='row-btn' onclick='openEditVente(${v.id})' style='opacity:1;margin-left:4px;width:22px;height:22px;font-size:10px;color:var(--accent)'>✏</button>`:''}
-      ${canDel?`<button class='row-btn del' onclick='deleteVente(${v.id})' style='opacity:1;margin-left:2px;width:22px;height:22px;font-size:10px'>X</button>`:''}
-    </div>`;
-  }).join(''):`<div class="empty"><div class="empty-icon">📋</div><div class="empty-text">Aucun mouvement${_f==='jour'?' ce jour':_f==='mois'?' ce mois':''}</div></div>`);
+<div style="font-size:10px;padding:1px 4px;border-radius:3px;background:${v.type==='entree'?'var(--green-bg)':'var(--red-bg)'};color:${v.type==='entree'?'var(--green)':'var(--red)'};font-weight:700;flex-shrink:0">${v.type==='entree'?'ENT':'SOR'}</div>
+<div style="font-size:11px;font-family:DM Mono,monospace;color:var(--text3);width:50px">${v.ref||''}</div>
+<div class="sale-log-name">${v.name}</div>
+<div class="sale-log-qty">${v.type==='entree'?'+':'x'}${v.qty}</div>
+<div class="sale-log-amount">${v.type==='entree'?'---':fmtGNF(v.total)}</div>
+<div style="font-size:10px;color:var(--text3);margin-left:2px">${ds}</div>
+${isFond?`<button class='row-btn' onclick='openEditVente(${v.id})' style='opacity:1;margin-left:2px;width:20px;height:20px;font-size:10px;color:var(--accent)'>&#x270F;</button>`:''}
+${canDel?`<button class='row-btn del' onclick='deleteVente(${v.id})' style='opacity:1;margin-left:1px;width:20px;height:20px;font-size:9px'>X</button>`:''}
+</div>`;
+  }).join(''):`<div class="empty"><div class="empty-icon">&#x1F4CB;</div><div class="empty-text">Aucun mouvement${_f==='jour'?' ce jour':_f==='mois'?' ce mois':''}</div></div>`;
+  const el=document.getElementById('ventes-history');
+  if(el) el.innerHTML=barre+histo;
   const benNetG=ventes.filter(v=>v.type!=='entree').reduce((s,v)=>s+(v.benefice!=null?v.benefice:v.total),0)-totalDep;
-  document.getElementById('ventes-total').innerHTML=`
-    <div style="display:flex;gap:16px;justify-content:flex-end;flex-wrap:wrap">
-      <div style="text-align:right"><div style="font-size:11px;color:var(--text3);text-transform:uppercase;font-weight:600">Chiffre affaires</div><div style="font-size:16px;font-weight:700;color:var(--green)">${fmtGNF(totalV)}</div></div>
-      <div style="text-align:right"><div style="font-size:11px;color:var(--text3);text-transform:uppercase;font-weight:600">Benefice net</div><div style="font-size:16px;font-weight:700;color:${benNetG>=0?'var(--blue)':'var(--red)'}">${fmtGNF(benNetG)}</div><div style="font-size:10px;color:var(--text3)">CA-achat-depenses</div></div>
-    </div>`;
+  document.getElementById('ventes-total').innerHTML=`<div style="display:flex;gap:12px;justify-content:flex-end;flex-wrap:wrap"><div style="text-align:right"><div style="font-size:11px;color:var(--text3);text-transform:uppercase;font-weight:600">CA</div><div style="font-size:15px;font-weight:700;color:var(--green)">${fmtGNF(totalV)}</div></div><div style="text-align:right"><div style="font-size:11px;color:var(--text3);text-transform:uppercase;font-weight:600">Benefice net</div><div style="font-size:15px;font-weight:700;color:${benNetG>=0?'var(--blue)':'var(--red)'}">${fmtGNF(benNetG)}</div></div></div>`;
 }
 
 // ==================== RESET ====================
