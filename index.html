@@ -817,6 +817,11 @@ function agvLaunchApp(shop){
     if(typeof renderDashboard==='function')renderDashboard();
     if(typeof buildCatFilters==='function')buildCatFilters();
     if(typeof renderAlerts==='function')renderAlerts();
+    // MAJ badge nb-produits
+    var _nbP=document.getElementById('nb-produits');
+    if(_nbP) _nbP.textContent=products.length;
+    // MAJ historique ventes si onglet ventes actif
+    if(typeof refreshVentesHistory==='function') refreshVentesHistory();
   }
   // 1. Charger le cache IMMEDIATEMENT (0ms d'attente)
   try {
@@ -5089,7 +5094,13 @@ function refreshVentesHistory(){
   const isFond=currentRole==='fondateur';
   const gRef=getCurrentGerant();
   const canDel=isFond||(gRef&&gRef.permDel);
-  document.getElementById('ventes-history').innerHTML=ventes.length?ventes.map(v=>`
+  // Trier par date décroissante - les plus récentes en haut
+  const _ventesTriees = [...ventes].sort((a,b)=>{
+    const ta = a.ts ? new Date(a.ts).getTime() : (a.date ? new Date(a.date).getTime() : 0);
+    const tb = b.ts ? new Date(b.ts).getTime() : (b.date ? new Date(b.date).getTime() : 0);
+    return tb - ta;
+  });
+  document.getElementById('ventes-history').innerHTML=_ventesTriees.length?_ventesTriees.map(v=>`
     <div class="sale-log-item">
       <div style="font-size:10px;padding:1px 5px;border-radius:3px;background:${v.type==='entree'?'var(--green-bg)':'var(--red-bg)'};color:${v.type==='entree'?'var(--green)':'var(--red)'};font-weight:700;white-space:nowrap;flex-shrink:0">${v.type==='entree'?'📥 ENT':'📤 SOR'}</div>
       <div style="font-size:11px;font-family:DM Mono,monospace;color:var(--text3);width:52px">${v.ref||''}</div>
@@ -8530,7 +8541,13 @@ function refreshVentesHistory(){
   const isFond=currentRole==='fondateur';
   const gRef=getCurrentGerant();
   const canDel=isFond||(gRef&&gRef.permDel);
-  document.getElementById('ventes-history').innerHTML=ventes.length?ventes.map(v=>`
+  // Trier par date décroissante - les plus récentes en haut
+  const _ventesTriees = [...ventes].sort((a,b)=>{
+    const ta = a.ts ? new Date(a.ts).getTime() : (a.date ? new Date(a.date).getTime() : 0);
+    const tb = b.ts ? new Date(b.ts).getTime() : (b.date ? new Date(b.date).getTime() : 0);
+    return tb - ta;
+  });
+  document.getElementById('ventes-history').innerHTML=_ventesTriees.length?_ventesTriees.map(v=>`
     <div class="sale-log-item">
       <div style="font-size:10px;padding:1px 5px;border-radius:3px;background:${v.type==='entree'?'var(--green-bg)':'var(--red-bg)'};color:${v.type==='entree'?'var(--green)':'var(--red)'};font-weight:700;white-space:nowrap;flex-shrink:0">${v.type==='entree'?'📥 ENT':'📤 SOR'}</div>
       <div style="font-size:11px;font-family:DM Mono,monospace;color:var(--text3);width:52px">${v.ref||''}</div>
