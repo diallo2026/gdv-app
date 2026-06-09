@@ -854,7 +854,10 @@ function agvLaunchApp(shop){
 
   // NE PAS ecraser currentRole ici - il est defini apres agvLaunchApp()
   // Afficher le chronometre de licence
-  setTimeout(function(){ agvAfficherChrono(shop); }, 1200);
+  setTimeout(function(){ 
+    var _sh=window._currentShop||shop;
+    agvAfficherChrono(_sh);
+  }, 1200);
 }
 
 // ===== ADMIN =====
@@ -3437,10 +3440,11 @@ function applyRoleUI(){
     // Cacher/montrer onglets selon permissions gerant
     const canVentes = g && g.permVentes;
     const canDep = g && g.permDep;
+    // Indiquer visuellement les onglets selon permissions
     var navVentes = document.getElementById('nav-ventes');
-    if(navVentes) navVentes.style.opacity = canVentes ? '1' : '0.4';
+    if(navVentes) navVentes.style.opacity = '1';
     var navDep = document.getElementById('nav-depenses');
-    if(navDep) navDep.style.opacity = canDep ? '1' : '0.4';
+    if(navDep) navDep.style.opacity = '1';
   }
 
   if(isFondateur){
@@ -3785,6 +3789,8 @@ function renderEntrees(){
   buildYearOptions(ysel, entrees.length?entrees:[{date:new Date().toISOString()}], 'date');
   if(!msel.value) buildMonthOptions(msel);
   const {year,month}=getSelectedYearMonth(ysel,msel);
+  // Entrees: normaliser ts->date pour le filtre
+  entrees.forEach(e=>{if(!e.date&&e.ts)e.date=e.ts;});
   let list=filterByMonth(entrees,'date',year,month);
   const sortV=(document.getElementById('ent-sort')||{value:'date-desc'}).value;
   list.sort((a,b)=>sortV==='date-asc'?new Date(a.date)-new Date(b.date):sortV==='produit-asc'?(a.produit||'').localeCompare(b.produit||''):sortV==='montant-asc'?(a.total||0)-(b.total||0):sortV==='produit-desc'?(b.produit||'').localeCompare(a.produit||''):sortV==='montant-desc'?(b.total||0)-(a.total||0):new Date(b.date)-new Date(a.date));
@@ -3805,6 +3811,8 @@ function renderSorties(){
   buildYearOptions(ysel, sorties.length?sorties:[{date:new Date().toISOString()}], 'date');
   if(!msel.value) buildMonthOptions(msel);
   const {year,month}=getSelectedYearMonth(ysel,msel);
+  // Sorties: normaliser ts->date pour le filtre
+  sorties.forEach(v=>{if(!v.date&&v.ts)v.date=v.ts;});
   let list=filterByMonth(sorties,'date',year,month);
   const sortV=(document.getElementById('sorties-sort')||{value:'date-desc'}).value;
   const search=(document.getElementById('sorties-search')||{value:''}).value.toLowerCase();
@@ -4058,6 +4066,9 @@ function filterStock(v,btn){
 
 function buildCatFilters(){
   const cats=[...new Set(products.map(p=>p.categorie))].sort();
+  // MAJ badge nb-produits
+  const _nb=document.getElementById('nb-produits');
+  if(_nb) _nb.textContent=products.length;
   const container=document.getElementById('cat-filters');
   let html=`<button class="filter-btn ${catFilter==='ALL'?'active':''}" onclick="filterCat('ALL',this)">Tous</button>
     <div class="filter-sep"></div>
@@ -4389,7 +4400,34 @@ function renderSalaires(){
     if(salSummary)salSummary.style.display='none';
     benSteps.forEach(el=>el.style.display='none');
     if(fondateurOnly)fondateurOnly.style.display='none';
-    if(gerantOnly)gerantOnly.style.display='';
+    if(gerantOnly){
+      gerantOnly.style.display='';
+      // Afficher resume mensuel pour gerant au pourcentage
+      const g=getCurrentGerant();
+      if(g && g.type==='pourcentage'){
+        const _resumeId='gerant-pct-resume';
+        var _old=document.getElementById(_resumeId);
+        if(_old) _old.remove();
+        var _div=document.createElement('div');
+        _div.id=_resumeId;
+        _div.style.cssText='margin-top:16px;padding:14px;background:var(--surface2);border-radius:12px;font-size:13px';
+        var _ventesMois=ventesMonth.length;
+        var _ca=revenus;
+        var _ben=beneficesBruts;
+        var _dep=totalDep;
+        var _reste=resteAvantFonds;
+        var _part=_reste>0?Math.round(_reste*(g.pct/100)):0;
+        _div.innerHTML='<div style="font-weight:700;margin-bottom:10px;color:var(--accent)">Resume du mois - '+mk+'</div>'
+          +'<div style="display:flex;flex-wrap:wrap;gap:10px">'
+          +'<div style="flex:1;min-width:120px;padding:10px;background:var(--bg2);border-radius:8px;text-align:center"><div style="font-size:11px;color:var(--text3)">Ventes</div><div style="font-weight:700;color:var(--green)">'+_ventesMois+'</div></div>'
+          +'<div style="flex:1;min-width:120px;padding:10px;background:var(--bg2);border-radius:8px;text-align:center"><div style="font-size:11px;color:var(--text3)">CA</div><div style="font-weight:700;color:var(--blue)">'+fmtGNF(_ca)+'</div></div>'
+          +'<div style="flex:1;min-width:120px;padding:10px;background:var(--bg2);border-radius:8px;text-align:center"><div style="font-size:11px;color:var(--text3)">Benefice brut</div><div style="font-weight:700">'+fmtGNF(_ben)+'</div></div>'
+          +'<div style="flex:1;min-width:120px;padding:10px;background:var(--bg2);border-radius:8px;text-align:center"><div style="font-size:11px;color:var(--text3)">Depenses</div><div style="font-weight:700;color:var(--red)">-'+fmtGNF(_dep)+'</div></div>'
+          +'<div style="flex:1;min-width:140px;padding:10px;background:var(--accent-light);border-radius:8px;text-align:center;border:1px solid var(--accent)"><div style="font-size:11px;color:var(--accent)">Votre part ('+g.pct+'%)</div><div style="font-weight:700;font-size:16px;color:var(--accent)">'+fmtGNF(_part)+'</div></div>'
+          +'</div>';
+        gerantOnly.appendChild(_div);
+      }
+    }
     return;
   }
   if(salSummary)salSummary.style.display='';
@@ -6952,10 +6990,11 @@ function applyRoleUI(){
     // Cacher/montrer onglets selon permissions gerant
     const canVentes = g && g.permVentes;
     const canDep = g && g.permDep;
+    // Indiquer visuellement les onglets selon permissions
     var navVentes = document.getElementById('nav-ventes');
-    if(navVentes) navVentes.style.opacity = canVentes ? '1' : '0.4';
+    if(navVentes) navVentes.style.opacity = '1';
     var navDep = document.getElementById('nav-depenses');
-    if(navDep) navDep.style.opacity = canDep ? '1' : '0.4';
+    if(navDep) navDep.style.opacity = '1';
   }
 
   if(isFondateur){
@@ -7300,6 +7339,8 @@ function renderEntrees(){
   buildYearOptions(ysel, entrees.length?entrees:[{date:new Date().toISOString()}], 'date');
   if(!msel.value) buildMonthOptions(msel);
   const {year,month}=getSelectedYearMonth(ysel,msel);
+  // Entrees: normaliser ts->date pour le filtre
+  entrees.forEach(e=>{if(!e.date&&e.ts)e.date=e.ts;});
   let list=filterByMonth(entrees,'date',year,month);
   const sortV=(document.getElementById('ent-sort')||{value:'date-desc'}).value;
   list.sort((a,b)=>sortV==='date-asc'?new Date(a.date)-new Date(b.date):sortV==='produit-asc'?(a.produit||'').localeCompare(b.produit||''):sortV==='montant-asc'?(a.total||0)-(b.total||0):sortV==='produit-desc'?(b.produit||'').localeCompare(a.produit||''):sortV==='montant-desc'?(b.total||0)-(a.total||0):new Date(b.date)-new Date(a.date));
@@ -7320,6 +7361,8 @@ function renderSorties(){
   buildYearOptions(ysel, sorties.length?sorties:[{date:new Date().toISOString()}], 'date');
   if(!msel.value) buildMonthOptions(msel);
   const {year,month}=getSelectedYearMonth(ysel,msel);
+  // Sorties: normaliser ts->date pour le filtre
+  sorties.forEach(v=>{if(!v.date&&v.ts)v.date=v.ts;});
   let list=filterByMonth(sorties,'date',year,month);
   const sortV=(document.getElementById('sorties-sort')||{value:'date-desc'}).value;
   const search=(document.getElementById('sorties-search')||{value:''}).value.toLowerCase();
@@ -7573,6 +7616,9 @@ function filterStock(v,btn){
 
 function buildCatFilters(){
   const cats=[...new Set(products.map(p=>p.categorie))].sort();
+  // MAJ badge nb-produits
+  const _nb=document.getElementById('nb-produits');
+  if(_nb) _nb.textContent=products.length;
   const container=document.getElementById('cat-filters');
   let html=`<button class="filter-btn ${catFilter==='ALL'?'active':''}" onclick="filterCat('ALL',this)">Tous</button>
     <div class="filter-sep"></div>
@@ -7904,7 +7950,34 @@ function renderSalaires(){
     if(salSummary)salSummary.style.display='none';
     benSteps.forEach(el=>el.style.display='none');
     if(fondateurOnly)fondateurOnly.style.display='none';
-    if(gerantOnly)gerantOnly.style.display='';
+    if(gerantOnly){
+      gerantOnly.style.display='';
+      // Afficher resume mensuel pour gerant au pourcentage
+      const g=getCurrentGerant();
+      if(g && g.type==='pourcentage'){
+        const _resumeId='gerant-pct-resume';
+        var _old=document.getElementById(_resumeId);
+        if(_old) _old.remove();
+        var _div=document.createElement('div');
+        _div.id=_resumeId;
+        _div.style.cssText='margin-top:16px;padding:14px;background:var(--surface2);border-radius:12px;font-size:13px';
+        var _ventesMois=ventesMonth.length;
+        var _ca=revenus;
+        var _ben=beneficesBruts;
+        var _dep=totalDep;
+        var _reste=resteAvantFonds;
+        var _part=_reste>0?Math.round(_reste*(g.pct/100)):0;
+        _div.innerHTML='<div style="font-weight:700;margin-bottom:10px;color:var(--accent)">Resume du mois - '+mk+'</div>'
+          +'<div style="display:flex;flex-wrap:wrap;gap:10px">'
+          +'<div style="flex:1;min-width:120px;padding:10px;background:var(--bg2);border-radius:8px;text-align:center"><div style="font-size:11px;color:var(--text3)">Ventes</div><div style="font-weight:700;color:var(--green)">'+_ventesMois+'</div></div>'
+          +'<div style="flex:1;min-width:120px;padding:10px;background:var(--bg2);border-radius:8px;text-align:center"><div style="font-size:11px;color:var(--text3)">CA</div><div style="font-weight:700;color:var(--blue)">'+fmtGNF(_ca)+'</div></div>'
+          +'<div style="flex:1;min-width:120px;padding:10px;background:var(--bg2);border-radius:8px;text-align:center"><div style="font-size:11px;color:var(--text3)">Benefice brut</div><div style="font-weight:700">'+fmtGNF(_ben)+'</div></div>'
+          +'<div style="flex:1;min-width:120px;padding:10px;background:var(--bg2);border-radius:8px;text-align:center"><div style="font-size:11px;color:var(--text3)">Depenses</div><div style="font-weight:700;color:var(--red)">-'+fmtGNF(_dep)+'</div></div>'
+          +'<div style="flex:1;min-width:140px;padding:10px;background:var(--accent-light);border-radius:8px;text-align:center;border:1px solid var(--accent)"><div style="font-size:11px;color:var(--accent)">Votre part ('+g.pct+'%)</div><div style="font-weight:700;font-size:16px;color:var(--accent)">'+fmtGNF(_part)+'</div></div>'
+          +'</div>';
+        gerantOnly.appendChild(_div);
+      }
+    }
     return;
   }
   if(salSummary)salSummary.style.display='';
