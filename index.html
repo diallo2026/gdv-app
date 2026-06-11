@@ -1675,9 +1675,9 @@ var _pwaP=null;
 window.addEventListener('beforeinstallprompt',function(e){e.preventDefault();_pwaP=e;var b=document.getElementById('agv-install-btn');if(b)b.style.display='inline-flex';});
 function agvInstall(){if(_pwaP){_pwaP.prompt();_pwaP.userChoice.then(function(){_pwaP=null;});}}
 if('serviceWorker' in navigator){
-  navigator.serviceWorker.getRegistrations().then(function(regs){
-    Promise.all(regs.map(function(r){return r.unregister();})).then(function(){
-      navigator.serviceWorker.register('./sw.js?v=10').then(function(reg){reg.update();});
+  navigator.serviceWorker.getRegistrations().then(function(r){
+    Promise.all(r.map(function(x){return x.unregister();})).then(function(){
+      navigator.serviceWorker.register('./sw.js?v=12');
     });
   });
 }
@@ -2304,15 +2304,10 @@ window.addEventListener('DOMContentLoaded',function(){
         <div class="info-box">👑 Vue Fondateur — Vous voyez la répartition complète des bénéfices et salaires.</div>
       </div>
       <div id="sal-gerant-only" style="display:none">
-        <div class="info-box" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
-          <span>🧑‍💼 Votre bulletin de paie</span>
-          <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
-            <select id="sal-gerant-year" onchange="renderSalairesGerant()" class="filter-sel" style="border-radius:6px;padding:4px 10px;font-size:12px"></select>
-            <select id="sal-gerant-month" onchange="renderSalairesGerant()" class="filter-sel" style="border-radius:6px;padding:4px 10px;font-size:12px"></select>
-            <button class="btn btn-primary btn-sm" onclick="openBulletinGerantSelf()">📄 Mon bulletin</button>
-          </div>
+        <div class="info-box" style="display:flex;align-items:center;justify-content:space-between">
+          <span>🧑‍💼 Consultez votre bulletin de paie pour le mois sélectionné.</span>
+          <button class="btn btn-primary btn-sm" onclick="openBulletinGerantSelf()">📄 Mon bulletin</button>
         </div>
-        <div id="sal-gerant-resume" style="margin-top:12px"></div>
       </div>
 
       <!-- Résumé flux -->
@@ -2611,6 +2606,10 @@ window.addEventListener('DOMContentLoaded',function(){
         style="padding:10px 20px;border:none;border-bottom:3px solid transparent;margin-bottom:-2px;background:none;font-weight:600;color:var(--text3);cursor:pointer;font-size:14px">
         🧑‍💼 Dettes clients
       </button>
+      <button id="tab-btn-fournisseurs" onclick="switchDetteTab('fournisseurs')"
+        style="padding:10px 20px;border:none;border-bottom:3px solid transparent;margin-bottom:-2px;background:none;font-weight:600;color:var(--text3);cursor:pointer;font-size:14px">
+        🏭 Fournisseurs
+      </button>
     </div>
 
     <!-- TAB : Dettes personnelles -->
@@ -2624,6 +2623,16 @@ window.addEventListener('DOMContentLoaded',function(){
       </div>
     </div>
 
+    <!-- TAB : Dettes fournisseurs -->
+    <div id="tab-fournisseurs" style="display:none">
+      <div class="card" style="margin-bottom:16px">
+        <div class="card-title" style="display:flex;justify-content:space-between;align-items:center">
+          <span>🏭 Dettes Fournisseurs</span>
+          <button class="btn btn-primary btn-sm" onclick="openDetteFournisseurModal()">+ Nouvelle dette</button>
+        </div>
+        <div id="dette-fournisseur-body"><div style="color:var(--text3);padding:12px">Aucune dette fournisseur.</div></div>
+      </div>
+    </div>
     <!-- TAB : Dettes clients -->
     <div id="tab-clients" style="display:none">
       <!-- Formulaire saisie rapide -->
@@ -2884,11 +2893,9 @@ window.addEventListener('DOMContentLoaded',function(){
     <div class="modal-body">
       <div class="form-group" style="margin-bottom:12px">
         <label class="form-label">Produit *</label>
-        <input class="form-input" id="ent-product-sel-input" list="ent-product-list" 
-          placeholder="Rechercher ou saisir un produit..." autocomplete="off"
-          oninput="onEntProduitInputChange(this.value)" style="width:100%">
-        <datalist id="ent-product-list"></datalist>
-        <input type="hidden" id="ent-product-sel" value="">
+        <select class="form-input" id="ent-product-sel" onchange="onEntProduitChange()">
+          <option value="">— Choisir un produit —</option>
+        </select>
       </div>
       <div id="ent-ancien-prix" style="padding:8px 12px;background:var(--surface2);border-radius:6px;font-size:12px;color:var(--text2);margin-bottom:12px;display:none">
         Prix d'achat actuel : <strong id="ent-ancien-val">—</strong>
@@ -3460,9 +3467,9 @@ function applyRoleUI(){
 
   // Fondateur: lecture seule pour produits (sauf ajout/modif si role = fondateur)
   // Fondateur SUPERVISE uniquement → pas de saisie directe de ventes/dépenses
-  const canAddProducts = isFondateur;
-  document.getElementById('btn-nouveau-produit').style.display = canAddProducts ? 'flex' : 'none';
-  document.getElementById('btn-add-prod').style.display = canAddProducts ? 'block' : 'none';
+  // Ajout produit accessible a tous
+  document.getElementById('btn-nouveau-produit').style.display = 'flex';
+  document.getElementById('btn-add-prod').style.display = 'block';
 
   // Gérants uniquement
   document.getElementById('nav-gerants').style.display = isFondateur ? 'flex' : 'none';
@@ -3488,8 +3495,6 @@ function applyRoleUI(){
     document.getElementById('sal-fondateur-only').style.display='none';
     document.getElementById('sal-gerant-only').style.display='block';
     document.getElementById('btn-reset-all').style.display='none';
-    // Afficher le résumé gérant avec filtres
-    setTimeout(function(){renderSalairesGerant();},100);
   }
 }
 
@@ -3742,18 +3747,6 @@ function _syncMonthFilter(yearSelId, monthSelId, currentMk){
   const yearSel = document.getElementById(yearSelId);
   const monthSel = document.getElementById(monthSelId);
   if(!yearSel || !monthSel) return;
-  // Assurer que les années 2020-2040 sont disponibles
-  if(yearSel.options.length===0||yearSel.options[yearSel.options.length-1].value>'2020'){
-    const curY=new Date().getFullYear();
-    const curVal=parseInt(yearSel.value)||curY;
-    const yrs=new Set();
-    for(let y=2020;y<=2040;y++) yrs.add(y);
-    [...ventes.map(v=>new Date(v.ts||v.date||new Date()).getFullYear()),
-     ...depenses.map(d=>new Date(d.date||new Date()).getFullYear()),
-     ...entrees.map(e=>new Date(e.date||new Date()).getFullYear())
-    ].forEach(y=>{if(y>=2020) yrs.add(y);});
-    yearSel.innerHTML=[...yrs].sort((a,b)=>b-a).map(y=>`<option value="${y}"${y===curVal?' selected':''}>${y}</option>`).join('');
-  }
   const selectedYear = parseInt(yearSel.value);
 
   // Mois de l'année sélectionnée
@@ -3805,12 +3798,10 @@ function buildMonthFiltersForBulletin(){
 // ============================================================
 function buildYearOptions(sel, items, dateField){
   if(!sel) return;
+  const years=[...new Set(items.map(x=>{ try{ return new Date(x[dateField]).getFullYear(); }catch(e){ return new Date().getFullYear(); } }))].sort((a,b)=>b-a);
   const curYear=new Date().getFullYear();
-  const dataYears=new Set(items.map(x=>{ try{ return new Date(x[dateField]).getFullYear(); }catch(e){ return curYear; } }));
-  // Toujours inclure 2020 à 2040
-  for(let y=2020;y<=2040;y++) dataYears.add(y);
-  const years=[...dataYears].sort((a,b)=>b-a);
-  const cur=parseInt(sel.value)||curYear;
+  if(!years.includes(curYear)) years.unshift(curYear);
+  const cur=parseInt(sel.value)||0;
   sel.innerHTML=years.map(y=>`<option value="${y}" ${y===cur?'selected':''}>${y}</option>`).join('');
 }
 function buildMonthOptions(sel){
@@ -4069,9 +4060,13 @@ function renderVentesView(){
     }
     refreshVentesHistory();
   } else {
-    // Pas de permission
-    document.getElementById('ventes-blocked-msg').style.display='block';
-    if(container) container.style.display='none';
+    document.getElementById('ventes-blocked-msg').style.display='none';
+    if(container){
+      container.style.display='grid'; container.style.gridTemplateColumns='';
+      if(container.children[0]) container.children[0].style.display='';
+      if(container.children[1]) container.children[1].style.display='';
+    }
+    refreshVentesHistory();
   }
 }
 
@@ -4183,7 +4178,7 @@ function buildDatalist2(){
 // ==================== MODAL PRODUIT ====================
 let modalMode='add';
 function openAdd(){
-  if(currentRole!=='fondateur'){showToast('Réservé au Fondateur');return}
+  // Ajout libre - seules modif/suppr réservées fondateur
   editIdx=null;modalMode='add';
   document.getElementById('modal-title').textContent='Nouveau produit';
   document.getElementById('btn-del').style.display='none';
@@ -4213,7 +4208,7 @@ function closeModal(e){
 function saveProduct(){
   const ref=document.getElementById('f-ref').value.trim();
   const des=document.getElementById('f-des').value.trim();
-  if(!ref||!des){showToast('Reference et designation obligatoires');return;}
+  if(!ref||!des){showToast('Référence et désignation obligatoires');return}
   const stock=parseInt(document.getElementById('f-stock').value)||0;
   const achat=parseInt(document.getElementById('f-achat').value)||0;
   const data={
@@ -4224,19 +4219,12 @@ function saveProduct(){
     stock_initial:stock,seuil_alerte:parseInt(document.getElementById('f-seuil').value)||0,
     prix_achat:achat,prix_vente:parseInt(document.getElementById('f-vente').value)||0,total:stock*achat
   };
-  const isEdit=editIdx!==null;
-  if(isEdit) products[editIdx]=data; else products.push(data);
+  if(editIdx!==null)products[editIdx]=data;else products.push(data);
   saveAll();buildCatFilters();buildDatalist();renderDashboard();renderTable();
-  // Vider les champs
-  ['ref','des','cat','uni','stock','seuil','achat','vente'].forEach(function(f){
-    var el=document.getElementById('f-'+f);if(el) el.value='';
-  });
-  // Fermer la modal
+  ['ref','des','cat','uni','stock','seuil','achat','vente'].forEach(function(f){var e=document.getElementById('f-'+f);if(e)e.value='';});
   document.getElementById('modal-overlay').classList.remove('open');
-  // Feedback visuel clair
-  showToast(isEdit?'✅ Produit modifie!':'✅ Produit ajoute avec succes!');
-  // Mettre à jour le badge nb-produits
-  var nb=document.getElementById('nb-produits');if(nb) nb.textContent=products.length;
+  var nb=document.getElementById('nb-produits');if(nb)nb.textContent=products.length;
+  showToast(editIdx!==null?'✅ Produit modifie':'✅ Produit ajoute');
 }
 function deleteProduct(){
   if(!confirm('Supprimer ce produit ?'))return;
@@ -4447,58 +4435,6 @@ function deleteDepense(id){
 }
 
 // ==================== SALAIRES & BÉNÉFICES ====================
-
-// ===== SALAIRES GÉRANT - filtre mois/année =====
-function renderSalairesGerant(){
-  var ySel=document.getElementById('sal-gerant-year');
-  var mSel=document.getElementById('sal-gerant-month');
-  // Initialiser les sélecteurs si vides
-  if(ySel && !ySel.options.length){
-    var curY=new Date().getFullYear();
-    var yrs=new Set();for(var y=2020;y<=2040;y++) yrs.add(y);
-    [...ventes.map(v=>new Date(v.ts||v.date||new Date()).getFullYear()),
-     ...depenses.map(d=>new Date(d.date||new Date()).getFullYear())
-    ].forEach(y=>{if(y>=2020)yrs.add(y);});
-    ySel.innerHTML=[...yrs].sort((a,b)=>b-a).map(y=>`<option value="${y}"${y===curY?' selected':''}>${y}</option>`).join('');
-  }
-  if(mSel && !mSel.options.length){
-    var mo=new Date().getMonth()+1;
-    mSel.innerHTML=['Jan','Fev','Mar','Avr','Mai','Jun','Jul','Aou','Sep','Oct','Nov','Dec']
-      .map((m,i)=>`<option value="${i+1}"${i+1===mo?' selected':''}>${m}</option>`).join('');
-  }
-  var yr=ySel?parseInt(ySel.value):new Date().getFullYear();
-  var mo2=mSel?parseInt(mSel.value):new Date().getMonth()+1;
-  var mk=yr+'-'+String(mo2).padStart(2,'0');
-  // Calculer les données du gérant pour ce mois
-  var g=getCurrentGerant();
-  if(!g)return;
-  var ventesM=ventes.filter(v=>getMonthKey(v.ts||v.date)===mk&&v.type!=='entree'&&v.gerantId===g.id);
-  var ca=ventesM.reduce((s,v)=>s+v.total,0);
-  var ben=ventesM.reduce((s,v)=>s+(v.benefice!=null?v.benefice:v.total),0);
-  var el=document.getElementById('sal-gerant-resume');
-  if(!el)return;
-  var salaire=g.type==='fixe'?g.salaire:g.type==='pourcentage'?Math.round(ben*(g.pct||0)/100):0;
-  el.innerHTML=`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;margin-top:8px">
-    <div style="background:var(--bg2);border-radius:8px;padding:10px;text-align:center">
-      <div style="font-size:11px;color:var(--text3)">Mois</div>
-      <div style="font-weight:700">${mk}</div>
-    </div>
-    <div style="background:var(--bg2);border-radius:8px;padding:10px;text-align:center">
-      <div style="font-size:11px;color:var(--text3)">Ventes</div>
-      <div style="font-weight:700;color:var(--green)">${ventesM.length}</div>
-    </div>
-    <div style="background:var(--bg2);border-radius:8px;padding:10px;text-align:center">
-      <div style="font-size:11px;color:var(--text3)">CA</div>
-      <div style="font-weight:700;color:var(--blue)">${fmtGNF(ca)}</div>
-    </div>
-    <div style="background:var(--accent-light);border-radius:8px;padding:10px;text-align:center;border:1px solid var(--accent)">
-      <div style="font-size:11px;color:var(--accent)">Votre salaire</div>
-      <div style="font-weight:700;font-size:16px;color:var(--accent)">${fmtGNF(salaire)}</div>
-      <div style="font-size:10px;color:var(--text3)">${g.type==='fixe'?'Fixe':g.type==='pourcentage'?g.pct+'% benefice':''}</div>
-    </div>
-  </div>`;
-}
-
 function renderSalaires(){
   const isFondateur=currentRole==='fondateur';
   const mk=document.getElementById('sal-month-filter')?document.getElementById('sal-month-filter').value:getMonthKey(new Date());
@@ -4898,10 +4834,10 @@ function refreshBulletin(){
 function openBulletin(gerantId){
   if(currentRole!=='fondateur'){
     // gérant: voit uniquement son propre bulletin
-    if(currentGerantId!==gerantId){showToast('Accès refusé');return}
+    if(currentGerantId!=gerantId){showToast('Acces refuse');return;}
   }
   currentBulletinGerantId=gerantId;
-  const g=gerants.find(x=>x.id===gerantId);
+  const g=gerants.find(x=>x.id==gerantId);
   if(!g)return;
 
   // Peupler le sélecteur de mois du bulletin
@@ -5403,7 +5339,7 @@ function confirmReset(){
 function openVenteRapide(){
   const g=getCurrentGerant();
   const isFondateur=currentRole==='fondateur';
-  if(!isFondateur&&(!g||!g.permVentes)){showToast('Vous n\'avez pas la permission de saisir des ventes.');return}
+  // Ventes libres pour tous
   const dl=document.getElementById('vr-product-list');
   dl.innerHTML=products.map(p=>`<option value="${p.designation} (${p.reference})">`).join('');
   document.getElementById('vr-type-sortie').checked=true;
@@ -5863,12 +5799,12 @@ function getDettesSolde(){
 // ============================================================
 
 function switchDetteTab(tab){
-  document.getElementById('tab-perso').style.display = tab==='perso'?'':'none';
-  document.getElementById('tab-clients').style.display = tab==='clients'?'':'none';
-  var bp=document.getElementById('tab-btn-perso');
-  var bc=document.getElementById('tab-btn-clients');
-  if(bp){ bp.style.borderBottomColor=tab==='perso'?'var(--accent)':'transparent'; bp.style.color=tab==='perso'?'var(--accent)':'var(--text3)'; bp.style.fontWeight=tab==='perso'?'700':'600'; }
-  if(bc){ bc.style.borderBottomColor=tab==='clients'?'var(--accent)':'transparent'; bc.style.color=tab==='clients'?'var(--accent)':'var(--text3)'; bc.style.fontWeight=tab==='clients'?'700':'600'; }
+  ['perso','clients','fournisseurs'].forEach(function(t){
+    var el=document.getElementById('tab-'+t); var btn=document.getElementById('tab-btn-'+t);
+    if(el) el.style.display=t===tab?'':'none';
+    if(btn){ btn.style.borderBottomColor=t===tab?'var(--accent)':'transparent'; btn.style.color=t===tab?'var(--accent)':'var(--text3)'; btn.style.fontWeight=t===tab?'700':'600'; }
+  });
+  if(tab==='fournisseurs') renderDettesFournisseurs();
 }
 
 function renderDettes(){
@@ -5889,6 +5825,7 @@ function renderDettes(){
 
   renderDettesPerso(das);
   renderDettesClients(das);
+  renderDettesFournisseurs();
 }
 
 function renderDettesPerso(das){
@@ -6308,6 +6245,80 @@ function deleteDette(id){
   dettes=dettes.filter(d=>d.id!==id);
   saveAll(); renderDettes(); renderDashboard();
 }
+function renderDettesFournisseurs(){
+  var el=document.getElementById('dette-fournisseur-body'); if(!el) return;
+  var das=getDettesSolde();
+  var fourn=das.filter(function(d){return d.type==='fournisseur';});
+  if(!fourn.length){el.innerHTML='<div style="color:var(--text3);padding:12px">Aucune dette fournisseur.</div>';return;}
+  var now=new Date(), html='';
+  fourn.forEach(function(d){
+    var sol=d.solde>0?d.solde:0, ok=sol<=0;
+    var ec=d.echeance?new Date(d.echeance):null;
+    var j=ec?Math.ceil((ec-now)/86400000):null;
+    var col=j===null?'var(--text3)':j<0?'var(--red)':j<=7?'#f97316':j<=30?'#f59e0b':'var(--green)';
+    var et=ec?ec.toLocaleDateString('fr-FR')+' ('+(j<0?'Retard '+Math.abs(j)+'j':j===0?'Auj':j+'j')+')':'—';
+    html+='<div style="padding:14px;border-bottom:1px solid var(--border)">'
+      +'<div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap">'
+      +'<div style="flex:1"><div style="font-weight:700">🏭 '+d.nom+'</div>'
+      +(d.desc?'<div style="font-size:12px;color:var(--text3)">'+d.desc+'</div>':'')
+      +'<div style="font-size:12px;color:'+col+'">Echeance: <strong>'+et+'</strong></div>';
+    if(d.paiements&&d.paiements.length) d.paiements.forEach(function(p){html+='<div style="font-size:11px;color:var(--green)">✅ '+fmtGNF(p.montant)+' le '+new Date(p.date).toLocaleDateString('fr-FR')+'</div>';});
+    if(d.historique&&d.historique.length>1){
+      html+='<details><summary style="font-size:11px;color:var(--text3);cursor:pointer">Historique ('+d.historique.length+')</summary>';
+      d.historique.forEach(function(h){html+='<div style="font-size:11px;padding:2px 0">'+new Date(h.date).toLocaleDateString('fr-FR')+' — '+fmtGNF(h.montant)+(h.desc?' ('+h.desc+')':'')+'</div>';});
+      html+='</details>';
+    }
+    html+='</div><div style="text-align:right;display:flex;flex-direction:column;gap:4px;align-items:flex-end;min-width:110px">'
+      +'<div><div style="font-size:11px;color:var(--text3)">Total</div><div style="font-weight:700">'+fmtGNF(d.montant)+'</div></div>'
+      +'<div><div style="font-size:11px;color:var(--text3)">Paye</div><div style="color:var(--green);font-weight:700">'+fmtGNF(d.totalPaye||0)+'</div></div>'
+      +'<div><div style="font-size:11px;color:var(--text3)">Reste</div><div style="font-weight:700;color:'+(ok?'var(--green)':'var(--red)')+'">'+fmtGNF(sol)+'</div></div>'
+      +(ok?'<span style="font-size:11px;color:var(--green)">✅ Solde</span>':'<button class="btn btn-primary btn-sm" onclick="openVFourn('+d.id+')">💰 Payer</button>')
+      +'<button class="btn btn-ghost btn-sm" onclick="delDFourn('+d.id+')" style="color:var(--red)">✕</button>'
+      +'</div></div></div>';
+  });
+  el.innerHTML=html;
+}
+function openDetteFournisseurModal(){
+  var ov=document.getElementById('dette-fournisseur-overlay'); if(!ov)return;
+  ov.classList.add('open');
+  document.getElementById('df-nom').value=''; document.getElementById('df-desc').value='';
+  document.getElementById('df-montant').value=''; document.getElementById('df-date').value=new Date().toISOString().slice(0,10);
+  var e=new Date(); e.setMonth(e.getMonth()+1); document.getElementById('df-echeance').value=e.toISOString().slice(0,10);
+}
+function saveDetteFournisseur(){
+  var nom=(document.getElementById('df-nom').value||'').trim();
+  var desc=(document.getElementById('df-desc').value||'').trim();
+  var montant=parseInt(document.getElementById('df-montant').value)||0;
+  var date=document.getElementById('df-date').value||new Date().toISOString().slice(0,10);
+  var echeance=document.getElementById('df-echeance').value||'';
+  if(!nom||!montant){showToast('Nom et montant requis');return;}
+  if(!echeance){showToast('Date limite requise');return;}
+  if(!dettes) dettes=[];
+  var ex=dettes.find(function(d){return d.type==='fournisseur'&&d.nom===nom&&(d.montant-(d.paiements||[]).reduce(function(s,p){return s+p.montant;},0))>0;});
+  if(ex){
+    if(!ex.historique) ex.historique=[];
+    ex.historique.push({id:Date.now(),montant:montant,date:date,echeance:echeance,desc:desc});
+    ex.montant+=montant;
+    if(!ex.echeance||new Date(echeance)<new Date(ex.echeance)) ex.echeance=echeance;
+  } else {
+    dettes.unshift({id:Date.now(),type:'fournisseur',nom:nom,desc:desc,montant:montant,date:date,echeance:echeance,paiements:[],historique:[{id:Date.now(),montant:montant,date:date,echeance:echeance,desc:desc}]});
+  }
+  saveAll(); renderDettes(); renderDettesFournisseurs(); renderDashboard();
+  document.getElementById('dette-fournisseur-overlay').classList.remove('open');
+  showToast('✅ Fournisseur enregistre');
+}
+var _vfId=null;
+function openVFourn(id){_vfId=id; document.getElementById('vf-montant').value=''; document.getElementById('vf-date').value=new Date().toISOString().slice(0,10); document.getElementById('versement-fournisseur-overlay').classList.add('open');}
+function saveVFourn(){
+  var m=parseInt(document.getElementById('vf-montant').value)||0, d2=document.getElementById('vf-date').value||new Date().toISOString().slice(0,10);
+  if(!m){showToast('Montant requis');return;}
+  var dt=dettes.find(function(x){return x.id===_vfId;}); if(!dt)return;
+  if(!dt.paiements) dt.paiements=[];
+  dt.paiements.push({id:Date.now(),montant:m,date:d2});
+  saveAll(); renderDettes(); renderDettesFournisseurs(); renderDashboard();
+  document.getElementById('versement-fournisseur-overlay').classList.remove('open'); showToast('✅ Versement enregistre');
+}
+function delDFourn(id){if(!confirm('Supprimer?'))return; dettes=dettes.filter(function(d){return d.id!==id;}); saveAll(); renderDettes(); renderDettesFournisseurs(); renderDashboard();}
 
 // ============================================================
 //  FACTURES & CLIENTS
@@ -6594,12 +6605,10 @@ function showToast(msg){
 
 // ===== ENTRÉES STOCK =====
 function openEntreeModal(){
-  // Remplir le datalist
-  var dl=document.getElementById('ent-product-list');
-  if(dl) dl.innerHTML=products.map(p=>`<option value="${p.designation} (${p.reference||p.ref||''})">`).join('');
-  var inp=document.getElementById('ent-product-sel-input');
-  var hid=document.getElementById('ent-product-sel');
-  if(inp){inp.value='';} if(hid){hid.value='';}
+  const sel=document.getElementById('ent-product-sel');
+  if(!sel) return;
+  sel.innerHTML='<option value="">— Choisir un produit —</option>'+
+    products.map(p=>`<option value="${p.id}">${p.designation} (${p.ref}) — stock: ${p.stock_initial||0}</option>`).join('');
   document.getElementById('ent-qty').value=1;
   document.getElementById('ent-prix-achat').value='';
   document.getElementById('ent-note').value='';
@@ -6613,18 +6622,7 @@ function closeEntreeModal(e){
   document.getElementById('entree-overlay').style.display='none';
 }
 function onEntProduitChange(){
-  var hid=document.getElementById('ent-product-sel');
-  var inp=document.getElementById('ent-product-sel-input');
-  // Compatibilité: chercher le pid soit dans hid (nouveau) soit dans sel (ancien)
-  var pid=hid?parseInt(hid.value):0;
-  if(!pid && inp){
-    var v=inp.value.trim();
-    var mt=v.match(/^(.+?)\s*\(([^)]+)\)$/);
-    var p2=mt?products.find(x=>x.designation===mt[1].trim()&&(x.reference||x.ref||'')===mt[2].trim()):products.find(x=>x.designation===v);
-    if(p2) pid=p2.id;
-  }
-  var fakesel={value:pid?String(pid):''};
-  var sel=hid||fakesel;
+  const sel=document.getElementById('ent-product-sel');
   const p=products.find(x=>x.id==sel.value);
   if(p){
     const av=document.getElementById('ent-ancien-val'); if(av) av.textContent=fmtGNF(p.prix_achat||0);
@@ -6655,39 +6653,48 @@ function saveEntree(){
   const note=(document.getElementById('ent-note')||{}).value||'';
   const ancienPrix=p.prix_achat||0;
   if(editId){
+    // MODE EDITION: modifier l'entrée existante
     const ei=entrees.findIndex(e=>e.id===editId);
     if(ei>=0){
       const old=entrees[ei];
+      // Ajuster le stock: annuler l'ancien et appliquer le nouveau
       const pi=products.findIndex(x=>x.id===old.produitId);
-      if(pi>=0){products[pi].stock_initial=Math.max(0,(products[pi].stock_initial||0)-old.qte+qte);products[pi].prix_achat=nouveauPrix;products[pi].total=products[pi].stock_initial*nouveauPrix;}
-      entrees[ei]={...old,date,produitId:p.id,produit:p.designation,ref:p.ref||p.reference||'',categorie:p.categorie||'',qte,ancienPrix,nouveauPrix,total:qte*nouveauPrix,note};
+      if(pi>=0){
+        products[pi].stock_initial=Math.max(0,(products[pi].stock_initial||0)-old.qte+qte);
+        products[pi].prix_achat=nouveauPrix;
+        products[pi].total=products[pi].stock_initial*nouveauPrix;
+      }
+      entrees[ei]={...old,date,produitId:p.id,produit:p.designation,ref:p.ref,categorie:p.categorie||'',qte,ancienPrix,nouveauPrix,total:qte*nouveauPrix,note};
     }
     overlay._editId=null;
-    var h2t=document.querySelector('#entree-overlay h2');if(h2t)h2t.textContent='Nouvelle entree de stock';
+    var h2=document.querySelector('#entree-overlay h2');
+    if(h2) h2.textContent='Nouvelle entree de stock';
   } else {
-    entrees.unshift({id:Date.now(),date,produitId:p.id,produit:p.designation,ref:p.ref||p.reference||'',categorie:p.categorie||'',qte,ancienPrix,nouveauPrix,total:qte*nouveauPrix,note,gerant:currentRole==='fondateur'?'Fondateur':((gerants.find(g=>g.id===currentGerantId)||{}).nom||'—')});
+    // MODE CREATION: ajouter nouvelle entrée
+    entrees.unshift({id:Date.now(),date,produitId:p.id,produit:p.designation,ref:p.ref,categorie:p.categorie||'',qte,ancienPrix,nouveauPrix,total:qte*nouveauPrix,note,gerant:currentRole==='fondateur'?'Fondateur':(gerants.find(g=>g.id===currentGerantId)||{}).nom||'—'});
     const idx=products.findIndex(x=>x.id===pid);
-    if(idx>=0){products[idx].stock_initial=(products[idx].stock_initial||0)+qte;products[idx].prix_achat=nouveauPrix;products[idx].total=products[idx].stock_initial*nouveauPrix;}
+    if(idx>=0){ products[idx].stock_initial=(products[idx].stock_initial||0)+qte; products[idx].prix_achat=nouveauPrix; products[idx].total=products[idx].stock_initial*nouveauPrix; }
   }
-  saveAll();renderDashboard();
-  // Vider les champs - feedback visuel
+  saveAll(); renderDashboard();
+  // Vider les champs
   sel.value='';
   document.getElementById('ent-qty').value=1;
   document.getElementById('ent-prix-achat').value='';
   document.getElementById('ent-note').value='';
   document.getElementById('ent-date').value=new Date().toISOString().slice(0,10);
-  var ap=document.getElementById('ent-ancien-prix');if(ap)ap.style.display='none';
-  var pv=document.getElementById('ent-preview');if(pv)pv.style.display='none';
-  // Fermer la modal
+  var _ap=document.getElementById('ent-ancien-prix');if(_ap)_ap.style.display='none';
+  var _pv=document.getElementById('ent-preview');if(_pv)_pv.style.display='none';
   overlay.style.display='none';
-  // Mettre filtre sur mois courant et rafraichir liste
-  var ys=document.getElementById('ent-year-filter');var ms=document.getElementById('ent-month-filter');
-  if(ys) ys.value=new Date().getFullYear();
-  if(ms) ms.value=String(new Date().getMonth()+1).padStart(2,'0');
+  // Rafraichir liste
+  var _ys=document.getElementById('ent-year-filter');
+  var _ms=document.getElementById('ent-month-filter');
+  if(_ys) _ys.value=new Date().getFullYear();
+  if(_ms) _ms.value=String(new Date().getMonth()+1).padStart(2,'0');
   renderEntrees();
-  // Feedback clair
-  showToast(editId?'✅ Entree modifiee!':'✅ Entree enregistree avec succes!');
+  showToast(editId?'Entree modifiee!':'Entree enregistree!');
 }
+
+// ===== APPROVISIONNEMENT =====
 function openApproModal(){
   document.getElementById('appro-montant').value='';
   document.getElementById('appro-desc').value='';
@@ -7026,4 +7033,34 @@ function saveRepConfig(){
 </div>
 
 
+
+<!-- MODAL DETTE FOURNISSEUR -->
+<div class="overlay" id="dette-fournisseur-overlay" onclick="if(event.target===this)this.classList.remove('open')" style="z-index:300">
+  <div class="modal" onclick="event.stopPropagation()" style="max-width:460px;width:95%">
+    <h2 style="font-size:16px;font-weight:700;margin-bottom:16px">🏭 Nouvelle dette fournisseur</h2>
+    <div class="form-group" style="margin-bottom:10px"><label class="form-label">Fournisseur *</label><input class="form-input" id="df-nom" placeholder="Nom du fournisseur"></div>
+    <div class="form-group" style="margin-bottom:10px"><label class="form-label">Description</label><input class="form-input" id="df-desc" placeholder="Facture N..."></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+      <div class="form-group"><label class="form-label">Montant *</label><input class="form-input" id="df-montant" type="number" placeholder="0"></div>
+      <div class="form-group"><label class="form-label">Date</label><input class="form-input" id="df-date" type="date"></div>
+    </div>
+    <div class="form-group" style="margin-bottom:16px"><label class="form-label" style="color:var(--red)">Date limite *</label><input class="form-input" id="df-echeance" type="date"></div>
+    <div style="display:flex;gap:8px">
+      <button class="btn btn-ghost" onclick="document.getElementById('dette-fournisseur-overlay').classList.remove('open')">Annuler</button>
+      <button class="btn btn-primary" onclick="saveDetteFournisseur()">Enregistrer</button>
+    </div>
+  </div>
+</div>
+<!-- MODAL VERSEMENT FOURNISSEUR -->
+<div class="overlay" id="versement-fournisseur-overlay" onclick="if(event.target===this)this.classList.remove('open')" style="z-index:300">
+  <div class="modal" onclick="event.stopPropagation()" style="max-width:360px;width:95%">
+    <h2 style="font-size:16px;font-weight:700;margin-bottom:16px">💰 Versement fournisseur</h2>
+    <div class="form-group" style="margin-bottom:12px"><label class="form-label">Montant</label><input class="form-input" id="vf-montant" type="number" placeholder="0"></div>
+    <div class="form-group" style="margin-bottom:16px"><label class="form-label">Date</label><input class="form-input" id="vf-date" type="date"></div>
+    <div style="display:flex;gap:8px">
+      <button class="btn btn-ghost" onclick="document.getElementById('versement-fournisseur-overlay').classList.remove('open')">Annuler</button>
+      <button class="btn btn-primary" onclick="saveVFourn()">Confirmer</button>
+    </div>
+  </div>
+</div>
 </body></html>
