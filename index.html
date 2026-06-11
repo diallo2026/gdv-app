@@ -2622,9 +2622,9 @@ window.addEventListener('DOMContentLoaded',function(){
       <div class="card" style="margin-bottom:16px">
         <div class="card-title" style="display:flex;justify-content:space-between;align-items:center">
           <span>🏭 Dettes Fournisseurs</span>
-          <button class="btn btn-primary btn-sm" onclick="openDetteFournisseurModal()">+ Ajouter dette fournisseur</button>
+          <button class="btn btn-primary btn-sm" onclick="openDetteFournisseurModal()">+ Nouvelle dette fournisseur</button>
         </div>
-        <div id="dette-fournisseur-body"><div style="color:var(--text3);font-size:13px;padding:12px">Aucune dette fournisseur.</div></div>
+        <div id="dette-fournisseur-body"><div style="color:var(--text3);padding:12px">Aucune dette fournisseur.</div></div>
       </div>
     </div>
     <!-- TAB : Dettes clients -->
@@ -3986,15 +3986,6 @@ function renderDashboard(){
   const nbDettes=dettesAvecSolde.filter(d=>d.solde>0).length;
   const badgeD=document.getElementById('nb-dettes');
   if(badgeD){ badgeD.textContent=nbDettes; badgeD.style.display=nbDettes?'':'none'; }
-  var _fourn=dettesAvecSolde.filter(function(d){return d.type==='fournisseur'&&d.solde>0;});
-  var _urg=_fourn.filter(function(d){return d.echeance&&Math.ceil((new Date(d.echeance)-new Date())/86400000)<=7;});
-  var _az=document.getElementById('fourn-alertes-dash');
-  if(!_az){_az=document.createElement('div');_az.id='fourn-alertes-dash';var _sc=document.getElementById('stats-cards');if(_sc&&_sc.parentNode)_sc.parentNode.insertBefore(_az,_sc);}
-  if(_urg.length){
-    var _ah='<div style="background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.3);border-radius:10px;padding:12px;margin-bottom:12px"><div style="font-weight:700;color:var(--red);margin-bottom:6px">Echeances fournisseurs urgentes</div>';
-    _urg.forEach(function(d){var _j=Math.ceil((new Date(d.echeance)-new Date())/86400000);_ah+='<div style="display:flex;justify-content:space-between;padding:3px 0">🏭 '+d.nom+'<span style="color:'+(_j<0?'var(--red)':'#f97316')+'">'+(_j<0?'Retard '+Math.abs(_j)+' j':_j===0?'Echeance auj':_j+' j')+' — '+fmtGNF(d.solde)+'</span></div>';});
-    _az.innerHTML=_ah+'</div>';
-  } else {_az.innerHTML='';}
 
   document.getElementById('stats-cards').innerHTML=`
     <div class="stat"><div class="stat-label"><div class="dot blue"></div> Total produits</div><div class="stat-val">${total}</div><div class="stat-sub">références actives</div></div>
@@ -4038,35 +4029,26 @@ function renderDashboard(){
 // ==================== VENTES VIEW ====================
 function renderVentesView(){
   const g=getCurrentGerant();
-  const canVente = currentRole==='gerant' && g && g.permVentes;
   const isFondateur = currentRole==='fondateur';
   const container=document.getElementById('ventes-content');
-
+  // Tous peuvent voir et saisir des ventes
+  document.getElementById('ventes-blocked-msg').style.display='none';
   if(isFondateur){
-    // Fondateur: voir historique uniquement
-    document.getElementById('ventes-blocked-msg').style.display='none';
     if(container){
       container.style.display='block';
       container.style.gridTemplateColumns='1fr';
       if(container.children[0]) container.children[0].style.display='none';
       if(container.children[1]) container.children[1].style.display='block';
     }
-    refreshVentesHistory();
-  } else if(canVente){
-    // Gerant avec permission ventes: acces complet
-    document.getElementById('ventes-blocked-msg').style.display='none';
+  } else {
     if(container){
       container.style.display='grid';
       container.style.gridTemplateColumns='';
       if(container.children[0]) container.children[0].style.display='';
       if(container.children[1]) container.children[1].style.display='';
     }
-    refreshVentesHistory();
-  } else {
-    // Pas de permission
-    document.getElementById('ventes-blocked-msg').style.display='block';
-    if(container) container.style.display='none';
   }
+  refreshVentesHistory();
 }
 
 // ==================== TABLE ====================
@@ -4833,7 +4815,7 @@ function openBulletin(gerantId){
   }
   currentBulletinGerantId=gerantId;
   const g=gerants.find(x=>x.id==gerantId);
-  if(!g){console.warn('Gerant non trouve:',gerantId);return;}
+  if(!g)return;
 
   // Peupler le sélecteur de mois du bulletin
   const salSel = document.getElementById('sal-month-filter');
@@ -5334,7 +5316,7 @@ function confirmReset(){
 function openVenteRapide(){
   const g=getCurrentGerant();
   const isFondateur=currentRole==='fondateur';
-  if(!isFondateur&&(!g||!g.permVentes)){showToast('Vous n\'avez pas la permission de saisir des ventes.');return}
+  // Ventes et depenses accessibles a tous - seules modif/suppr sont restreintes
   const dl=document.getElementById('vr-product-list');
   dl.innerHTML=products.map(p=>`<option value="${p.designation} (${p.reference})">`).join('');
   document.getElementById('vr-type-sortie').checked=true;
@@ -5797,14 +5779,10 @@ function switchDetteTab(tab){
   ['perso','clients','fournisseurs'].forEach(function(t){
     var el=document.getElementById('tab-'+t);
     var btn=document.getElementById('tab-btn-'+t);
-    if(el) el.style.display=t===tab?'':'none';
-    if(btn){
-      btn.style.borderBottomColor=t===tab?'var(--accent)':'transparent';
-      btn.style.color=t===tab?'var(--accent)':'var(--text3)';
-      btn.style.fontWeight=t===tab?'700':'600';
-    }
+    if(el)el.style.display=t===tab?'':'none';
+    if(btn){btn.style.borderBottomColor=t===tab?'var(--accent)':'transparent';btn.style.color=t===tab?'var(--accent)':'var(--text3)';btn.style.fontWeight=t===tab?'700':'600';}
   });
-  if(tab==='fournisseurs') renderDettesFournisseurs();
+  if(tab==='fournisseurs')renderDettesFournisseurs();
 }
 
 function renderDettes(){
@@ -5821,9 +5799,7 @@ function renderDettes(){
     +'<div class="stat"><div class="stat-label"><div class="dot amber"></div>Clients</div><div class="stat-val amber" style="font-size:18px">'+fmtGNF(totCl)+'</div></div>'
     +'<div class="stat"><div class="stat-label"><div class="dot purple"></div>Perso</div><div class="stat-val" style="font-size:18px">'+fmtGNF(totG)+'</div></div>'
     +'<div class="stat"><div class="stat-label"><div class="dot red"></div>Fournisseurs</div><div class="stat-val red" style="font-size:18px">'+fmtGNF(totF)+'</div></div>';
-  renderDettesPerso(das);
-  renderDettesClients(das);
-  renderDettesFournisseurs();
+  renderDettesPerso(das);renderDettesClients(das);renderDettesFournisseurs();
 }
 
 function renderDettesPerso(das){
@@ -6243,18 +6219,16 @@ function deleteDette(id){
   dettes=dettes.filter(d=>d.id!==id);
   saveAll(); renderDettes(); renderDashboard();
 }
-
-// ===== DETTES FOURNISSEURS =====
 function openDetteFournisseurModal(){
-  var el=document.getElementById('dette-fournisseur-overlay');
-  if(!el)return;
+  var ov=document.getElementById('dette-fournisseur-overlay');
+  if(!ov){alert('Element modal introuvable');return;}
   document.getElementById('df-nom').value='';
   document.getElementById('df-desc').value='';
   document.getElementById('df-montant').value='';
   document.getElementById('df-date').value=new Date().toISOString().slice(0,10);
-  var ech=new Date();ech.setMonth(ech.getMonth()+1);
-  document.getElementById('df-echeance').value=ech.toISOString().slice(0,10);
-  el.classList.add('open');
+  var e=new Date();e.setMonth(e.getMonth()+1);
+  document.getElementById('df-echeance').value=e.toISOString().slice(0,10);
+  ov.classList.add('open');
 }
 function saveDetteFournisseur(){
   var nom=(document.getElementById('df-nom').value||'').trim();
@@ -6262,46 +6236,41 @@ function saveDetteFournisseur(){
   var montant=parseInt(document.getElementById('df-montant').value)||0;
   var date=document.getElementById('df-date').value||new Date().toISOString().slice(0,10);
   var echeance=document.getElementById('df-echeance').value||'';
-  if(!nom||!montant){showToast('Nom et montant obligatoires');return;}
-  if(!echeance){showToast('Date limite obligatoire');return;}
-  var existing=dettes.find(function(d){return d.type==='fournisseur'&&d.nom===nom&&d.solde>0;});
-  if(existing){
-    if(!existing.historique)existing.historique=[];
-    existing.historique.push({id:Date.now(),montant:montant,date:date,echeance:echeance,desc:desc,paiements:[]});
-    existing.montant+=montant;
-    if(!existing.echeance||new Date(echeance)<new Date(existing.echeance))existing.echeance=echeance;
+  if(!nom||!montant){showToast('Nom et montant requis');return;}
+  if(!echeance){showToast('Date limite requise');return;}
+  if(!dettes)dettes=[];
+  var ex=dettes.find(function(d){return d.type==='fournisseur'&&d.nom===nom&&(d.montant-(d.paiements||[]).reduce(function(s,p){return s+p.montant;},0))>0;});
+  if(ex){
+    if(!ex.historique)ex.historique=[];
+    ex.historique.push({id:Date.now(),montant:montant,date:date,echeance:echeance,desc:desc});
+    ex.montant+=montant;
+    if(!ex.echeance||new Date(echeance)<new Date(ex.echeance))ex.echeance=echeance;
     saveAll();renderDettes();renderDettesFournisseurs();renderDashboard();
     document.getElementById('dette-fournisseur-overlay').classList.remove('open');
-    showToast('Dette ajoutee au fournisseur '+nom);return;
+    showToast('Dette ajoutee a '+nom);return;
   }
-  if(!dettes)dettes=[];
   dettes.unshift({id:Date.now(),type:'fournisseur',nom:nom,desc:desc,montant:montant,date:date,echeance:echeance,paiements:[],
-    historique:[{id:Date.now(),montant:montant,date:date,echeance:echeance,desc:desc,paiements:[]}]});
+    historique:[{id:Date.now(),montant:montant,date:date,echeance:echeance,desc:desc}]});
   saveAll();renderDettes();renderDettesFournisseurs();renderDashboard();
   document.getElementById('dette-fournisseur-overlay').classList.remove('open');
   showToast('Dette fournisseur enregistree');
 }
-var _curVFId=null;
-function openVersementFournisseurModal(id){
-  _curVFId=id;
-  document.getElementById('vf-montant').value='';
-  document.getElementById('vf-date').value=new Date().toISOString().slice(0,10);
-  document.getElementById('versement-fournisseur-overlay').classList.add('open');
-}
-function saveVersementFournisseur(){
-  var montant=parseInt(document.getElementById('vf-montant').value)||0;
-  var date=document.getElementById('vf-date').value||new Date().toISOString().slice(0,10);
-  if(!montant){showToast('Montant obligatoire');return;}
-  var d=dettes.find(function(x){return x.id===_curVFId;});
-  if(!d)return;
-  if(!d.paiements)d.paiements=[];
-  d.paiements.push({id:Date.now(),montant:montant,date:date});
+var _vfId=null;
+function openVersementFourn(id){_vfId=id;document.getElementById('vf-montant').value='';document.getElementById('vf-date').value=new Date().toISOString().slice(0,10);document.getElementById('versement-fournisseur-overlay').classList.add('open');}
+function saveVersementFourn(){
+  var m=parseInt(document.getElementById('vf-montant').value)||0;
+  var d=document.getElementById('vf-date').value||new Date().toISOString().slice(0,10);
+  if(!m){showToast('Montant requis');return;}
+  var dt=dettes.find(function(x){return x.id===_vfId;});
+  if(!dt)return;
+  if(!dt.paiements)dt.paiements=[];
+  dt.paiements.push({id:Date.now(),montant:m,date:d});
   saveAll();renderDettes();renderDettesFournisseurs();renderDashboard();
   document.getElementById('versement-fournisseur-overlay').classList.remove('open');
   showToast('Versement enregistre');
 }
-function deleteDetteFournisseur(id){
-  if(!confirm('Supprimer ?'))return;
+function delDetteFourn(id){
+  if(!confirm('Supprimer?'))return;
   dettes=dettes.filter(function(d){return d.id!==id;});
   saveAll();renderDettes();renderDettesFournisseurs();renderDashboard();
 }
@@ -6310,44 +6279,33 @@ function renderDettesFournisseurs(){
   var fourn=das.filter(function(d){return d.type==='fournisseur';});
   var el=document.getElementById('dette-fournisseur-body');
   if(!el)return;
-  if(!fourn.length){el.innerHTML='<div style="color:var(--text3);font-size:13px;padding:12px">Aucune dette fournisseur.</div>';return;}
-  var now=new Date();
-  var html='';
+  if(!fourn.length){el.innerHTML='<div style="color:var(--text3);padding:12px">Aucune dette fournisseur.</div>';return;}
+  var now=new Date(),html='';
   fourn.forEach(function(d){
-    var solde=d.solde>0?d.solde:0;
-    var isSolde=solde<=0;
-    var ech=d.echeance?new Date(d.echeance):null;
-    var jR=ech?Math.ceil((ech-now)/86400000):null;
-    var eColor=jR===null?'var(--text3)':jR<0?'var(--red)':jR<=7?'#f97316':jR<=30?'#f59e0b':'var(--green)';
-    var eTxt=ech?ech.toLocaleDateString('fr-FR')+' ('+(jR<0?'Retard '+Math.abs(jR)+' j':jR===0?'Echeance auj':jR+' j restants')+')':'—';
-    html+='<div style="padding:14px;border-bottom:1px solid var(--border)">';
-    html+='<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap">';
-    html+='<div style="flex:1">';
-    html+='<div style="font-weight:700;font-size:14px">🏭 '+d.nom+'</div>';
-    if(d.desc)html+='<div style="font-size:12px;color:var(--text3)">'+d.desc+'</div>';
-    html+='<div style="font-size:12px;color:'+eColor+'">Echeance: <strong>'+eTxt+'</strong></div>';
-    html+='<div style="font-size:11px;color:var(--text3)">Date: '+new Date(d.date).toLocaleDateString('fr-FR')+'</div>';
-    if(d.paiements&&d.paiements.length){
-      d.paiements.forEach(function(p){html+='<div style="font-size:11px;color:var(--green)">✅ '+fmtGNF(p.montant)+' — '+new Date(p.date).toLocaleDateString('fr-FR')+'</div>';});
-    }
+    var sol=d.solde>0?d.solde:0,ok=sol<=0;
+    var ec=d.echeance?new Date(d.echeance):null;
+    var j=ec?Math.ceil((ec-now)/86400000):null;
+    var col=j===null?'var(--text3)':j<0?'var(--red)':j<=7?'#f97316':j<=30?'#f59e0b':'var(--green)';
+    var et=ec?ec.toLocaleDateString('fr-FR')+' ('+(j<0?'Retard '+Math.abs(j)+'j':j===0?'Auj':j+'j restants')+')':'—';
+    html+='<div style="padding:14px;border-bottom:1px solid var(--border)">'
+      +'<div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap">'
+      +'<div style="flex:1"><div style="font-weight:700">🏭 '+d.nom+'</div>'
+      +(d.desc?'<div style="font-size:12px;color:var(--text3)">'+d.desc+'</div>':'')
+      +'<div style="font-size:12px;color:'+col+'">Echeance: <strong>'+et+'</strong></div>'
+      +'<div style="font-size:11px;color:var(--text3)">Date: '+new Date(d.date).toLocaleDateString('fr-FR')+'</div>';
+    if(d.paiements&&d.paiements.length){d.paiements.forEach(function(p){html+='<div style="font-size:11px;color:var(--green)">✅ '+fmtGNF(p.montant)+' le '+new Date(p.date).toLocaleDateString('fr-FR')+'</div>';});}
     if(d.historique&&d.historique.length>1){
-      html+='<details style="margin-top:4px"><summary style="font-size:11px;color:var(--text3);cursor:pointer">Historique ('+d.historique.length+' dettes)</summary><div style="padding-left:8px">';
-      d.historique.forEach(function(h){
-        var hP=(h.paiements||[]).reduce(function(s,p){return s+p.montant;},0);
-        html+='<div style="font-size:11px;padding:3px 0;border-bottom:1px dashed var(--border)">'+new Date(h.date).toLocaleDateString('fr-FR')+' — '+fmtGNF(h.montant)+(h.desc?' ('+h.desc+')':'')
-          +' <span style="color:var(--green)">Paye:'+fmtGNF(hP)+'</span> <span style="color:var(--red)">Reste:'+fmtGNF(Math.max(0,h.montant-hP))+'</span></div>';
-      });
+      html+='<details style="margin-top:4px"><summary style="font-size:11px;color:var(--text3);cursor:pointer">Historique ('+d.historique.length+')</summary><div style="padding-left:8px">';
+      d.historique.forEach(function(h){html+='<div style="font-size:11px;padding:3px 0;border-bottom:1px dashed var(--border)">'+new Date(h.date).toLocaleDateString('fr-FR')+' — '+fmtGNF(h.montant)+(h.desc?' ('+h.desc+')':'')+'</div>';});
       html+='</div></details>';
     }
-    html+='</div>';
-    html+='<div style="text-align:right;display:flex;flex-direction:column;gap:4px;align-items:flex-end;min-width:110px">';
-    html+='<div><div style="font-size:11px;color:var(--text3)">Total</div><div style="font-weight:700">'+fmtGNF(d.montant)+'</div></div>';
-    html+='<div><div style="font-size:11px;color:var(--text3)">Paye</div><div style="color:var(--green);font-weight:700">'+fmtGNF(d.totalPaye||0)+'</div></div>';
-    html+='<div><div style="font-size:11px;color:var(--text3)">Reste</div><div style="font-weight:700;color:'+(isSolde?'var(--green)':'var(--red)')+'">'+fmtGNF(solde)+'</div></div>';
-    if(!isSolde){html+='<button class="btn btn-primary btn-sm" onclick="openVersementFournisseurModal('+d.id+')">💰 Payer</button>';}
-    else{html+='<span style="font-size:11px;color:var(--green);font-weight:700">✅ Solde</span>';}
-    html+='<button class="btn btn-ghost btn-sm" onclick="deleteDetteFournisseur('+d.id+')" style="color:var(--red);font-size:11px">✕</button>';
-    html+='</div></div></div>';
+    html+='</div><div style="text-align:right;display:flex;flex-direction:column;gap:4px;align-items:flex-end;min-width:110px">'
+      +'<div><div style="font-size:11px;color:var(--text3)">Total</div><div style="font-weight:700">'+fmtGNF(d.montant)+'</div></div>'
+      +'<div><div style="font-size:11px;color:var(--text3)">Paye</div><div style="color:var(--green);font-weight:700">'+fmtGNF(d.totalPaye||0)+'</div></div>'
+      +'<div><div style="font-size:11px;color:var(--text3)">Reste</div><div style="font-weight:700;color:'+(ok?'var(--green)':'var(--red)')+'">'+fmtGNF(sol)+'</div></div>'
+      +(ok?'<span style="font-size:11px;color:var(--green);font-weight:700">✅ Solde</span>':'<button class="btn btn-primary btn-sm" onclick="openVersementFourn('+d.id+')">💰 Payer</button>')
+      +'<button class="btn btn-ghost btn-sm" onclick="delDetteFourn('+d.id+')" style="color:var(--red)">✕</button>'
+      +'</div></div></div>';
   });
   el.innerHTML=html;
 }
