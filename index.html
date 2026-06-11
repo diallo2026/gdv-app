@@ -3934,7 +3934,22 @@ function showView(v){
   if(v==='ventes'){buildDatalist2();renderVentesView()}
   if(v==='depenses'){renderDepenses()}
   if(v==='journalier'){jourInit();renderJournalier()}
-  if(v==='salaires'){renderSalaires()}
+  if(v==='salaires'){
+    // Initialiser les filtres année/mois avant de rendre
+    var _sySel=document.getElementById('sal-year-filter');
+    var _smSel=document.getElementById('sal-month-filter');
+    if(_sySel && !_sySel.value){
+      var _curY2=new Date().getFullYear();
+      var _yrs2=new Set();
+      for(var _y=2020;_y<=2040;_y++) _yrs2.add(_y);
+      ventes.forEach(function(v){try{_yrs2.add(new Date(v.ts||v.date).getFullYear());}catch(e){} });
+      depenses.forEach(function(d){try{_yrs2.add(new Date(d.date).getFullYear());}catch(e){} });
+      _sySel.innerHTML=[..._yrs2].sort(function(a,b){return b-a;}).map(function(y){return '<option value="'+y+'"'+(y===_curY2?' selected':'')+'>'+y+'</option>';}).join('');
+    }
+    _syncMonthFilter('sal-year-filter','sal-month-filter',getMonthKey(new Date()));
+    if(_smSel && !_smSel.value) _smSel.value=getMonthKey(new Date());
+    renderSalaires();
+  }
   if(v==='alertes'){renderAlertes()}
   if(v==='commandes'){renderCommandes()}
   if(v==='gerants'){renderGerants()}
@@ -4390,7 +4405,10 @@ function recordVente(){
   document.getElementById('ventes-total').innerHTML=`<div style="display:flex;gap:16px;justify-content:flex-end;flex-wrap:wrap"><div style="text-align:right"><div style="font-size:11px;color:var(--text3);text-transform:uppercase;font-weight:600">💰 Chiffre d'affaires</div><div style="font-size:16px;font-weight:700;color:var(--green)">${fmtGNF(totalV)}</div></div><div style="text-align:right"><div style="font-size:11px;color:var(--text3);text-transform:uppercase;font-weight:600">📈 Bénéfice net</div><div style="font-size:16px;font-weight:700;color:${benNet2>=0?'var(--blue)':'var(--red)'}">${fmtGNF(benNet2)}</div><div style="font-size:10px;color:var(--text3)">CA−achat−dépenses</div></div></div>`;
   refreshVentesHistory();
   showToast(isSortie?`📤 Sortie — ${p.designation} ×${qty} = ${fmtGNF(qty*prixU)}`:`📥 Entrée — ${p.designation} +${qty} à ${fmtGNF(prixU)}/u`);
-  setTimeout(function(){if(typeof refreshVentesHistory==='function')refreshVentesHistory();},100);
+  setTimeout(function(){
+    if(typeof refreshVentesHistory==='function') refreshVentesHistory();
+    if(typeof renderJournalier==='function') renderJournalier();
+  },100);
 }
 
 // ==================== DÉPENSES ====================
@@ -4465,7 +4483,8 @@ function deleteDepense(id){
 // ==================== SALAIRES & BÉNÉFICES ====================
 function renderSalaires(){
   const isFondateur=currentRole==='fondateur';
-  const mk=document.getElementById('sal-month-filter')?document.getElementById('sal-month-filter').value:getMonthKey(new Date());
+  var _salFil=document.getElementById('sal-month-filter');
+  const mk=(_salFil&&_salFil.value)?_salFil.value:getMonthKey(new Date());
 
   const ventesMonth=ventes.filter(v=>getMonthKey(v.ts||v.date)===mk&&v.type!=='entree');
   const revenus=ventesMonth.reduce((s,v)=>s+v.total,0);
@@ -5217,8 +5236,9 @@ function renderJournalier(){
   const mk=document.getElementById('jour-month-filter')?document.getElementById('jour-month-filter').value:getMonthKey(new Date());
   // Mettre à jour le filtre jour avec les jours disponibles du mois
   const allVM=ventes.filter(v=>getMonthKey(v.ts||v.date)===mk);
+  const allEM=(typeof entrees!=='undefined'?entrees:[]).filter(e=>getMonthKey(e.date||e.ts)===mk);
   const allDM=depenses.filter(d=>getMonthKey(d.date||d.ts)===mk);
-  const daysSet=new Set([...allVM.map(v=>getDayKey(v.ts||v.date)),...allDM.map(d=>d.date||d.ts)]);
+  const daysSet=new Set([...allVM.map(v=>getDayKey(v.ts||v.date)),...allDM.map(d=>d.date||d.ts),...emMonth.map(e=>getDayKey(e.date||e.ts))]);
   const jourSel=document.getElementById('jour-day-filter');
   if(jourSel){
     const prev=jourSel.value;
@@ -5240,8 +5260,9 @@ function renderJournalier(){
     <div class="stat"><div class="stat-label"><div class="dot blue"></div> Bénéfice net</div><div class="stat-val ${benefice>=0?'blue':'red'}" style="font-size:18px">${fmtGNF(benefice)}</div><div class="stat-sub">CA−achat−dépenses</div></div>
     <div class="stat"><div class="stat-label"><div class="dot amber"></div> CA moyen/jour</div><div class="stat-val amber" style="font-size:18px">${joursActifs>0?fmtGNF(Math.round(totalCA/joursActifs)):'—'}</div><div class="stat-sub">sur ${joursActifs} jour(s) actif(s)</div></div>`;
   const map={};
-  vm.forEach(v=>{const k=getDayKey(v.ts||v.date);if(!map[k])map[k]={v:[],d:[]};map[k].v.push(v);});
-  dm.forEach(d=>{const k=d.date||d.ts;if(!map[k])map[k]={v:[],d:[]};map[k].d.push(d);});
+  vm.forEach(v=>{const k=getDayKey(v.ts||v.date);if(!map[k])map[k]={v:[],d:[],e:[]};map[k].v.push(v);});
+  dm.forEach(d=>{const k=d.date||d.ts;if(!map[k])map[k]={v:[],d:[],e:[]};map[k].d.push(d);});
+  emMonth.forEach(e=>{const k=getDayKey(e.date||e.ts);if(!map[k])map[k]={v:[],d:[],e:[]};map[k].e.push(e);});
   const jours=Object.keys(map).sort().reverse();
   const el=document.getElementById('jour-list');
   if(!el)return;
@@ -5269,6 +5290,13 @@ function renderJournalier(){
       ${isFond?`<button class="jdelbtn" onclick="openEditDep(${d.id})" title="Modifier" style="color:var(--accent);background:var(--accent-light);border-color:var(--accent)">✏</button>`:''}
       ${canDel?`<button class="jdelbtn" onclick="delJD(${d.id})" title="Supprimer">✕</button>`:''}
     </div>`).join('');
+    // Entrées mensuelles de stock
+    const eRows=(data.e||[]).map(e=>`<div class="jour-row" style="border-left:3px solid var(--blue);padding-left:8px">
+      <span class="jour-row-name" style="color:var(--blue)">📥 ${e.produit||e.designation||'—'}</span>
+      <span class="jour-row-det">+${e.qte||e.qty||0} × ${fmtGNF(e.nouveauPrix||e.prixAchat||0)}</span>
+      <span class="jour-row-amt" style="color:var(--blue)">${fmtGNF(e.total||0)}</span>
+      <span style="font-size:10px;color:var(--text3)">${e.gerant||''}</span>
+    </div>`).join('');
     return `<div class="jour-card">
       <div class="jour-head" id="jh-${dk}" onclick="toggleJour('${dk}')">
         <span class="jour-date-lbl">📅 ${getDayLabel(dk)}</span>
@@ -5282,6 +5310,7 @@ function renderJournalier(){
       <div class="jour-body" id="jb-${dk}">
         ${data.v.length?`<div class="jour-sub">🛒 Ventes (${data.v.length})</div>${vRows}`:''}
         ${data.d.length?`<div class="jour-sub">💸 Dépenses (${data.d.length})</div>${dRows}`:''}
+        ${(data.e&&data.e.length)?`<div class="jour-sub" style="color:var(--blue)">📥 Entrées stock (${data.e.length})</div>${eRows}`:''}
         <div class="jour-totbar">
           ${ca>0?`<div class="jour-tot"><div class="jour-tot-lbl">💰 CA</div><div class="jour-tot-val g">${fmtGNF(ca)}</div></div>`:''}
           ${dep>0?`<div class="jour-tot"><div class="jour-tot-lbl">💸 Dépenses</div><div class="jour-tot-val r">-${fmtGNF(dep)}</div></div>`:''}
@@ -5563,7 +5592,10 @@ function saveVenteRapide(){
   vrUpdateRecent();
   showToast(isSortie?`📤 ${p.designation} ×${qty} — ${fmtGNF(qty*prixU)}`:`📥 Entrée : ${p.designation} +${qty}`);
   setTimeout(()=>document.getElementById('vr-product').focus(),100);
-  setTimeout(function(){if(typeof refreshVentesHistory==='function')refreshVentesHistory();},150);
+  setTimeout(function(){
+    if(typeof refreshVentesHistory==='function') refreshVentesHistory();
+    if(typeof renderJournalier==='function') renderJournalier();
+  },150);
 }
 function vrUpdateRecent(){
   const recent=ventes.slice(0,5);
@@ -6813,7 +6845,9 @@ function saveEntree(){
   if(_ys) _ys.value=new Date().getFullYear();
   if(_ms) _ms.value=String(new Date().getMonth()+1).padStart(2,'0');
   renderEntrees();
-  showToast(editId?'Entree modifiee!':'Entree enregistree!');
+  // Rafraîchir journalier si on est dessus
+  if(typeof renderJournalier==='function') setTimeout(function(){renderJournalier();},100);
+  showToast(editId?'✅ Entree modifiee!':'✅ Entree enregistree!');
 }
 
 // ===== APPROVISIONNEMENT =====
