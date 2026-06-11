@@ -2304,10 +2304,15 @@ window.addEventListener('DOMContentLoaded',function(){
         <div class="info-box">👑 Vue Fondateur — Vous voyez la répartition complète des bénéfices et salaires.</div>
       </div>
       <div id="sal-gerant-only" style="display:none">
-        <div class="info-box" style="display:flex;align-items:center;justify-content:space-between">
-          <span>🧑‍💼 Consultez votre bulletin de paie pour le mois sélectionné.</span>
-          <button class="btn btn-primary btn-sm" onclick="openBulletinGerantSelf()">📄 Mon bulletin</button>
+        <div class="info-box" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;padding:10px 14px">
+          <span style="font-weight:600">🧑‍💼 Mon bulletin de paie</span>
+          <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+            <select id="sal-gerant-year" onchange="renderSalairesGerant()" style="padding:4px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--bg);color:var(--text)"></select>
+            <select id="sal-gerant-month" onchange="renderSalairesGerant()" style="padding:4px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--bg);color:var(--text)"></select>
+            <button class="btn btn-primary btn-sm" onclick="openBulletinGerantSelfFiltered()">📄 Mon bulletin</button>
+          </div>
         </div>
+        <div id="sal-gerant-resume" style="margin-top:8px"></div>
       </div>
 
       <!-- Résumé flux -->
@@ -2728,13 +2733,13 @@ window.addEventListener('DOMContentLoaded',function(){
       </div>
       <div class="form-group" id="dette-gerant-group" style="margin-bottom:12px;display:none">
         <label class="form-label">Gérant *</label>
-        <select class="form-input" id="dette-gerant-sel"></select>
+        <input class="form-input" id="dette-gerant-sel" list="dette-gerant-list" placeholder="Choisir un gérant..." autocomplete="off" style="width:100%">
+        <datalist id="dette-gerant-list"></datalist>
       </div>
       <div class="form-group" id="dette-client-group" style="margin-bottom:12px;display:none">
         <label class="form-label">Client *</label>
-        <select class="form-input" id="dette-client-sel">
-          <option value="">— Choisir ou créer —</option>
-        </select>
+        <input class="form-input" id="dette-client-sel" list="dette-client-list" placeholder="Rechercher ou saisir un client..." autocomplete="off" style="width:100%">
+        <datalist id="dette-client-list"></datalist>
       </div>
       <div class="form-group" style="margin-bottom:12px">
         <label class="form-label">Montant de la dette (GNF) *</label>
@@ -2820,9 +2825,9 @@ window.addEventListener('DOMContentLoaded',function(){
       <div style="display:grid;grid-template-columns:1fr auto;gap:8px;align-items:end;margin-bottom:12px">
         <div class="form-group">
           <label class="form-label">Client *</label>
-          <select class="form-input" id="fact-client-sel" onchange="onFactClientChange()">
-            <option value="">— Choisir un client —</option>
-          </select>
+          <input class="form-input" id="fact-client-sel" list="fact-client-list" placeholder="Rechercher ou saisir un client..." autocomplete="off" oninput="onFactClientInputChange(this.value)" style="width:100%">
+          <datalist id="fact-client-list"></datalist>
+          <input type="hidden" id="fact-client-sel-id" value="">
         </div>
         <button class="btn btn-ghost btn-sm" onclick="openClientModal()" style="margin-bottom:1px">+ Nouveau</button>
       </div>
@@ -2893,9 +2898,9 @@ window.addEventListener('DOMContentLoaded',function(){
     <div class="modal-body">
       <div class="form-group" style="margin-bottom:12px">
         <label class="form-label">Produit *</label>
-        <select class="form-input" id="ent-product-sel" onchange="onEntProduitChange()">
-          <option value="">— Choisir un produit —</option>
-        </select>
+        <input class="form-input" id="ent-product-sel" list="ent-product-list" placeholder="Rechercher un produit..." autocomplete="off" oninput="onEntProduitInputChange(this.value)" style="width:100%">
+        <datalist id="ent-product-list"></datalist>
+        <input type="hidden" id="ent-product-id" value="">
       </div>
       <div id="ent-ancien-prix" style="padding:8px 12px;background:var(--surface2);border-radius:6px;font-size:12px;color:var(--text2);margin-bottom:12px;display:none">
         Prix d'achat actuel : <strong id="ent-ancien-val">—</strong>
@@ -3989,16 +3994,39 @@ function renderDashboard(){
   const dettesAvecSolde=getDettesSolde();
   const totalDettesClients=dettesAvecSolde.filter(d=>d.type==='client'&&d.solde>0).reduce((s,d)=>s+d.solde,0);
   const totalDettesPersonnes=dettesAvecSolde.filter(d=>(d.type==='fondateur'||d.type==='gerant')&&d.solde>0).reduce((s,d)=>s+d.solde,0);
+  const totalDettesFournisseurs=dettesAvecSolde.filter(d=>d.type==='fournisseur'&&d.solde>0).reduce((s,d)=>s+d.solde,0);
   const nbDettes=dettesAvecSolde.filter(d=>d.solde>0).length;
   const badgeD=document.getElementById('nb-dettes');
   if(badgeD){ badgeD.textContent=nbDettes; badgeD.style.display=nbDettes?'':'none'; }
+  // Widget fournisseurs urgents sur dashboard
+  var _fournsUrgents=dettesAvecSolde.filter(function(d){return d.type==='fournisseur'&&d.solde>0;}).sort(function(a,b){
+    var ja=a.echeance?Math.ceil((new Date(a.echeance)-new Date())/86400000):9999;
+    var jb=b.echeance?Math.ceil((new Date(b.echeance)-new Date())/86400000):9999;
+    return ja-jb;
+  });
+  var _fzEl=document.getElementById('dash-fourn-widget');
+  if(!_fzEl){_fzEl=document.createElement('div');_fzEl.id='dash-fourn-widget';var _sc=document.getElementById('stats-cards');if(_sc&&_sc.parentNode)_sc.parentNode.insertBefore(_fzEl,_sc);}
+  if(_fournsUrgents.length){
+    var _fhtml='<div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:12px"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><span style="font-weight:700;font-size:13px">🏭 Dettes Fournisseurs</span><span style="font-size:12px;font-weight:700;color:var(--red)">Total: '+fmtGNF(totalDettesFournisseurs)+'</span></div>';
+    _fournsUrgents.forEach(function(d){
+      var _j=d.echeance?Math.ceil((new Date(d.echeance)-new Date())/86400000):null;
+      var _col=_j===null?'var(--text3)':_j<0?'var(--red)':_j<=7?'#f97316':_j<=30?'#f59e0b':'var(--green)';
+      var _msg=_j===null?'':_j<0?'⚠ RETARD '+Math.abs(_j)+'j':_j===0?'⚠ ECHEANCE AUJ':_j<=7?'⚠ '+_j+'j restants':_j+'j restants';
+      _fhtml+='<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-top:1px dashed var(--border)">'
+        +'<div><div style="font-size:12px;font-weight:600">'+d.nom+'</div>'
+        +(_msg?'<div style="font-size:10px;color:'+_col+';font-weight:700">'+_msg+'</div>':'')+'</div>'
+        +'<div style="text-align:right"><div style="font-size:12px;font-weight:700;color:var(--red)">'+fmtGNF(d.solde)+'</div>'
+        +(d.echeance?'<div style="font-size:10px;color:'+_col+'">'+new Date(d.echeance).toLocaleDateString('fr-FR')+'</div>':'')+'</div></div>';
+    });
+    _fzEl.innerHTML=_fhtml+'</div>';
+  } else {_fzEl.innerHTML='';}
 
   document.getElementById('stats-cards').innerHTML=`
     <div class="stat"><div class="stat-label"><div class="dot blue"></div> Total produits</div><div class="stat-val">${total}</div><div class="stat-sub">références actives</div></div>
     <div class="stat"><div class="stat-label"><div class="dot green"></div> Valeur stock</div><div class="stat-val green" style="font-size:18px">${fmtGNF(stockVal)}</div><div class="stat-sub">prix d'achat</div></div>
     <div class="stat"><div class="stat-label"><div class="dot purple"></div> Chiffre d'affaires net</div><div class="stat-val purple" style="font-size:18px">${fmtGNF(totalCA)}</div><div class="stat-sub">ventes − approvisionnements (${fmtGNF(totalAppros)})</div></div>
     <div class="stat"><div class="stat-label"><div class="dot ${totalBenefice>=0?'green':'red'}"></div> Bénéfice net</div><div class="stat-val ${totalBenefice>=0?'green':'red'}" style="font-size:18px">${fmtGNF(totalBenefice)}</div><div class="stat-sub">vente − achat − dépenses</div></div>
-    ${nbDettes?`<div class="stat" style="cursor:pointer" onclick="showView('dettes')"><div class="stat-label"><div class="dot red"></div> 💳 Dettes en cours</div><div class="stat-val red" style="font-size:18px">${fmtGNF(totalDettesClients+totalDettesPersonnes)}</div><div class="stat-sub">clients: ${fmtGNF(totalDettesClients)} | internes: ${fmtGNF(totalDettesPersonnes)}</div></div>`:''}`;
+    ${nbDettes?`<div class="stat" style="cursor:pointer" onclick="showView('dettes')"><div class="stat-label"><div class="dot red"></div> 💳 Dettes en cours</div><div class="stat-val red" style="font-size:18px">${fmtGNF(totalDettesClients+totalDettesPersonnes+totalDettesFournisseurs)}</div><div class="stat-sub">clients: ${fmtGNF(totalDettesClients)} | perso: ${fmtGNF(totalDettesPersonnes)} | fourn: ${fmtGNF(totalDettesFournisseurs)}</div></div>`:''}`;
 
 
   const cats={};
@@ -4369,7 +4397,7 @@ function recordVente(){
 function openDepenseModal(){
   const g=getCurrentGerant();
   const isFondateur=currentRole==='fondateur';
-  if(!isFondateur&&(!g||!g.permDep)){showToast('Vous n\'avez pas la permission de saisir des dépenses.');return}
+  // Depenses accessibles a tous - seules modif/suppr reservees
   document.getElementById('d-desc').value='';
   document.getElementById('d-cat').value='';
   document.getElementById('d-montant').value='';
@@ -4479,7 +4507,8 @@ function renderSalaires(){
     if(fondateurOnly)fondateurOnly.style.display='none';
     if(gerantOnly){
       gerantOnly.style.display='';
-      // Afficher resume mensuel pour gerant au pourcentage
+      // Afficher resume mensuel gérant avec filtres
+      setTimeout(function(){renderSalairesGerant();},50);
       const g=getCurrentGerant();
       if(g && g.type==='pourcentage'){
         const _resumeId='gerant-pct-resume';
@@ -5019,6 +5048,64 @@ function sendBulletinWhatsApp(){
 
 function openBulletinGerantSelf(){
   if(currentGerantId) openBulletin(currentGerantId);
+}
+function openBulletinGerantSelfFiltered(){
+  // Ouvrir bulletin avec le mois sélectionné par le gérant
+  var ySel=document.getElementById('sal-gerant-year');
+  var mSel=document.getElementById('sal-gerant-month');
+  if(ySel && mSel){
+    var mk=ySel.value+'-'+String(mSel.value).padStart(2,'0');
+    // Mettre à jour sal-month-filter pour que openBulletin utilise ce mois
+    var salFil=document.getElementById('sal-month-filter');
+    if(salFil) salFil.value=mk;
+  }
+  if(currentGerantId) openBulletin(currentGerantId);
+}
+function renderSalairesGerant(){
+  var ySel=document.getElementById('sal-gerant-year');
+  var mSel=document.getElementById('sal-gerant-month');
+  var now=new Date();
+  var curY=now.getFullYear(); var curM=now.getMonth()+1;
+  // Initialiser année
+  if(ySel && !ySel.options.length){
+    var yrs=new Set(); for(var y=2020;y<=2040;y++) yrs.add(y);
+    ventes.forEach(function(v){try{yrs.add(new Date(v.ts||v.date).getFullYear());}catch(e){}});
+    ySel.innerHTML=[...yrs].sort(function(a,b){return b-a;}).map(function(y){return '<option value="'+y+'"'+(y===curY?' selected':'')+'>'+y+'</option>';}).join('');
+  }
+  // Initialiser mois
+  if(mSel && !mSel.options.length){
+    var mNames=['Janvier','Fevrier','Mars','Avril','Mai','Juin','Juillet','Aout','Septembre','Octobre','Novembre','Decembre'];
+    mSel.innerHTML=mNames.map(function(m,i){return '<option value="'+(i+1)+'"'+(i+1===curM?' selected':'')+'> '+m+'</option>';}).join('');
+  }
+  var yr=ySel?parseInt(ySel.value):curY;
+  var mo=mSel?parseInt(mSel.value):curM;
+  var mk=yr+'-'+String(mo).padStart(2,'0');
+  var g=getCurrentGerant(); if(!g) return;
+  var ventesM=ventes.filter(function(v){return getMonthKey(v.ts||v.date)===mk&&v.type!=='entree';});
+  var depM=depenses.filter(function(d){return getMonthKey(d.date||d.ts)===mk;});
+  var ca=ventesM.reduce(function(s,v){return s+v.total;},0);
+  var ben=ventesM.reduce(function(s,v){return s+(v.benefice!=null?v.benefice:v.total);},0);
+  var dep=depM.reduce(function(s,d){return s+d.montant;},0);
+  var salaire=g.type==='fixe'?g.salaire:g.type==='pourcentage'?Math.round((ben-dep)*(g.pct||0)/100):0;
+  var el=document.getElementById('sal-gerant-resume'); if(!el) return;
+  el.innerHTML='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;padding:8px 0">'
+    +'<div style="background:var(--bg2);border-radius:8px;padding:10px;text-align:center"><div style="font-size:11px;color:var(--text3)">Mois</div><div style="font-weight:700;font-size:12px">'+getMonthLabel(mk)+'</div></div>'
+    +'<div style="background:var(--bg2);border-radius:8px;padding:10px;text-align:center"><div style="font-size:11px;color:var(--text3)">Ventes</div><div style="font-weight:700;color:var(--green)">'+ventesM.length+'</div></div>'
+    +'<div style="background:var(--bg2);border-radius:8px;padding:10px;text-align:center"><div style="font-size:11px;color:var(--text3)">CA</div><div style="font-weight:700;color:var(--blue)">'+fmtGNF(ca)+'</div></div>'
+    +'<div style="background:var(--bg2);border-radius:8px;padding:10px;text-align:center"><div style="font-size:11px;color:var(--text3)">Depenses</div><div style="font-weight:700;color:var(--red)">'+fmtGNF(dep)+'</div></div>'
+    +'<div style="background:var(--accent-light);border:1px solid var(--accent);border-radius:8px;padding:10px;text-align:center"><div style="font-size:11px;color:var(--accent)">Votre salaire</div><div style="font-weight:700;font-size:15px;color:var(--accent)">'+fmtGNF(salaire)+'</div><div style="font-size:10px;color:var(--text3)">'+(g.type==='fixe'?'Fixe':g.type==='pourcentage'?g.pct+'% ben.':'')+'</div></div>'
+    +'</div>';
+  // Sync sal-month-filter pour que les calculs principaux soient corrects
+  var salFil=document.getElementById('sal-month-filter');
+  if(salFil && salFil.value!==mk){
+    // Chercher si mk existe dans les options
+    var opts=Array.from(salFil.options);
+    var found=opts.find(function(o){return o.value===mk;});
+    if(!found){
+      var opt=document.createElement('option');opt.value=mk;opt.textContent=getMonthLabel(mk);salFil.appendChild(opt);
+    }
+    salFil.value=mk;
+  }
 }
 
 
@@ -6183,7 +6270,17 @@ function saveDetteClient(){
   showToast(`✅ Dette enregistrée — Reste : ${fmtGNF(reste)}`);
 }
 
+function _peuplerDetteGerantDatalist(){
+  var dl=document.getElementById('dette-gerant-list');
+  if(dl) dl.innerHTML=gerants.filter(function(g){return !g.bloque;}).map(function(g){return '<option value="'+g.nom+'">';}).join('');
+}
+function _peuplerDetteClientDatalist(){
+  var dl=document.getElementById('dette-client-list');
+  if(dl) dl.innerHTML=clients.map(function(c){return '<option value="'+c.nom+(c.tel?' ('+c.tel+')':'')+'">';}).join('');
+}
 function openDetteGerantModal(){
+  _peuplerDetteGerantDatalist();
+  _peuplerDetteClientDatalist();
   if(currentRole!=='fondateur'){ showToast('Réservé au Fondateur'); return; }
   const sel=document.getElementById('dg-personne');
   sel.innerHTML=`<option value="fondateur">👑 Fondateur</option>`+
@@ -6328,10 +6425,18 @@ let _clientModalOpen=false;
 
 // Remplir le select client dans le modal facture
 function buildFactClientSel(){
-  const sel=document.getElementById('fact-client-sel');
-  if(!sel) return;
-  sel.innerHTML='<option value="">— Choisir un client existant —</option>'+
-    clients.map(c=>`<option value="${c.id}">${c.nom}${c.tel?' — '+c.tel:''}</option>`).join('');
+  var dl=document.getElementById('fact-client-list');
+  if(dl) dl.innerHTML=clients.map(function(c){return '<option value="'+c.nom+(c.tel?' ('+c.tel+')':'')+'">';}).join('');
+  var inp=document.getElementById('fact-client-sel');
+  if(inp) inp.value='';
+  var hid=document.getElementById('fact-client-sel-id');
+  if(hid) hid.value='';
+}
+function onFactClientInputChange(val){
+  var c=clients.find(function(x){return x.nom===val||(x.nom+' ('+x.tel+')')===val;});
+  var hid=document.getElementById('fact-client-sel-id');
+  if(hid) hid.value=c?c.id:'';
+  onFactClientChange();
 }
 
 function onFactClientChange(){
@@ -6605,10 +6710,10 @@ function showToast(msg){
 
 // ===== ENTRÉES STOCK =====
 function openEntreeModal(){
-  const sel=document.getElementById('ent-product-sel');
-  if(!sel) return;
-  sel.innerHTML='<option value="">— Choisir un produit —</option>'+
-    products.map(p=>`<option value="${p.id}">${p.designation} (${p.ref}) — stock: ${p.stock_initial||0}</option>`).join('');
+  var dl=document.getElementById('ent-product-list');
+  if(dl) dl.innerHTML=products.map(function(p){return '<option value="'+p.designation+' ('+( p.reference||p.ref||'')+')">stock: '+(p.stock_initial||0)+'</option>';}).join('');
+  var inp=document.getElementById('ent-product-sel');if(inp) inp.value='';
+  var hid=document.getElementById('ent-product-id');if(hid) hid.value='';
   document.getElementById('ent-qty').value=1;
   document.getElementById('ent-prix-achat').value='';
   document.getElementById('ent-note').value='';
@@ -6620,6 +6725,16 @@ function openEntreeModal(){
 function closeEntreeModal(e){
   if(e&&e.target!==document.getElementById('entree-overlay')) return;
   document.getElementById('entree-overlay').style.display='none';
+}
+function onEntProduitInputChange(val){
+  var mt=val.match(/^(.+?)\s*\(([^)]+)\)/);
+  var p=null;
+  if(mt) p=products.find(function(x){return x.designation===mt[1].trim()&&(x.reference||x.ref||'')===mt[2].trim();});
+  if(!p) p=products.find(function(x){return x.designation===val.trim();});
+  var hid=document.getElementById('ent-product-id');
+  if(hid) hid.value=p?p.id:'';
+  var fakeSel=document.getElementById('ent-product-sel');
+  if(fakeSel&&p) onEntProduitChange();
 }
 function onEntProduitChange(){
   const sel=document.getElementById('ent-product-sel');
@@ -6642,8 +6757,15 @@ function updateEntPreview(){
 function saveEntree(){
   const overlay=document.getElementById('entree-overlay');
   const editId=overlay?overlay._editId:null;
-  const sel=document.getElementById('ent-product-sel');
-  const pid=parseInt(sel.value);
+  var _hidP=document.getElementById('ent-product-id');
+  var _inpP=document.getElementById('ent-product-sel');
+  var pid=_hidP&&_hidP.value?parseInt(_hidP.value):0;
+  if(!pid&&_inpP){
+    var _mt=_inpP.value.match(/^(.+?)\s*\(([^)]+)\)/);
+    var _pp=_mt?products.find(function(x){return x.designation===_mt[1].trim()&&(x.reference||x.ref||'')===_mt[2].trim();}):products.find(function(x){return x.designation===(_inpP.value||'').trim();});
+    if(_pp) pid=_pp.id;
+  }
+  var sel={value:pid?String(pid):''};
   const p=products.find(x=>x.id===pid);
   if(!p){ showToast('Choisir un produit'); return; }
   const qte=parseInt(document.getElementById('ent-qty').value)||0;
