@@ -445,15 +445,32 @@ function landingGoShop(){
       return;
     }
   }
+  // Timeout de sécurité 12 secondes
+  var _landingTimeout=setTimeout(function(){
+    if(btn){ btn.textContent='Accéder →'; btn.disabled=false; }
+    if(msg){
+      msg.textContent='';
+      var _div=document.createElement('div');
+      _div.innerHTML='⚠️ Connexion lente. Vérifiez votre réseau et réessayez.<br><small>Si le problème persiste, rechargez la page.</small>';
+      msg.appendChild(_div); msg.style.display='block';
+    }
+  },12000);
+
   // Recherche via index (rapide) ou Firebase complet
   db.ref('gdv_codes/'+code).once('value',function(snapCode){
     var uid=snapCode.val();
+    clearTimeout(_landingTimeout);
     if(btn){ btn.textContent='Accéder →'; btn.disabled=false; }
     if(!uid){
       if(msg){msg.textContent='Code introuvable. Vérifiez votre code.';msg.style.display='block';}
       return;
     }
+    // Timeout pour la 2e requête
+    var _shopTimeout=setTimeout(function(){
+      if(msg){msg.textContent='Erreur chargement boutique. Réessayez.';msg.style.display='block';}
+    },10000);
     db.ref('gdv_shops/'+uid+'/info').once('value',function(snap){
+      clearTimeout(_shopTimeout);
       var found=snap.val();
       if(!found){if(msg){msg.textContent='Boutique introuvable.';msg.style.display='block';}return;}
       if(found.blocked){
@@ -782,16 +799,34 @@ function agvLaunchApp(shop){
   var appEl=document.getElementById('app'); if(appEl)appEl.classList.add('visible');
 
   // Firebase sync pour cette boutique
+  var _saveRetryCount=0;
   window.sauvegarderFirebase=function(){
-    db.ref('gdv_shops/'+shop.uid+'/data').set({
+    var ind=document.getElementById('syncIndicator');
+    if(ind){ind.textContent='Sauvegarde...';ind.style.color='#f59e0b';}
+    var payload={
       products:products,ventes:ventes,depenses:depenses,gerants:gerants,
       entrees:entrees,appros:appros,repConfig:repConfig,
       dettes:dettes,clients:clients,factureVentes:factureVentes
-    }).then(function(){
-      var ind=document.getElementById('syncIndicator');
-      if(ind){ind.textContent='Sauvegarde ✓';ind.style.color='#22c55e';
-        setTimeout(function(){ind.textContent='Cloud actif';ind.style.color='#2563eb';},2000);}
-    });
+    };
+    // Sauvegarder aussi en cache local immédiatement
+    try{ localStorage.setItem('agv_cache_'+shop.uid, JSON.stringify(payload)); }catch(e){}
+    function doSave(attempt){
+      db.ref('gdv_shops/'+shop.uid+'/data').set(payload).then(function(){
+        _saveRetryCount=0;
+        if(ind){ind.textContent='✓ Sauvegardé';ind.style.color='#22c55e';
+          setTimeout(function(){ind.textContent='Cloud actif';ind.style.color='#2563eb';},2000);}
+      }).catch(function(err){
+        if(attempt<3){
+          setTimeout(function(){doSave(attempt+1);},2000*attempt);
+          if(ind){ind.textContent='Retry '+(attempt+1)+'/3...';ind.style.color='#f59e0b';}
+        } else {
+          if(ind){ind.textContent='⚠ Hors ligne - cache local OK';ind.style.color='#ef4444';}
+          // Les données sont dans le cache local - elles seront sync au retour réseau
+          showToast('⚠️ Réseau indisponible. Données sauvegardées localement.');
+        }
+      });
+    }
+    doSave(1);
   };
 
   // Cache localStorage pour affichage INSTANTANE
@@ -836,20 +871,63 @@ function agvLaunchApp(shop){
       if(ind){ind.textContent='Cache local...';ind.style.color='#f59e0b';}
     }
   } catch(e){}
-  // 2. Firebase sync en arriere-plan (met a jour si changements)
+  // Sync au retour réseau: si cache plus récent que Firebase, repousser
+  window.addEventListener('online',function(){
+    var ind=document.getElementById('syncIndicator');
+    if(ind){ind.textContent='Retour en ligne...';ind.style.color='#f59e0b';}
+    // Pousser le cache local vers Firebase
+    try{
+      var _cached2=localStorage.getItem(cacheKey);
+      if(_cached2){
+        var _cd=JSON.parse(_cached2);
+        db.ref('gdv_shops/'+shop.uid+'/data').set(_cd).then(function(){
+          if(ind){ind.textContent='✓ Sync rétabli';ind.style.color='#22c55e';
+            setTimeout(function(){if(ind){ind.textContent='Cloud actif';ind.style.color='#2563eb';}},2000);}
+        }).catch(function(){});
+      }
+    }catch(e){}
+  });
+  // 2. Firebase sync en arriere-plan avec reconnexion automatique
   var ref=db.ref('gdv_shops/'+shop.uid+'/data');
   window._agvDbListener=ref;
-  ref.on('value',function(snap){
-    var data=snap.val();
-    // Mettre a jour le cache local
-    if(data) try{ localStorage.setItem(cacheKey, JSON.stringify(data)); }catch(e){}
-    // Reinitialiser les arrays
-    products=[]; ventes=[]; depenses=[]; gerants=[];
-    entrees=[]; appros=[]; repConfig=[]; dettes=[]; clients=[]; factureVentes=[];
-    applyData(data);
+  var _syncActive=false;
+
+  function startFbSync(){
+    ref.on('value',function(snap){
+      _syncActive=true;
+      var data=snap.val();
+      if(data) try{ localStorage.setItem(cacheKey, JSON.stringify(data)); }catch(e){}
+      products=[]; ventes=[]; depenses=[]; gerants=[];
+      entrees=[]; appros=[]; repConfig=[]; dettes=[]; clients=[]; factureVentes=[];
+      applyData(data);
+      var ind=document.getElementById('syncIndicator');
+      if(ind){ind.textContent='✓ Sync OK';ind.style.color='#22c55e';
+        setTimeout(function(){if(ind)ind.textContent='Cloud actif';if(ind)ind.style.color='#2563eb';},1500);}
+    }, function(err){
+      // Erreur Firebase - indicateur visible
+      var ind=document.getElementById('syncIndicator');
+      if(ind){ind.textContent='⚠ Déconnecté';ind.style.color='#ef4444';}
+      // Retry dans 5 secondes
+      setTimeout(function(){
+        var ind2=document.getElementById('syncIndicator');
+        if(ind2){ind2.textContent='Reconnexion...';ind2.style.color='#f59e0b';}
+        ref.off(); startFbSync();
+      },5000);
+    });
+  }
+  startFbSync();
+
+  // Détecter coupure réseau et reconnecter
+  firebase.database().ref('.info/connected').on('value',function(snap){
+    var connected=snap.val();
     var ind=document.getElementById('syncIndicator');
-    if(ind){ind.textContent='Sync OK ✓';ind.style.color='#22c55e';
-      setTimeout(function(){ind.textContent='Cloud actif';ind.style.color='#2563eb';},1500);}
+    if(!connected){
+      if(ind){ind.textContent='⚠ Hors ligne';ind.style.color='#ef4444';}
+    } else {
+      if(ind&&!_syncActive){
+        ind.textContent='Reconnexion...';ind.style.color='#f59e0b';
+      }
+    }
   });
 
   // NE PAS ecraser currentRole ici - il est defini apres agvLaunchApp()
@@ -2536,39 +2614,30 @@ window.addEventListener('DOMContentLoaded',function(){
     </div>
   </div>
 
-  <!-- ===== VUE PARAMÈTRES (fondateur uniquement) ===== -->
+  <!-- ===== VUE PARAMÈTRES ===== -->
   <div id="view-parametres" class="view">
     <div class="topbar"><h1>⚙️ Paramètres boutique</h1></div>
-    <div style="max-width:580px;margin:0 auto;padding-bottom:32px">
+    <div style="max-width:560px;margin:0 auto;padding-bottom:32px">
       <div class="card" style="margin-bottom:16px">
-        <div class="card-title">🏪 Informations boutique</div>
-        <div style="display:flex;flex-direction:column;gap:14px;padding:4px 0">
-          <div class="form-group">
-            <label class="form-label">Nom de la boutique</label>
-            <div style="display:flex;gap:8px"><input class="form-input" id="param-nom" placeholder="Nom..." style="flex:1"><button class="btn btn-primary btn-sm" onclick="paramSaveNom()">✅ Enregistrer</button></div>
-          </div>
-          <div class="form-group">
-            <label class="form-label">Téléphone</label>
-            <div style="display:flex;gap:8px"><input class="form-input" id="param-tel" placeholder="Ex: 620 000 000" style="flex:1"><button class="btn btn-primary btn-sm" onclick="paramSaveTel()">✅ Enregistrer</button></div>
-          </div>
-          <div class="form-group">
-            <label class="form-label">Adresse / Ville</label>
-            <div style="display:flex;gap:8px"><input class="form-input" id="param-adresse" placeholder="Ex: Conakry, Ratoma" style="flex:1"><button class="btn btn-primary btn-sm" onclick="paramSaveAdresse()">✅ Enregistrer</button></div>
-          </div>
+        <div class="card-title">🏪 Informations</div>
+        <div style="display:flex;flex-direction:column;gap:12px;padding:4px 0">
+          <div class="form-group"><label class="form-label">Nom boutique</label><div style="display:flex;gap:8px"><input class="form-input" id="param-nom" placeholder="Nom..." style="flex:1"><button class="btn btn-primary btn-sm" onclick="paramSaveNom()">✅ Enregistrer</button></div></div>
+          <div class="form-group"><label class="form-label">Téléphone</label><div style="display:flex;gap:8px"><input class="form-input" id="param-tel" placeholder="Ex: 620 000 000" style="flex:1"><button class="btn btn-primary btn-sm" onclick="paramSaveTel()">✅ Enregistrer</button></div></div>
+          <div class="form-group"><label class="form-label">Adresse / Ville</label><div style="display:flex;gap:8px"><input class="form-input" id="param-adresse" placeholder="Ex: Conakry, Ratoma" style="flex:1"><button class="btn btn-primary btn-sm" onclick="paramSaveAdresse()">✅ Enregistrer</button></div></div>
         </div>
       </div>
       <div class="card" style="margin-bottom:16px">
         <div class="card-title">🖼️ Logo</div>
-        <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
-          <div id="param-logo-preview" style="width:80px;height:80px;border-radius:12px;background:var(--surface2);border:2px dashed var(--border);display:flex;align-items:center;justify-content:center;font-size:28px;overflow:hidden;flex-shrink:0">🏪</div>
+        <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+          <div id="param-logo-preview" style="width:76px;height:76px;border-radius:12px;background:var(--surface2);border:2px dashed var(--border);display:flex;align-items:center;justify-content:center;font-size:28px;overflow:hidden;flex-shrink:0">🏪</div>
           <label class="btn btn-ghost btn-sm" style="cursor:pointer">📁 Choisir logo<input type="file" id="param-logo-input" accept="image/*" style="display:none" onchange="paramChangerLogo(this)"></label>
         </div>
       </div>
       <div class="card">
-        <div class="card-title">✍️ Signature fondateur</div>
-        <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
-          <div id="param-sig-preview" style="width:140px;height:60px;border-radius:8px;background:var(--surface2);border:2px dashed var(--border);display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--text3);overflow:hidden;flex-shrink:0">Aucune signature</div>
-          <label class="btn btn-ghost btn-sm" style="cursor:pointer">✍️ Importer signature<input type="file" id="param-sig-input" accept="image/*" style="display:none" onchange="paramChangerSignature(this)"></label>
+        <div class="card-title">✍️ Signature</div>
+        <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+          <div id="param-sig-preview" style="width:130px;height:56px;border-radius:8px;background:var(--surface2);border:2px dashed var(--border);display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--text3);overflow:hidden;flex-shrink:0">Aucune signature</div>
+          <label class="btn btn-ghost btn-sm" style="cursor:pointer">✍️ Importer<input type="file" id="param-sig-input" accept="image/*" style="display:none" onchange="paramChangerSignature(this)"></label>
         </div>
       </div>
     </div>
@@ -3524,7 +3593,6 @@ function applyRoleUI(){
   // Gérants uniquement
   document.getElementById('nav-gerants').style.display = isFondateur ? 'flex' : 'none';
   document.getElementById('nav-salaires').style.display = 'flex';
-  // Dashboard et Répartition: fondateur uniquement
   var _nd=document.getElementById('nav-dashboard'); if(_nd) _nd.style.display=isFondateur?'flex':'none';
   var _nr=document.getElementById('nav-repartition'); if(_nr) _nr.style.display=isFondateur?'flex':'none';
   var _np=document.getElementById('nav-parametres'); if(_np) _np.style.display=isFondateur?'flex':'none';
@@ -5222,7 +5290,7 @@ function jourInit(){
   if(jdd) jdd.value = today;
   const dl = document.getElementById('jv-product-list');
   if(dl) dl.innerHTML = products.map(p=>`<option value="${p.designation} (${p.reference})">`).join('');
-  // INITIALISER les filtres année/mois - OBLIGATOIRE avant renderJournalier
+  // INITIALISER filtres année/mois - OBLIGATOIRE
   var _jY=document.getElementById('jour-year-filter');
   var _jM=document.getElementById('jour-month-filter');
   var _cY=new Date().getFullYear();
@@ -5273,8 +5341,8 @@ function saveJV(){
   const prod=m?products.find(p=>p.reference===m[1]):products.find(p=>p.designation===prodVal);
   if(prod){ prod.stock_initial=Math.max(0,(prod.stock_initial||0)-qty); prod.total=prod.stock_initial*prod.prix_achat; }
   ventes.push({id:Date.now(),ts:new Date(dateVal+'T12:00:00').getTime(),name:prod?prod.designation:prodVal,ref:prod?prod.reference:'',qty,prixU:prix,prixAchat:prod?prod.prix_achat||0:0,total:qty*prix,benefice:qty*(prix-(prod?prod.prix_achat||0:0)),type:'sortie',gerantId:currentGerantId});
-  saveAll(); buildMonthFilters(); renderDashboard();
-  jourInit(); renderJournalier();
+  saveAll(); buildMonthFilters(); renderJournalier(); renderDashboard();
+  // Vider les champs
   document.getElementById('jv-product').value='';
   document.getElementById('jv-qty').value='1';
   document.getElementById('jv-prix').value='';
@@ -7054,69 +7122,39 @@ function addRepLine(){
   repConfig.push({id:Date.now(),label:'Nouveau poste',pct:0,type:'custom',annuel:'roulement'});
   openRepConfig();
 }
-// ===== PARAMÈTRES BOUTIQUE =====
+// ===== PARAMÈTRES BOUTIQUE (fondateur) =====
 function paramSaveNom(){
   if(currentRole!=='fondateur'){showToast('Reserve au fondateur');return;}
   var val=(document.getElementById('param-nom').value||'').trim();
   if(!val){showToast('Entrez un nom');return;}
   if(!window._currentShop){showToast('Boutique non connectée');return;}
-  db.ref('gdv_shops/'+window._currentShop.uid+'/info/entreprise').set(val).then(function(){
-    window._currentShop.entreprise=val; showToast('✅ Nom mis à jour: '+val);
-  }).catch(function(e){showToast('Erreur: '+e.message);});
+  db.ref('gdv_shops/'+window._currentShop.uid+'/info/entreprise').set(val).then(function(){window._currentShop.entreprise=val;showToast('✅ Nom: '+val);}).catch(function(e){showToast('Erreur: '+e.message);});
 }
 function paramSaveTel(){
   if(currentRole!=='fondateur'){showToast('Reserve au fondateur');return;}
   var val=(document.getElementById('param-tel').value||'').trim();
   if(!window._currentShop){showToast('Boutique non connectée');return;}
-  db.ref('gdv_shops/'+window._currentShop.uid+'/info/tel').set(val).then(function(){
-    window._currentShop.tel=val; showToast('✅ Téléphone mis à jour');
-  }).catch(function(e){showToast('Erreur: '+e.message);});
+  db.ref('gdv_shops/'+window._currentShop.uid+'/info/tel').set(val).then(function(){window._currentShop.tel=val;showToast('✅ Téléphone mis à jour');}).catch(function(e){showToast('Erreur: '+e.message);});
 }
 function paramSaveAdresse(){
   if(currentRole!=='fondateur'){showToast('Reserve au fondateur');return;}
   var val=(document.getElementById('param-adresse').value||'').trim();
   if(!window._currentShop){showToast('Boutique non connectée');return;}
-  db.ref('gdv_shops/'+window._currentShop.uid+'/info/adresse').set(val).then(function(){
-    window._currentShop.adresse=val; showToast('✅ Adresse mise à jour');
-  }).catch(function(e){showToast('Erreur: '+e.message);});
+  db.ref('gdv_shops/'+window._currentShop.uid+'/info/adresse').set(val).then(function(){window._currentShop.adresse=val;showToast('✅ Adresse mise à jour');}).catch(function(e){showToast('Erreur: '+e.message);});
 }
 function paramChangerLogo(input){
   if(currentRole!=='fondateur'){showToast('Reserve au fondateur');return;}
-  var f=input.files[0]; if(!f)return;
-  new FileReader().onload=function(e){
-    var data=e.target.result;
-    if(!window._currentShop){showToast('Boutique non connectée');return;}
-    db.ref('gdv_shops/'+window._currentShop.uid+'/info/logo').set(data).then(function(){
-      window._currentShop.logo=data;
-      var lp=document.getElementById('param-logo-preview');
-      if(lp) lp.innerHTML='<img src="'+data+'" style="width:100%;height:100%;object-fit:contain;border-radius:10px">';
-      showToast('✅ Logo mis à jour!');
-    }).catch(function(e){showToast('Erreur: '+e.message);});
-  };
-  (function(rd,f){rd.onload=function(e){
-    var data=e.target.result;
-    if(!window._currentShop){showToast('Boutique non connectée');return;}
-    db.ref('gdv_shops/'+window._currentShop.uid+'/info/logo').set(data).then(function(){
-      window._currentShop.logo=data;
-      var lp=document.getElementById('param-logo-preview');
-      if(lp) lp.innerHTML='<img src="'+data+'" style="width:100%;height:100%;object-fit:contain;border-radius:10px">';
-      showToast('✅ Logo mis à jour!');
-    }).catch(function(er){showToast('Erreur: '+er.message);});
-  };rd.readAsDataURL(f);})(new FileReader(),f);
+  var f=input.files[0];if(!f)return;
+  (function(rd,fi){rd.onload=function(e){var data=e.target.result;if(!window._currentShop){showToast('Non connecté');return;}
+    db.ref('gdv_shops/'+window._currentShop.uid+'/info/logo').set(data).then(function(){window._currentShop.logo=data;var lp=document.getElementById('param-logo-preview');if(lp)lp.innerHTML='<img src="'+data+'" style="width:100%;height:100%;object-fit:contain;border-radius:10px">';showToast('✅ Logo mis à jour!');}).catch(function(er){showToast('Erreur: '+er.message);});
+  };rd.readAsDataURL(fi);})(new FileReader(),f);
 }
 function paramChangerSignature(input){
   if(currentRole!=='fondateur'){showToast('Reserve au fondateur');return;}
-  var f=input.files[0]; if(!f)return;
-  (function(rd,f){rd.onload=function(e){
-    var data=e.target.result;
-    if(!window._currentShop){showToast('Boutique non connectée');return;}
-    db.ref('gdv_shops/'+window._currentShop.uid+'/info/signature').set(data).then(function(){
-      window._currentShop.signature=data;
-      var sp=document.getElementById('param-sig-preview');
-      if(sp) sp.innerHTML='<img src="'+data+'" style="width:100%;height:100%;object-fit:contain">';
-      showToast('✅ Signature mise à jour!');
-    }).catch(function(er){showToast('Erreur: '+er.message);});
-  };rd.readAsDataURL(f);})(new FileReader(),f);
+  var f=input.files[0];if(!f)return;
+  (function(rd,fi){rd.onload=function(e){var data=e.target.result;if(!window._currentShop){showToast('Non connecté');return;}
+    db.ref('gdv_shops/'+window._currentShop.uid+'/info/signature').set(data).then(function(){window._currentShop.signature=data;var sp=document.getElementById('param-sig-preview');if(sp)sp.innerHTML='<img src="'+data+'" style="width:100%;height:100%;object-fit:contain">';showToast('✅ Signature mise à jour!');}).catch(function(er){showToast('Erreur: '+er.message);});
+  };rd.readAsDataURL(fi);})(new FileReader(),f);
 }
 function saveRepConfig(){
   const total=repConfig.reduce((s,r)=>s+r.pct,0);
