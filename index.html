@@ -6440,10 +6440,14 @@ function _peuplerDetteClientDatalist(){
 function openDetteGerantModal(){
   _peuplerDetteGerantDatalist();
   _peuplerDetteClientDatalist();
-  if(currentRole!=='fondateur'){ showToast('Réservé au Fondateur'); return; }
   const sel=document.getElementById('dg-personne');
-  sel.innerHTML=`<option value="fondateur">👑 Fondateur</option>`+
-    gerants.filter(g=>g.id!==1).map(g=>`<option value="${g.id}">${g.nom}</option>`).join('');
+  if(currentRole==='fondateur'){
+    sel.innerHTML='<option value="fondateur">👑 Fondateur</option>'+
+      gerants.filter(function(g){return g.id!==1;}).map(function(g){return '<option value="'+g.id+'">'+g.nom+'</option>';}).join('');
+  } else {
+    var _g=gerants.find(function(x){return x.id==currentGerantId;});
+    sel.innerHTML=_g?('<option value="'+_g.id+'">'+_g.nom+'</option>'):'<option value="">—</option>';
+  }
   document.getElementById('dg-montant').value='';
   document.getElementById('dg-desc').value='';
   document.getElementById('dg-date').value=new Date().toISOString().slice(0,10);
