@@ -382,7 +382,19 @@ body{font-family:'DM Sans',sans-serif;background:#060d24;color:#e2e8f0;min-heigh
 </style>
 </head>
 <body>
-<div id="syncIndicator">Cloud actif</div>
+<div id="syncIndicator" onclick="agvToggleSyncDetail()" style="cursor:pointer" title="Cliquez pour détails">
+  <span id="sync-icon">🟢</span>
+  <span id="sync-text">En ligne</span>
+</div>
+<div id="sync-detail" style="display:none;position:fixed;top:44px;right:10px;background:var(--bg,#1e293b);border:1px solid var(--border,#334155);border-radius:10px;padding:12px 16px;font-size:12px;z-index:9999;min-width:220px;box-shadow:0 4px 20px rgba(0,0,0,0.4)">
+  <div style="font-weight:700;margin-bottom:8px">📡 Statut synchronisation</div>
+  <div id="sync-detail-content">Chargement...</div>
+  <div style="margin-top:10px;padding-top:8px;border-top:1px solid var(--border,#334155)">
+    <button onclick="agvForcerSync();agvToggleSyncDetail()" style="width:100%;padding:6px;border:none;border-radius:6px;background:#2563eb;color:#fff;cursor:pointer;font-size:11px;font-weight:700">
+      🔄 Forcer la synchronisation
+    </button>
+  </div>
+</div>
 
 <!-- ==================== AGV SCRIPT ==================== -->
 <script>
@@ -416,10 +428,19 @@ function landingGoShop(){
   var btn = document.querySelector('#agv-landing button[onclick="landingGoShop()"]') || 
             document.querySelector('#agv-landing .fb-blue');
   if(btn){ btn.textContent='Chargement...'; btn.disabled=true; }
-  // Chercher la boutique
-  // Vérifier le cache d'abord
+  // Vérifier le cache d'abord (fonctionne SANS internet)
   var cachedShop=null;
   try{ cachedShop=JSON.parse(localStorage.getItem('agv_shop_'+code)||'null'); }catch(e){}
+  // Mode hors ligne: si cache présent, connexion directe
+  if(!navigator.onLine && cachedShop && !cachedShop.blocked){
+    if(btn){btn.textContent='Accéder →';btn.disabled=false;}
+    window._lastShopCode=code;
+    window._shopLoginData=cachedShop;
+    agvShow('agv-shop-login');
+    agvLoadShopLogin(code);
+    showToast('📴 Mode hors ligne - données locales');
+    return;
+  }
   if(cachedShop && !cachedShop.blocked){
     // Vérifier expiration même depuis le cache
     if(cachedShop.dateExpiration && cachedShop.licenceStatut!=='actif'){
@@ -731,11 +752,121 @@ function agvLogin(){
 }
 
 // ===== LANCEMENT DE L'APP =====
+// ===== SYSTÈME OFFLINE GLOBAL =====
+var _agvIsOnline = navigator.onLine;
+var _agvPendingSync = []; // file d'attente des sauvegardes hors ligne
+var _agvLastSyncTime = null;
+var _agvShopUid = null;
+var _agvCacheKey = null;
+
+function agvToggleSyncDetail(){
+  var d=document.getElementById('sync-detail');
+  if(!d) return;
+  if(d.style.display==='none'){
+    agvUpdateSyncDetail();
+    d.style.display='block';
+    setTimeout(function(){
+      document.addEventListener('click',function _close(e){
+        if(!d.contains(e.target)&&e.target.id!=='syncIndicator'){
+          d.style.display='none';
+          document.removeEventListener('click',_close);
+        }
+      });
+    },100);
+  } else {
+    d.style.display='none';
+  }
+}
+
+function agvUpdateSyncDetail(){
+  var el=document.getElementById('sync-detail-content');
+  if(!el) return;
+  var pending=_agvPendingSync.length;
+  var lastSync=_agvLastSyncTime?new Date(_agvLastSyncTime).toLocaleTimeString('fr-FR'):'Jamais';
+  el.innerHTML='<div style="display:flex;flex-direction:column;gap:6px">'
+    +'<div>Statut: <strong style="color:'+(  _agvIsOnline?'#22c55e':'#ef4444')+'">'+( _agvIsOnline?'🟢 En ligne':'🔴 Hors ligne')+'</strong></div>'
+    +'<div>Dernière sync: <strong>'+lastSync+'</strong></div>'
+    +'<div>En attente: <strong style="color:'+( pending>0?'#f59e0b':'#22c55e')+'">'+pending+' action(s)</strong></div>'
+    +'<div style="font-size:10px;color:#64748b;margin-top:4px">Boutique: '+(_agvShopUid?_agvShopUid.slice(0,8)+'...':'—')+'</div>'
+    +'</div>';
+}
+
+function agvSetSyncStatus(status){
+  // status: 'online'|'syncing'|'offline'|'cache'|'error'
+  var icon=document.getElementById('sync-icon');
+  var text=document.getElementById('sync-text');
+  if(!icon||!text) return;
+  var map={
+    'online':   {i:'🟢', t:'En ligne',     c:'#22c55e'},
+    'syncing':  {i:'🔄', t:'Sync...',      c:'#3b82f6'},
+    'offline':  {i:'🔴', t:'Hors ligne',   c:'#ef4444'},
+    'cache':    {i:'🟡', t:'Cache local',  c:'#f59e0b'},
+    'error':    {i:'⚠️', t:'Erreur sync',  c:'#ef4444'},
+    'saved':    {i:'✅', t:'Sauvegardé',   c:'#22c55e'},
+  };
+  var s=map[status]||map['online'];
+  icon.textContent=s.i; text.textContent=s.t;
+  var ind=document.getElementById('syncIndicator');
+  if(ind) ind.style.color=s.c;
+  if(status==='saved'){
+    _agvLastSyncTime=Date.now();
+    setTimeout(function(){agvSetSyncStatus(_agvIsOnline?'online':'offline');},2500);
+  }
+}
+
+function agvSaveLocal(data){
+  // Toujours sauvegarder localement EN PREMIER
+  if(!_agvCacheKey) return;
+  try{
+    localStorage.setItem(_agvCacheKey, JSON.stringify(data));
+  }catch(e){
+    // localStorage plein - vider les anciennes données non critiques
+    try{
+      var keys=[];
+      for(var i=0;i<localStorage.length;i++){
+        var k=localStorage.key(i);
+        if(k&&k.indexOf('agv_cache_')===0&&k!==_agvCacheKey) keys.push(k);
+      }
+      keys.forEach(function(k){localStorage.removeItem(k);});
+      localStorage.setItem(_agvCacheKey, JSON.stringify(data));
+    }catch(e2){}
+  }
+}
+
+function agvForcerSync(){
+  if(!_agvIsOnline){showToast('⚠️ Pas de connexion internet');return;}
+  if(!_agvShopUid){showToast('Boutique non connectée');return;}
+  var payload=agvBuildPayload();
+  agvSaveLocal(payload);
+  agvPushFirebase(payload,true);
+}
+
+function agvBuildPayload(){
+  return {
+    products:products,ventes:ventes,depenses:depenses,gerants:gerants,
+    entrees:entrees,appros:appros,repConfig:repConfig,
+    dettes:dettes,clients:clients,factureVentes:factureVentes
+  };
+}
+
+function agvPushFirebase(payload,forced){
+  if(!_agvIsOnline&&!forced) return;
+  if(!_agvShopUid) return;
+  agvSetSyncStatus('syncing');
+  db.ref('gdv_shops/'+_agvShopUid+'/data').set(payload).then(function(){
+    _agvPendingSync=[];
+    _agvLastSyncTime=Date.now();
+    agvSetSyncStatus('saved');
+  }).catch(function(err){
+    agvSetSyncStatus('error');
+    showToast('⚠️ Sync échouée - données en cache local');
+  });
+}
+
 function agvLaunchApp(shop){
-  // Vider TOUT le localStorage (données Neindi ou autre)
-  var keys=[];
-  for(var i=0;i<localStorage.length;i++){var k=localStorage.key(i);if(k)keys.push(k);}
-  keys.forEach(function(k){localStorage.removeItem(k);});
+  // NE PAS vider localStorage - conserver le cache pour le mode offline
+  _agvShopUid=shop.uid;
+  _agvCacheKey='agv_cache_'+shop.uid;
 
   agvShow('agv-app');
   document.getElementById('syncIndicator').style.display='block';
@@ -781,17 +912,20 @@ function agvLaunchApp(shop){
   var ls=document.getElementById('login-screen'); if(ls)ls.style.display='none';
   var appEl=document.getElementById('app'); if(appEl)appEl.classList.add('visible');
 
-  // Firebase sync pour cette boutique
+  // Firebase sync - fonctionne en ligne ET hors ligne
   window.sauvegarderFirebase=function(){
-    db.ref('gdv_shops/'+shop.uid+'/data').set({
-      products:products,ventes:ventes,depenses:depenses,gerants:gerants,
-      entrees:entrees,appros:appros,repConfig:repConfig,
-      dettes:dettes,clients:clients,factureVentes:factureVentes
-    }).then(function(){
-      var ind=document.getElementById('syncIndicator');
-      if(ind){ind.textContent='Sauvegarde ✓';ind.style.color='#22c55e';
-        setTimeout(function(){ind.textContent='Cloud actif';ind.style.color='#2563eb';},2000);}
-    });
+    var payload=agvBuildPayload();
+    // 1. Toujours sauvegarder localement EN PREMIER (instantané)
+    agvSaveLocal(payload);
+    // 2. Si en ligne → pousser vers Firebase en arrière-plan
+    if(_agvIsOnline){
+      agvPushFirebase(payload,false);
+    } else {
+      // Hors ligne → mettre en file d'attente
+      _agvPendingSync.push({ts:Date.now(),payload:payload});
+      agvSetSyncStatus('offline');
+      showToast('💾 Sauvegardé localement (sync au retour en ligne)');
+    }
   };
 
   // Cache localStorage pour affichage INSTANTANE
@@ -826,30 +960,87 @@ function agvLaunchApp(shop){
     if(_nb) _nb.textContent=products.length;
     setTimeout(function(){if(typeof refreshVentesHistory==='function')refreshVentesHistory();},100);
   }
-  // 1. Charger le cache IMMEDIATEMENT (0ms d'attente)
-  try {
-    var cached = localStorage.getItem(cacheKey);
-    if(cached){
-      var cachedData = JSON.parse(cached);
-      applyData(cachedData);
-      var ind=document.getElementById('syncIndicator');
-      if(ind){ind.textContent='Cache local...';ind.style.color='#f59e0b';}
+  // ====== CHARGEMENT OFFLINE-FIRST ======
+  // 1. Charger cache local IMMÉDIATEMENT (0ms - fonctionne sans internet)
+  var _cacheLoaded=false;
+  try{
+    var _cached=localStorage.getItem(_agvCacheKey);
+    if(_cached){
+      var _cachedData=JSON.parse(_cached);
+      if(_cachedData&&typeof _cachedData==='object'&&Object.keys(_cachedData).length>0){
+        _cacheLoaded=true;
+        applyData(_cachedData);
+        agvSetSyncStatus('cache');
+      }
     }
-  } catch(e){}
-  // 2. Firebase sync en arriere-plan (met a jour si changements)
+  }catch(e){}
+
+  if(!_cacheLoaded){
+    agvSetSyncStatus('offline');
+  }
+
+  // 2. Écouter Firebase EN ARRIÈRE-PLAN (si internet disponible)
   var ref=db.ref('gdv_shops/'+shop.uid+'/data');
   window._agvDbListener=ref;
+
   ref.on('value',function(snap){
     var data=snap.val();
-    // Mettre a jour le cache local
-    if(data) try{ localStorage.setItem(cacheKey, JSON.stringify(data)); }catch(e){}
-    // Reinitialiser les arrays
+    // PROTECTION: si Firebase retourne null, utiliser le cache local
+    if(!data||typeof data!=='object'||Object.keys(data).length===0){
+      agvSetSyncStatus(_agvIsOnline?'online':'offline');
+      return;
+    }
+    // Données valides → mettre à jour cache + UI
+    agvSaveLocal(data);
+    _agvLastSyncTime=Date.now();
     products=[]; ventes=[]; depenses=[]; gerants=[];
     entrees=[]; appros=[]; repConfig=[]; dettes=[]; clients=[]; factureVentes=[];
     applyData(data);
-    var ind=document.getElementById('syncIndicator');
-    if(ind){ind.textContent='Sync OK ✓';ind.style.color='#22c55e';
-      setTimeout(function(){ind.textContent='Cloud actif';ind.style.color='#2563eb';},1500);}
+    agvSetSyncStatus('saved');
+  },function(err){
+    // Erreur Firebase (règles, réseau) → rester sur cache local
+    agvSetSyncStatus(_agvIsOnline?'error':'offline');
+  });
+
+  // 3. Détecter connexion/déconnexion réseau
+  firebase.database().ref('.info/connected').on('value',function(snap){
+    var connected=!!snap.val();
+    _agvIsOnline=connected;
+    if(connected){
+      agvSetSyncStatus('syncing');
+      // Synchroniser les données en attente
+      if(_agvPendingSync.length>0){
+        var latest=_agvPendingSync[_agvPendingSync.length-1];
+        agvPushFirebase(latest.payload,true);
+      } else {
+        // Vérifier si cache local plus récent que Firebase
+        var payload=agvBuildPayload();
+        var total=(products.length)+(ventes.length)+(gerants.length);
+        if(total>0) agvPushFirebase(payload,true);
+      }
+    } else {
+      _agvIsOnline=false;
+      agvSetSyncStatus('offline');
+    }
+  });
+
+  // 4. Écouter les événements réseau du navigateur
+  window.addEventListener('online',function(){
+    _agvIsOnline=true;
+    agvSetSyncStatus('syncing');
+    showToast('🌐 Connexion rétablie - synchronisation en cours...');
+    var payload=agvBuildPayload();
+    if(_agvPendingSync.length>0){
+      var latest=_agvPendingSync[_agvPendingSync.length-1];
+      agvPushFirebase(latest.payload,true);
+    } else if(products.length>0||ventes.length>0||gerants.length>0){
+      agvPushFirebase(payload,true);
+    }
+  });
+  window.addEventListener('offline',function(){
+    _agvIsOnline=false;
+    agvSetSyncStatus('offline');
+    showToast('📴 Hors ligne - sauvegarde locale activée');
   });
 
   // NE PAS ecraser currentRole ici - il est defini apres agvLaunchApp()
@@ -1918,7 +2109,7 @@ window.addEventListener('DOMContentLoaded',function(){
     </div>
     <nav class="nav-section">
       <div class="nav-label">Principal</div>
-      <button class="nav-item active" id="nav-dashboard" onclick="showView('dashboard')">
+      <button class="nav-item active" onclick="showView('dashboard')">
         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1" stroke-width="1.5"/><rect x="14" y="3" width="7" height="7" rx="1" stroke-width="1.5"/><rect x="3" y="14" width="7" height="7" rx="1" stroke-width="1.5"/><rect x="14" y="14" width="7" height="7" rx="1" stroke-width="1.5"/></svg>
         Tableau de bord
       </button>
@@ -3425,18 +3616,12 @@ function startApp(){
   if(s1) s1.textContent='Système de gestion — '+yr;
   const s2=document.getElementById('brand-year-sub');
   if(s2) s2.textContent='Gestion des stocks '+yr;
+  document.querySelectorAll('.view').forEach(el=>el.classList.remove('active'));
+  document.getElementById('view-dashboard').classList.add('active');
+  document.querySelectorAll('.nav-item').forEach(el=>el.classList.remove('active'));
+  document.querySelector('.nav-item[onclick="showView(\'dashboard\')"]')?.classList.add('active');
+  currentView='dashboard';
   applyRoleUI();
-  // Fondateur → tableau de bord | Gérant → ventes (pas accès au dashboard)
-  var _premierOnglet = (currentRole === 'fondateur') ? 'dashboard' : 'ventes';
-  document.querySelectorAll('.view').forEach(function(el){ el.classList.remove('active'); });
-  var _viewEl = document.getElementById('view-' + _premierOnglet);
-  if(_viewEl) _viewEl.classList.add('active');
-  document.querySelectorAll('.nav-item').forEach(function(el){
-    var oc = el.getAttribute('onclick');
-    if(oc && oc.indexOf(_premierOnglet) >= 0) el.classList.add('active');
-    else el.classList.remove('active');
-  });
-  currentView = _premierOnglet;
   // Si Firebase a déjà des données, les utiliser directement
   if (window._firebaseData) {
     appliquerDonneesFirebase(window._firebaseData);
@@ -3486,13 +3671,17 @@ function applyRoleUI(){
   document.getElementById('nav-gerants').style.display = isFondateur ? 'flex' : 'none';
   document.getElementById('nav-salaires').style.display = 'flex'; // tous voient
 
-  // TABLEAU DE BORD: fondateur uniquement - gérant ne voit pas
-  var _navDash = document.getElementById('nav-dashboard');
-  if(_navDash) _navDash.style.display = isFondateur ? 'flex' : 'none';
-
-  // RÉPARTITION: fondateur uniquement
-  var _navRep = document.getElementById('nav-repartition');
-  if(_navRep) _navRep.style.display = isFondateur ? 'flex' : 'none';
+  // Ventes & dépenses
+  if(!isFondateur){
+    // Cacher/montrer onglets selon permissions gerant
+    const canVentes = g && g.permVentes;
+    const canDep = g && g.permDep;
+    // Indiquer visuellement les onglets selon permissions
+    var navVentes = document.getElementById('nav-ventes');
+    if(navVentes) navVentes.style.opacity = '1';
+    var navDep = document.getElementById('nav-depenses');
+    if(navDep) navDep.style.opacity = '1';
+  }
 
   if(isFondateur){
     document.getElementById('sal-fondateur-only').style.display='block';
