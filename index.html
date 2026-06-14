@@ -783,49 +783,15 @@ function agvLaunchApp(shop){
 
   // Firebase sync pour cette boutique
   window.sauvegarderFirebase=function(){
-    var ind=document.getElementById('syncIndicator');
-    // PROTECTION: ne pas sauvegarder si les données semblent vides/corrompues
-    // Vérifier qu'on a au moins les gérants ou produits (boutique initialisée)
-    var totalItems=products.length+gerants.length+ventes.length+depenses.length;
-    if(totalItems===0){
-      // Données vides - probablement un problème de sync Firebase
-      // Récupérer depuis le cache avant de sauvegarder
-      try{
-        var _ck='agv_cache_'+shop.uid;
-        var _cached=localStorage.getItem(_ck);
-        if(_cached){
-          var _cd=JSON.parse(_cached);
-          if(_cd && ((_cd.products&&_cd.products.length)||(_cd.gerants&&_cd.gerants.length)||(_cd.ventes&&_cd.ventes.length))){
-            // Cache valide disponible - ne pas écraser Firebase avec données vides
-            if(ind){ind.textContent='⚠ Sauvegarde annulée (données vides)';ind.style.color='#ef4444';}
-            return;
-          }
-        }
-      }catch(e){}
-    }
-    var payload={
+    db.ref('gdv_shops/'+shop.uid+'/data').set({
       products:products,ventes:ventes,depenses:depenses,gerants:gerants,
       entrees:entrees,appros:appros,repConfig:repConfig,
       dettes:dettes,clients:clients,factureVentes:factureVentes
-    };
-    // Sauvegarder en cache local d'abord
-    try{ localStorage.setItem('agv_cache_'+shop.uid, JSON.stringify(payload)); }catch(e){}
-    if(ind){ind.textContent='Sauvegarde...';ind.style.color='#f59e0b';}
-    function doSave(attempt){
-      db.ref('gdv_shops/'+shop.uid+'/data').set(payload).then(function(){
-        if(ind){ind.textContent='✓ Sauvegardé';ind.style.color='#22c55e';
-          setTimeout(function(){if(ind){ind.textContent='Cloud actif';ind.style.color='#2563eb';}},2000);}
-      }).catch(function(err){
-        if(attempt<3){
-          setTimeout(function(){doSave(attempt+1);},2000);
-          if(ind){ind.textContent='Retry '+attempt+'/3...';ind.style.color='#f59e0b';}
-        } else {
-          if(ind){ind.textContent='⚠ Non sauvegardé (réseau)';ind.style.color='#ef4444';}
-          showToast('⚠️ Sauvegarde réseau échouée. Données en cache local.');
-        }
-      });
-    }
-    doSave(1);
+    }).then(function(){
+      var ind=document.getElementById('syncIndicator');
+      if(ind){ind.textContent='Sauvegarde ✓';ind.style.color='#22c55e';
+        setTimeout(function(){ind.textContent='Cloud actif';ind.style.color='#2563eb';},2000);}
+    });
   };
 
   // Cache localStorage pour affichage INSTANTANE
@@ -860,89 +826,30 @@ function agvLaunchApp(shop){
     if(_nb) _nb.textContent=products.length;
     setTimeout(function(){if(typeof refreshVentesHistory==='function')refreshVentesHistory();},100);
   }
-  // 1. Charger le cache IMMEDIATEMENT (0ms d'attente) - données visibles instantanément
-  var _cacheLoaded=false;
+  // 1. Charger le cache IMMEDIATEMENT (0ms d'attente)
   try {
     var cached = localStorage.getItem(cacheKey);
     if(cached){
       var cachedData = JSON.parse(cached);
-      if(cachedData && typeof cachedData === 'object'){
-        _cacheLoaded=true;
-        products=[]; ventes=[]; depenses=[]; gerants=[];
-        entrees=[]; appros=[]; repConfig=[]; dettes=[]; clients=[]; factureVentes=[];
-        applyData(cachedData);
-        var ind=document.getElementById('syncIndicator');
-        if(ind){ind.textContent='Cache local...';ind.style.color='#f59e0b';}
-      }
+      applyData(cachedData);
+      var ind=document.getElementById('syncIndicator');
+      if(ind){ind.textContent='Cache local...';ind.style.color='#f59e0b';}
     }
   } catch(e){}
-  // Sync retour réseau
-  window.addEventListener('online',function(){
-    var ind=document.getElementById('syncIndicator');
-    if(ind){ind.textContent='Retour en ligne...';ind.style.color='#f59e0b';}
-    try{
-      var _c2=localStorage.getItem(cacheKey);
-      if(_c2){
-        var _cd=JSON.parse(_c2);
-        var total=(_cd.products?_cd.products.length:0)+(_cd.ventes?_cd.ventes.length:0)+(_cd.gerants?_cd.gerants.length:0);
-        if(total>0){
-          db.ref('gdv_shops/'+shop.uid+'/data').set(_cd).then(function(){
-            if(ind){ind.textContent='✓ Sync rétabli';ind.style.color='#22c55e';
-              setTimeout(function(){if(ind){ind.textContent='Cloud actif';ind.style.color='#2563eb';}},2000);}
-          }).catch(function(){});
-        }
-      }
-    }catch(e){}
-  });
   // 2. Firebase sync en arriere-plan (met a jour si changements)
   var ref=db.ref('gdv_shops/'+shop.uid+'/data');
   window._agvDbListener=ref;
   ref.on('value',function(snap){
     var data=snap.val();
-    // PROTECTION CRITIQUE: si Firebase retourne null (règles ou réseau)
-    // NE PAS vider les arrays - utiliser le cache local
-    if(!data || typeof data !== 'object'){
-      // Essayer de récupérer depuis le cache local
-      try{
-        var _cached=localStorage.getItem(cacheKey);
-        if(_cached){
-          var _cd=JSON.parse(_cached);
-          if(_cd && typeof _cd === 'object' && Object.keys(_cd).length > 0){
-            applyData(_cd);
-            var ind2=document.getElementById('syncIndicator');
-            if(ind2){ind2.textContent='⚠ Cache local (Firebase vide)';ind2.style.color='#f59e0b';}
-            return; // Ne pas écraser avec des données nulles
-          }
-        }
-      }catch(e){}
-      var ind3=document.getElementById('syncIndicator');
-      if(ind3){ind3.textContent='⚠ Aucune donnée Firebase';ind3.style.color='#ef4444';}
-      return; // IMPORTANT: ne pas vider les arrays si pas de données
-    }
-    // Données valides reçues de Firebase
+    // Mettre a jour le cache local
     if(data) try{ localStorage.setItem(cacheKey, JSON.stringify(data)); }catch(e){}
-    // Réinitialiser les arrays SEULEMENT si données valides
+    // Reinitialiser les arrays
     products=[]; ventes=[]; depenses=[]; gerants=[];
     entrees=[]; appros=[]; repConfig=[]; dettes=[]; clients=[]; factureVentes=[];
     applyData(data);
     var ind=document.getElementById('syncIndicator');
-    if(ind){ind.textContent='✓ Sync OK';ind.style.color='#22c55e';
-      setTimeout(function(){if(ind){ind.textContent='Cloud actif';ind.style.color='#2563eb';}},1500);}
-  },function(error){
-    // Erreur d'accès Firebase (règles de sécurité, réseau...)
-    var ind4=document.getElementById('syncIndicator');
-    if(ind4){ind4.textContent='⚠ Accès Firebase refusé';ind4.style.color='#ef4444';}
-    // Récupérer depuis le cache local
-    try{
-      var _c=localStorage.getItem(cacheKey);
-      if(_c){
-        var _cd2=JSON.parse(_c);
-        if(_cd2 && typeof _cd2 === 'object'){
-          applyData(_cd2);
-          if(ind4){ind4.textContent='⚠ Cache local actif';ind4.style.color='#f59e0b';}
-        }
-      }
-    }catch(e){}
+    if(ind){ind.textContent='Sync OK ✓';ind.style.color='#22c55e';
+      setTimeout(function(){ind.textContent='Cloud actif';ind.style.color='#2563eb';},1500);}
   });
 
   // NE PAS ecraser currentRole ici - il est defini apres agvLaunchApp()
@@ -2011,7 +1918,7 @@ window.addEventListener('DOMContentLoaded',function(){
     </div>
     <nav class="nav-section">
       <div class="nav-label">Principal</div>
-      <button class="nav-item active" onclick="showView('dashboard')">
+      <button class="nav-item active" id="nav-dashboard" onclick="showView('dashboard')">
         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1" stroke-width="1.5"/><rect x="14" y="3" width="7" height="7" rx="1" stroke-width="1.5"/><rect x="3" y="14" width="7" height="7" rx="1" stroke-width="1.5"/><rect x="14" y="14" width="7" height="7" rx="1" stroke-width="1.5"/></svg>
         Tableau de bord
       </button>
@@ -3518,12 +3425,18 @@ function startApp(){
   if(s1) s1.textContent='Système de gestion — '+yr;
   const s2=document.getElementById('brand-year-sub');
   if(s2) s2.textContent='Gestion des stocks '+yr;
-  document.querySelectorAll('.view').forEach(el=>el.classList.remove('active'));
-  document.getElementById('view-dashboard').classList.add('active');
-  document.querySelectorAll('.nav-item').forEach(el=>el.classList.remove('active'));
-  document.querySelector('.nav-item[onclick="showView(\'dashboard\')"]')?.classList.add('active');
-  currentView='dashboard';
   applyRoleUI();
+  // Fondateur → tableau de bord | Gérant → ventes (pas accès au dashboard)
+  var _premierOnglet = (currentRole === 'fondateur') ? 'dashboard' : 'ventes';
+  document.querySelectorAll('.view').forEach(function(el){ el.classList.remove('active'); });
+  var _viewEl = document.getElementById('view-' + _premierOnglet);
+  if(_viewEl) _viewEl.classList.add('active');
+  document.querySelectorAll('.nav-item').forEach(function(el){
+    var oc = el.getAttribute('onclick');
+    if(oc && oc.indexOf(_premierOnglet) >= 0) el.classList.add('active');
+    else el.classList.remove('active');
+  });
+  currentView = _premierOnglet;
   // Si Firebase a déjà des données, les utiliser directement
   if (window._firebaseData) {
     appliquerDonneesFirebase(window._firebaseData);
@@ -3573,17 +3486,13 @@ function applyRoleUI(){
   document.getElementById('nav-gerants').style.display = isFondateur ? 'flex' : 'none';
   document.getElementById('nav-salaires').style.display = 'flex'; // tous voient
 
-  // Ventes & dépenses
-  if(!isFondateur){
-    // Cacher/montrer onglets selon permissions gerant
-    const canVentes = g && g.permVentes;
-    const canDep = g && g.permDep;
-    // Indiquer visuellement les onglets selon permissions
-    var navVentes = document.getElementById('nav-ventes');
-    if(navVentes) navVentes.style.opacity = '1';
-    var navDep = document.getElementById('nav-depenses');
-    if(navDep) navDep.style.opacity = '1';
-  }
+  // TABLEAU DE BORD: fondateur uniquement - gérant ne voit pas
+  var _navDash = document.getElementById('nav-dashboard');
+  if(_navDash) _navDash.style.display = isFondateur ? 'flex' : 'none';
+
+  // RÉPARTITION: fondateur uniquement
+  var _navRep = document.getElementById('nav-repartition');
+  if(_navRep) _navRep.style.display = isFondateur ? 'flex' : 'none';
 
   if(isFondateur){
     document.getElementById('sal-fondateur-only').style.display='block';
@@ -5267,23 +5176,6 @@ function jourInit(){
   if(jdd) jdd.value = today;
   const dl = document.getElementById('jv-product-list');
   if(dl) dl.innerHTML = products.map(p=>`<option value="${p.designation} (${p.reference})">`).join('');
-  var _jY=document.getElementById('jour-year-filter');
-  var _jM=document.getElementById('jour-month-filter');
-  var _cY=new Date().getFullYear();
-  var _cMk=getMonthKey(new Date());
-  if(_jY){
-    var _yrs=new Set(); for(var _y=_cY-2;_y<=_cY+1;_y++) _yrs.add(_y);
-    ventes.forEach(function(v){try{_yrs.add(new Date(v.ts||v.date).getFullYear());}catch(e){}});
-    _jY.innerHTML=[..._yrs].sort(function(a,b){return b-a;}).map(function(y){
-      return '<option value="'+y+'"'+(y===_cY?' selected':'')+'>'+y+'</option>';
-    }).join('');
-  }
-  if(_jM){
-    _syncMonthFilter('jour-year-filter','jour-month-filter',_cMk);
-    var _found=Array.from(_jM.options).some(function(o){return o.value===_cMk;});
-    if(!_found){var _op=document.createElement('option');_op.value=_cMk;_op.textContent=getMonthLabel(_cMk);_jM.insertBefore(_op,_jM.firstChild);}
-    _jM.value=_cMk;
-  }
   if(!_jourReady){
     _jourReady = true;
     const inp = document.getElementById('jv-product');
@@ -5343,8 +5235,7 @@ function saveJD(){
 }
 
 function renderJournalier(){
-  var _jmf=document.getElementById('jour-month-filter');
-  const mk=(_jmf&&_jmf.value)?_jmf.value:getMonthKey(new Date());
+  const mk=document.getElementById('jour-month-filter')?document.getElementById('jour-month-filter').value:getMonthKey(new Date());
   // Mettre à jour le filtre jour avec les jours disponibles du mois
   const allVM=ventes.filter(v=>getMonthKey(v.ts||v.date)===mk);
   const allEM=(typeof entrees!=='undefined'?entrees:[]).filter(e=>getMonthKey(e.date||e.ts)===mk);
@@ -5357,8 +5248,8 @@ function renderJournalier(){
     if(prev&&daysSet.has(prev))jourSel.value=prev;else jourSel.value='';
   }
   const dayFilter=jourSel?jourSel.value:'';
-  const vm=dayFilter?allVM.filter(v=>getDayKey(v.ts||v.date)===dayFilter):allVM;
-  const dm=dayFilter?allDM.filter(d=>(d.date||d.ts)===dayFilter):allDM;
+  const vm=dayFilter?allVM.filter(v=>getDayKey(v.ts)===dayFilter):allVM;
+  const dm=dayFilter?allDM.filter(d=>d.date===dayFilter):allDM;
   const totalCA=vm.reduce((s,v)=>s+v.total,0);
   const totalBenefBrut=vm.reduce((s,v)=>s+(v.benefice!=null?v.benefice:v.total),0);
   const totalDep=dm.reduce((s,d)=>s+d.montant,0);
