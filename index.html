@@ -26,105 +26,121 @@ body{font-family:'DM Sans',sans-serif;background:#060d24;color:#e2e8f0;min-heigh
 .fg2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .fl{display:block;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:#475569;margin-bottom:5px}
 #syncIndicator{position:fixed;top:10px;right:14px;z-index:9999;font-size:12px;font-weight:bold;background:rgba(255,255,255,0.92);padding:5px 12px;border-radius:20px;color:#2563eb;display:none}
-@media(max-width:480px){.fg2{grid-template-columns:1fr}}
+/* ===== RESPONSIVE AGV - Mobile / Tablette / Android / PC ===== */
 
+/* SMARTPHONE (max 480px) - Navigation en bas, layout vertical */
+@media(max-width:480px){
+  .fg2{grid-template-columns:1fr}
 
-  /* ===== RESPONSIVE ADAPTATIF - Mobile/Tablette/Android/PC ===== */
+  /* Layout principal vertical */
+  #agv-app > .app-layout,
+  .app-layout { flex-direction:column !important; }
 
-  /* Variables adaptatives */
-  :root {
-    --sidebar-w: 220px;
-    --topbar-h: 56px;
-    --nav-font: 13px;
-    --card-pad: 16px;
-    --touch-target: 44px; /* taille minimale des boutons tactiles */
+  /* Sidebar en bas comme une app mobile */
+  .sidebar {
+    position:fixed !important;
+    bottom:0; left:0; right:0; top:auto !important;
+    height:auto !important; width:100% !important;
+    flex-direction:row !important;
+    border-right:none !important;
+    border-top:1px solid var(--border) !important;
+    z-index:200; overflow-x:auto; overflow-y:hidden;
+    padding:0 !important; background:var(--surface);
+  }
+  .brand { display:none !important; }
+  .nav-section {
+    flex-direction:row !important;
+    padding:2px 4px !important;
+    overflow-x:auto; width:100%;
+    gap:0 !important;
+    -webkit-overflow-scrolling:touch;
+  }
+  .nav-label-section { display:none !important; }
+  .nav-item {
+    flex-direction:column !important;
+    gap:1px !important;
+    padding:6px 10px !important;
+    min-width:54px; font-size:9px !important;
+    border-radius:8px !important;
+    flex-shrink:0; text-align:center;
+    min-height:48px; justify-content:center;
+  }
+  .nav-icon { width:20px !important; height:20px !important; }
+  .nav-label { font-size:9px !important; line-height:1.2; }
+
+  /* Zone de contenu avec padding bas pour la nav */
+  .main { padding:12px 10px 80px 10px !important; }
+  .topbar { padding:10px 12px !important; flex-wrap:wrap; gap:6px; }
+  .topbar h1 { font-size:16px !important; }
+
+  /* Cartes */
+  .card { padding:12px !important; border-radius:10px !important; }
+  .stat { padding:10px !important; }
+  .stat-val { font-size:18px !important; }
+  .stats { grid-template-columns:1fr 1fr !important; gap:8px !important; }
+
+  /* Tableaux scrollables horizontalement */
+  .table-wrap { overflow-x:auto !important; -webkit-overflow-scrolling:touch !important; }
+  table { min-width:500px; }
+
+  /* Modales en bas de l'écran */
+  .overlay { align-items:flex-end !important; padding:0 !important; }
+  .modal {
+    width:100% !important; max-width:100% !important;
+    margin:0 !important; border-radius:16px 16px 0 0 !important;
+    max-height:88vh; overflow-y:auto;
   }
 
-  /* === SMARTPHONE (<=480px) === */
-  @media (max-width: 480px) {
-    :root { --card-pad: 12px; --nav-font: 12px; }
-    /* Layout: sidebar en bas comme une app mobile */
-    .app-layout { flex-direction: column !important; }
-    .sidebar {
-      position: fixed !important;
-      bottom: 0; left: 0; right: 0; top: auto !important;
-      height: auto !important;
-      width: 100% !important;
-      flex-direction: row !important;
-      border-right: none !important;
-      border-top: 1px solid var(--border) !important;
-      z-index: 100;
-      overflow-x: auto;
-      overflow-y: hidden;
-      padding: 0 !important;
-    }
-    .brand { display: none !important; }
-    .nav-section { flex-direction: row !important; padding: 0 !important; overflow-x: auto; width: 100%; }
-    .nav-label-section { display: none !important; }
-    .nav-item {
-      flex-direction: column !important;
-      gap: 2px !important;
-      padding: 6px 8px !important;
-      min-width: 56px;
-      font-size: 10px !important;
-      border-radius: 0 !important;
-      flex-shrink: 0;
-    }
-    .nav-icon { width: 20px !important; height: 20px !important; }
-    .nav-label { font-size: 9px !important; }
-    .main { padding: 12px 10px 80px 10px !important; }
-    .topbar { padding: 10px 12px !important; }
-    .topbar h1 { font-size: 16px !important; }
-    .card { padding: 12px !important; border-radius: 10px !important; }
-    .stat { padding: 10px !important; }
-    .stat-val { font-size: 18px !important; }
-    /* Tableaux scrollables */
-    .table-wrap { overflow-x: auto !important; -webkit-overflow-scrolling: touch !important; }
-    /* Formulaires pleine largeur */
-    .form-input { font-size: 16px !important; } /* évite le zoom iOS */
-    /* Modales */
-    .modal { width: 96% !important; max-width: 96% !important; margin: 4px !important; max-height: 92vh; overflow-y: auto; }
-    .overlay { align-items: flex-end !important; padding: 0 !important; }
-    /* Grilles */
-    .stats { grid-template-columns: 1fr 1fr !important; gap: 8px !important; }
-    .fg2, .fg3 { grid-template-columns: 1fr !important; }
-    /* Boutons tactiles */
-    .btn { min-height: var(--touch-target) !important; padding: 10px 16px !important; }
-    .btn-sm { min-height: 36px !important; }
-    #syncIndicator { font-size: 11px !important; padding: 4px 8px !important; }
+  /* Formulaires: éviter zoom iOS/Android */
+  input, select, textarea { font-size:16px !important; }
+  .form-input { font-size:16px !important; }
+
+  /* Boutons tactiles */
+  .btn { min-height:44px !important; padding:10px 16px !important; font-size:14px !important; }
+  .btn-sm { min-height:36px !important; font-size:12px !important; }
+
+  /* Indicateur sync */
+  #syncIndicator { font-size:11px !important; padding:4px 8px !important; top:6px !important; right:6px !important; }
+
+  /* Grilles formulaire */
+  .fg2, .fg3, [style*="grid-template-columns:1fr 1fr"] {
+    grid-template-columns:1fr !important;
   }
 
-  /* === TABLETTE (481px - 768px) === */
-  @media (min-width: 481px) and (max-width: 768px) {
-    :root { --sidebar-w: 180px; }
-    .sidebar { width: var(--sidebar-w) !important; }
-    .nav-item { padding: 8px 10px !important; font-size: 12px !important; }
-    .brand-title { font-size: 14px !important; }
-    .main { padding: 16px !important; }
-    .topbar h1 { font-size: 18px !important; }
-    .stats { grid-template-columns: repeat(2, 1fr) !important; }
-    .modal { width: 90% !important; }
-    .table-wrap { overflow-x: auto !important; }
-    .form-input { font-size: 15px !important; }
-    .btn { min-height: 40px !important; }
-  }
+  /* Vente rapide compacte */
+  #vr-product { font-size:15px !important; }
+}
 
-  /* === GRAND ÉCRAN tablette/PC (769px-1024px) === */
-  @media (min-width: 769px) and (max-width: 1024px) {
-    :root { --sidebar-w: 200px; }
-    .sidebar { width: var(--sidebar-w) !important; }
-    .stats { grid-template-columns: repeat(3, 1fr) !important; }
-  }
+/* TABLETTE (481px - 768px) */
+@media(min-width:481px) and (max-width:768px){
+  .sidebar { width:180px !important; }
+  .nav-item { padding:8px 10px !important; font-size:12px !important; }
+  .brand-title { font-size:13px !important; }
+  .main { padding:16px !important; }
+  .topbar h1 { font-size:18px !important; }
+  .stats { grid-template-columns:repeat(2,1fr) !important; }
+  .modal { width:90% !important; max-width:90% !important; }
+  .table-wrap { overflow-x:auto !important; -webkit-overflow-scrolling:touch !important; }
+  input, select, textarea { font-size:15px !important; }
+  .btn { min-height:40px !important; }
+}
 
-  /* Touch: agrandir les zones cliquables sur tous les appareils tactiles */
-  @media (hover: none) and (pointer: coarse) {
-    .nav-item { min-height: var(--touch-target); }
-    .btn { min-height: var(--touch-target); }
-    .btn-sm { min-height: 36px; }
-    select, input[type="text"], input[type="number"], input[type="date"],
-    input[type="password"], textarea { font-size: 16px !important; } /* évite zoom iOS/Android */
-    .jdelbtn { min-width: 32px; min-height: 32px; }
-  }
+/* TOUS LES APPAREILS TACTILES (Android, iOS, tablettes) */
+@media(hover:none) and (pointer:coarse){
+  .nav-item { min-height:44px; }
+  .btn { min-height:44px; }
+  .btn-sm { min-height:36px; }
+  input, select, textarea { font-size:16px !important; }
+  .jdelbtn { min-width:34px; min-height:34px; }
+  /* Supprimer les hover effects qui ne fonctionnent pas sur tactile */
+  .nav-item:hover { background:transparent !important; }
+}
+
+/* GRAND ÉCRAN (>1200px) - largeur sidebar optimale */
+@media(min-width:1200px){
+  .sidebar { width:240px !important; }
+  .stats { grid-template-columns:repeat(4,1fr) !important; }
+}
 
   *{margin:0;padding:0;box-sizing:border-box}
   :root{
@@ -480,7 +496,7 @@ body{font-family:'DM Sans',sans-serif;background:#060d24;color:#e2e8f0;min-heigh
 </style>
 </head>
 <body>
-<div id="syncIndicator" onclick="if(typeof agvForcerSync==='function')agvForcerSync()" title="Cliquer pour synchroniser" style="cursor:pointer">🟢 En ligne</div>
+<div id="syncIndicator">Cloud actif</div>
 
 <!-- ==================== AGV SCRIPT ==================== -->
 <script>
@@ -518,14 +534,6 @@ function landingGoShop(){
   // Vérifier le cache d'abord
   var cachedShop=null;
   try{ cachedShop=JSON.parse(localStorage.getItem('agv_shop_'+code)||'null'); }catch(e){}
-  // MODE HORS LIGNE: si pas d'internet et cache dispo → connexion directe
-  if(!navigator.onLine && cachedShop && !cachedShop.blocked){
-    if(btn){btn.textContent='Accéder →';btn.disabled=false;}
-    window._lastShopCode=code; window._shopLoginData=cachedShop;
-    agvShow('agv-shop-login'); agvLoadShopLogin(code);
-    showToast('📴 Mode hors ligne - données locales');
-    return;
-  }
   if(cachedShop && !cachedShop.blocked){
     // Vérifier expiration même depuis le cache
     if(cachedShop.dateExpiration && cachedShop.licenceStatut!=='actif'){
@@ -888,63 +896,16 @@ function agvLaunchApp(shop){
   var appEl=document.getElementById('app'); if(appEl)appEl.classList.add('visible');
 
   // Firebase sync pour cette boutique
-  // ===== SYSTÈME OFFLINE-FIRST =====
-  var _cacheKey='agv_cache_'+shop.uid;
-  var _pendingSync=[];
-  var _isOnline=navigator.onLine;
-  var _lastSync=null;
-
-  function _buildPayload(){
-    return {products:products,ventes:ventes,depenses:depenses,gerants:gerants,
-      entrees:entrees,appros:appros,repConfig:repConfig,
-      dettes:dettes,clients:clients,factureVentes:factureVentes};
-  }
-  function _saveLocal(payload){
-    try{ localStorage.setItem(_cacheKey,JSON.stringify(payload)); }catch(e){}
-  }
-  function _setSyncUI(status){
-    var ind=document.getElementById('syncIndicator');
-    if(!ind) return;
-    var map={
-      'online':  {t:'🟢 En ligne',  c:'#22c55e'},
-      'syncing': {t:'🔄 Sync...',   c:'#3b82f6'},
-      'offline': {t:'🔴 Hors ligne',c:'#ef4444'},
-      'saved':   {t:'✅ Sauvegardé',c:'#22c55e'},
-      'cache':   {t:'🟡 Cache local',c:'#f59e0b'},
-    };
-    var s=map[status]||map['online'];
-    ind.textContent=s.t; ind.style.color=s.c;
-    if(status==='saved'){
-      _lastSync=Date.now();
-      setTimeout(function(){_setSyncUI(_isOnline?'online':'offline');},2500);
-    }
-  }
-  function _pushFirebase(payload){
-    if(!payload){payload=_buildPayload();}
-    _setSyncUI('syncing');
-    db.ref('gdv_shops/'+shop.uid+'/data').set(payload).then(function(){
-      _pendingSync=[];_lastSync=Date.now();_setSyncUI('saved');
-    }).catch(function(){
-      _setSyncUI('error'||'offline');
-    });
-  }
-
   window.sauvegarderFirebase=function(){
-    var payload=_buildPayload();
-    _saveLocal(payload); // TOUJOURS local en premier
-    if(_isOnline){
-      _pushFirebase(payload);
-    } else {
-      _pendingSync.push({ts:Date.now(),data:payload});
-      _setSyncUI('offline');
-      showToast('💾 Sauvegardé localement');
-    }
-  };
-
-  window.agvForcerSync=function(){
-    if(!_isOnline){showToast('Pas de connexion');return;}
-    _pushFirebase(_buildPayload());
-    showToast('🔄 Synchronisation forcée...');
+    db.ref('gdv_shops/'+shop.uid+'/data').set({
+      products:products,ventes:ventes,depenses:depenses,gerants:gerants,
+      entrees:entrees,appros:appros,repConfig:repConfig,
+      dettes:dettes,clients:clients,factureVentes:factureVentes
+    }).then(function(){
+      var ind=document.getElementById('syncIndicator');
+      if(ind){ind.textContent='Sauvegarde ✓';ind.style.color='#22c55e';
+        setTimeout(function(){ind.textContent='Cloud actif';ind.style.color='#2563eb';},2000);}
+    });
   };
 
   // Cache localStorage pour affichage INSTANTANE
@@ -979,63 +940,30 @@ function agvLaunchApp(shop){
     if(_nb) _nb.textContent=products.length;
     setTimeout(function(){if(typeof refreshVentesHistory==='function')refreshVentesHistory();},100);
   }
-  // 1. Charger cache LOCAL immédiatement (fonctionne sans internet)
-  try{
-    var _cached=localStorage.getItem(_cacheKey);
-    if(_cached){
-      var _cd=JSON.parse(_cached);
-      if(_cd&&typeof _cd==='object'&&Object.keys(_cd).length>0){
-        applyData(_cd); _setSyncUI('cache');
-      }
-    } else { _setSyncUI('offline'); }
-  }catch(e){ _setSyncUI('offline'); }
-  // 2. Firebase listener - sync en arrière-plan
+  // 1. Charger le cache IMMEDIATEMENT (0ms d'attente)
+  try {
+    var cached = localStorage.getItem(cacheKey);
+    if(cached){
+      var cachedData = JSON.parse(cached);
+      applyData(cachedData);
+      var ind=document.getElementById('syncIndicator');
+      if(ind){ind.textContent='Cache local...';ind.style.color='#f59e0b';}
+    }
+  } catch(e){}
+  // 2. Firebase sync en arriere-plan (met a jour si changements)
   var ref=db.ref('gdv_shops/'+shop.uid+'/data');
   window._agvDbListener=ref;
-
   ref.on('value',function(snap){
     var data=snap.val();
-    // PROTECTION: si null → ne pas écraser les données
-    if(!data||typeof data!=='object'){
-      _setSyncUI(_isOnline?'online':'offline'); return;
-    }
-    _saveLocal(data); _lastSync=Date.now();
-    products=[];ventes=[];depenses=[];gerants=[];
-    entrees=[];appros=[];repConfig=[];dettes=[];clients=[];factureVentes=[];
+    // Mettre a jour le cache local
+    if(data) try{ localStorage.setItem(cacheKey, JSON.stringify(data)); }catch(e){}
+    // Reinitialiser les arrays
+    products=[]; ventes=[]; depenses=[]; gerants=[];
+    entrees=[]; appros=[]; repConfig=[]; dettes=[]; clients=[]; factureVentes=[];
     applyData(data);
-    _setSyncUI('saved');
-  },function(){
-    _setSyncUI('offline');
-  });
-
-  // 3. Détection réseau Firebase + navigateur
-  firebase.database().ref('.info/connected').on('value',function(snap){
-    _isOnline=!!snap.val();
-    if(_isOnline){
-      _setSyncUI('syncing');
-      if(_pendingSync.length>0){
-        var latest=_pendingSync[_pendingSync.length-1];
-        _pushFirebase(latest.data);
-      } else {
-        var _p=_buildPayload();
-        var _tot=products.length+ventes.length+gerants.length;
-        if(_tot>0) _pushFirebase(_p);
-      }
-    } else {
-      _setSyncUI('offline');
-    }
-  });
-  window.addEventListener('online',function(){
-    _isOnline=true;
-    showToast('🌐 Connexion rétablie - sync en cours...');
-    var payload=_buildPayload();
-    if(_pendingSync.length>0) _pushFirebase(_pendingSync[_pendingSync.length-1].data);
-    else if(products.length||ventes.length||gerants.length) _pushFirebase(payload);
-  });
-  window.addEventListener('offline',function(){
-    _isOnline=false;
-    _setSyncUI('offline');
-    showToast('📴 Hors ligne - données locales actives');
+    var ind=document.getElementById('syncIndicator');
+    if(ind){ind.textContent='Sync OK ✓';ind.style.color='#22c55e';
+      setTimeout(function(){ind.textContent='Cloud actif';ind.style.color='#2563eb';},1500);}
   });
 
   // NE PAS ecraser currentRole ici - il est defini apres agvLaunchApp()
@@ -1494,46 +1422,6 @@ function agvChangeDevPwd(){
   };
 }
 function agvDevOnEnter(e){if(e.key==='Enter')agvDevVerify();}
-// ===== LIENS DIRECTS BOUTIQUES =====
-function agvDevGetBaseUrl(){
-  return window.location.origin + window.location.pathname;
-}
-function agvDevCopyLink(code){
-  var url = agvDevGetBaseUrl() + '?boutique=' + code;
-  if(navigator.clipboard){
-    navigator.clipboard.writeText(url).then(function(){showToast('🔗 Lien copié: '+url);});
-  } else {
-    var ta=document.createElement('textarea'); ta.value=url;
-    document.body.appendChild(ta); ta.select(); document.execCommand('copy');
-    document.body.removeChild(ta); showToast('Lien copié!');
-  }
-}
-function agvDevExportLinks(){
-  // Chercher tous les items visibles
-  var items=document.querySelectorAll('.dev-shop-item');
-  if(!items.length){showToast('Aucune boutique chargée');return;}
-  var baseUrl=agvDevGetBaseUrl();
-  var lines=['=== LIENS DIRECTS AGV ===',''];
-  items.forEach(function(el){
-    var nom=el.querySelector('[style*="font-weight:700;color:#e2e8f0"]');
-    var code=el.querySelector('[style*="letter-spacing:.1em"]');
-    if(nom&&code){
-      var c=code.textContent.trim();
-      lines.push('Boutique: '+(nom.textContent.trim()));
-      lines.push('Lien: '+baseUrl+'?boutique='+c);
-      lines.push('Code: '+c);
-      lines.push('---');
-    }
-  });
-  var txt=lines.join('\n');
-  if(navigator.clipboard){
-    navigator.clipboard.writeText(txt).then(function(){showToast('✅ '+items.length+' liens copiés!');});
-  } else {
-    var ta=document.createElement('textarea');ta.value=txt;
-    document.body.appendChild(ta);ta.select();document.execCommand('copy');
-    document.body.removeChild(ta);showToast('Liens copiés!');
-  }
-}
 function agvDevVerify(){
   var pwd=document.getElementById('dev-pwd');
   var msg=document.getElementById('dev-msg');
@@ -1564,7 +1452,6 @@ function agvRenderDevShops(shops){
     var h='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">'+
         '<h3 style="color:#fff;font-size:15px;font-weight:700">Toutes les boutiques ('+shops.length+')</h3>'+
         '<div style="display:flex;gap:6px">'+
-        '<button onclick="agvDevExportLinks()" style="padding:5px 10px;border:1px solid rgba(34,197,94,0.4);border-radius:6px;background:rgba(34,197,94,0.08);color:#4ade80;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit">🔗 Liens boutiques</button>'+
         '<button onclick="agvInitLicences()" style="padding:5px 10px;border:1px solid rgba(249,115,22,0.4);border-radius:6px;background:rgba(249,115,22,0.08);color:#fb923c;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit">Init licences</button>'+
         '<button onclick="agvChangeDevPwd()" style="padding:5px 10px;border:1px solid rgba(37,99,235,0.3);border-radius:6px;background:transparent;color:#60a5fa;font-size:11px;cursor:pointer;font-family:inherit">Changer mdp</button>'+
         '<button onclick="agvCloseDevModal()" style="background:none;border:none;color:#64748b;font-size:18px;cursor:pointer">&#x2715;</button>'+
@@ -1601,7 +1488,6 @@ function agvRenderDevShops(shops){
           '</div>'+
           '<div style="display:flex;gap:4px;flex-wrap:wrap">'+
           '<button data-code="'+s.codeAcces+'" onclick="agvDevCopy(this)" style="padding:5px 8px;border:none;border-radius:6px;background:#2563eb;color:#fff;font-size:10px;font-weight:700;cursor:pointer;font-family:inherit">Copier code</button>'+
-          '<button onclick="agvDevCopyLink(\'' + s.codeAcces + '\')" style="padding:5px 8px;border:none;border-radius:6px;background:#16a34a;color:#fff;font-size:10px;font-weight:700;cursor:pointer;font-family:inherit">🔗 Lien direct</button>'+
           '<button data-code="'+fondCode+'" onclick="agvDevCopy(this)" style="padding:5px 8px;border:none;border-radius:6px;background:#d97706;color:#fff;font-size:10px;font-weight:700;cursor:pointer;font-family:inherit">Copier fondateur</button>'+
           '</div>'+
           '<button data-uid="'+s.uid+'" data-blocked="'+(isBlocked?'1':'0')+'" onclick="agvToggleBlock(this)" style="padding:5px 10px;border:none;border-radius:6px;background:'+toggleBg+';color:#fff;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit">'+toggleLabel+'</button>'+
@@ -3569,29 +3455,6 @@ window.addEventListener('DOMContentLoaded',function(){
 <div class="toast" id="toast"></div>
 
 <script>
-// ==================== LIEN DIRECT BOUTIQUE ====================
-(function(){
-  try{
-    var _params=new URLSearchParams(window.location.search);
-    var _bcode=_params.get('boutique');
-    if(_bcode && _bcode.trim()){
-      // Attendre que Firebase soit prêt puis ouvrir directement
-      var _attempts=0;
-      var _waitAndOpen=setInterval(function(){
-        _attempts++;
-        if(typeof agvLoadShopLogin==='function'&&typeof agvShow==='function'){
-          clearInterval(_waitAndOpen);
-          var _code=_bcode.trim().toUpperCase();
-          window._lastShopCode=_code;
-          agvShow('agv-shop-login');
-          agvLoadShopLogin(_code);
-        }
-        if(_attempts>20) clearInterval(_waitAndOpen);
-      },200);
-    }
-  }catch(e){}
-})();
-
 // ==================== ANNÉE DYNAMIQUE ====================
 (function(){
   const yr = new Date().getFullYear();
@@ -3731,29 +3594,26 @@ function applyRoleUI(){
   document.getElementById('btn-nouveau-produit').style.display = 'flex';
   document.getElementById('btn-add-prod').style.display = 'block';
 
-  // Gérants uniquement
   document.getElementById('nav-gerants').style.display = isFondateur ? 'flex' : 'none';
   document.getElementById('nav-salaires').style.display = 'flex';
-
-  // ===== ACCÈS HIÉRARCHIQUE =====
-  // DASHBOARD: fondateur uniquement - gérant INTERDIT
+  // Dashboard: fondateur uniquement
   var _nd=document.getElementById('nav-dashboard');
   if(_nd) _nd.style.display = isFondateur ? 'flex' : 'none';
-
-  // RÉPARTITION DES FONDS: fondateur uniquement - gérant INTERDIT
+  // Répartition: fondateur uniquement
   var _nr=document.getElementById('nav-repartition');
   if(_nr) _nr.style.display = isFondateur ? 'flex' : 'none';
-
-  // PARAMÈTRES: fondateur uniquement
-  var _np=document.getElementById('nav-parametres');
-  if(_np) _np.style.display = isFondateur ? 'flex' : 'none';
-
-  // GÉRANT: accès à ventes, produits, entrées, dépenses, dettes, salaires uniquement
-  if(!isFondateur){
-    // Bloquer accès direct via URL si gérant tente d'accéder au dashboard
-    if(currentView==='dashboard'||currentView==='repartition'){
-      if(typeof showView==='function') showView('ventes');
-    }
+  // Inventaire: fondateur uniquement
+  var _ni=document.getElementById('nav-inventaire');
+  if(_ni) _ni.style.display = isFondateur ? 'flex' : 'none';
+  // Produits: VISIBLE pour tous (gérant peut ajouter des produits)
+  var _np2=document.getElementById('nav-produits');
+  if(_np2) _np2.style.display = 'flex';
+  // Paramètres: fondateur uniquement
+  var _npar=document.getElementById('nav-parametres');
+  if(_npar) _npar.style.display = isFondateur ? 'flex' : 'none';
+  // Rediriger gérant si sur vue interdite
+  if(!isFondateur && (currentView==='dashboard'||currentView==='repartition'||currentView==='inventaire')){
+    if(typeof showView==='function') setTimeout(function(){showView('ventes');},0);
   }
 
   if(isFondateur){
@@ -4178,10 +4038,8 @@ function renderAppro(){
 
 function showView(v){
   if(v==='gerants' && currentRole!=='fondateur'){showToast('Acces reserve au Fondateur');return;}
-  // SÉCURITÉ HIÉRARCHIQUE: gérant ne peut PAS voir le dashboard ni la répartition
-  if(currentRole!=='fondateur' && (v==='dashboard'||v==='repartition')){
-    showToast('Acces reserve au Fondateur');
-    return;
+  if(currentRole!=='fondateur' && (v==='dashboard'||v==='repartition'||v==='inventaire')){
+    showToast('Acces reserve au Fondateur'); return;
   }
   // Verifier permissions gerant
   if(currentRole==='gerant'){
