@@ -2586,6 +2586,34 @@ window.addEventListener('DOMContentLoaded',function(){
         <div id="param-msg" style="display:none;padding:10px;border-radius:8px;font-size:13px;margin-bottom:12px"></div>
         <button class="btn btn-primary" style="width:100%" onclick="saveParametresBoutique()">💾 Enregistrer les modifications</button>
       </div>
+
+      <!-- SECTION FONDATEUR -->
+      <div class="card" style="max-width:600px;margin:16px auto 0">
+        <h3 style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:20px">👑 Informations du Fondateur</h3>
+
+        <!-- Photo fondateur -->
+        <div style="text-align:center;margin-bottom:20px">
+          <div id="fond-photo-preview" onclick="document.getElementById('fond-photo-file').click()" style="width:72px;height:72px;border-radius:50%;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:26px;font-weight:700;margin:0 auto 8px;cursor:pointer;overflow:hidden;border:3px solid var(--accent)">👑</div>
+          <label for="fond-photo-file" style="cursor:pointer;font-size:12px;color:var(--accent);font-weight:600">📷 Changer la photo</label>
+          <input type="file" id="fond-photo-file" accept="image/*" style="display:none" onchange="fondPreviewPhoto(this)">
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Nom du Fondateur</label>
+          <input class="form-input" id="fond-nom" placeholder="Ex: Mamadou Diallo">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Code d'accès Fondateur</label>
+          <input class="form-input" id="fond-code" placeholder="Ex: MON-CODE-SECRET" style="font-family:monospace;letter-spacing:.1em">
+          <div style="font-size:11px;color:var(--text3);margin-top:4px">⚠️ Changez ce code avec prudence — il sert à vous connecter</div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">WhatsApp (numéro avec indicatif)</label>
+          <input class="form-input" id="fond-whatsapp" placeholder="Ex: 224620000000" type="tel">
+        </div>
+        <div id="fond-msg" style="display:none;padding:10px;border-radius:8px;font-size:13px;margin-bottom:12px"></div>
+        <button class="btn btn-primary" style="width:100%" onclick="saveFondateurInfo()">💾 Enregistrer les infos Fondateur</button>
+      </div>
     </div>
 
 
@@ -3677,12 +3705,11 @@ function renderParametresBoutique(){
   if(adrEl) adrEl.value = shop.adresse||'';
   if(telEl) telEl.value = shop.tel||'';
   if(vilEl) vilEl.value = shop.ville||'';
-  // Logo
+  // Logo boutique
   var imgEl = document.getElementById('param-logo-img');
   var phEl  = document.getElementById('param-logo-ph');
   if(shop.logo && imgEl){
-    imgEl.src = shop.logo;
-    imgEl.style.display = 'block';
+    imgEl.src = shop.logo; imgEl.style.display = 'block';
     if(phEl) phEl.style.display = 'none';
   } else {
     if(imgEl) imgEl.style.display = 'none';
@@ -3690,6 +3717,91 @@ function renderParametresBoutique(){
   }
   var msg = document.getElementById('param-msg');
   if(msg) msg.style.display = 'none';
+
+  // Remplir section Fondateur
+  var fondateur = gerants.find(function(g){ return g.id===1 || g.role==='fondateur' || g.type==='fondateur'; })
+    || gerants[0];
+  var fondNomEl = document.getElementById('fond-nom');
+  var fondCodeEl = document.getElementById('fond-code');
+  var fondWaEl   = document.getElementById('fond-whatsapp');
+  if(fondNomEl)  fondNomEl.value  = fondateur?(fondateur.nom||''):'';
+  if(fondCodeEl) fondCodeEl.value = shop.codeFondateur||'';
+  if(fondWaEl)   fondWaEl.value   = fondateur?(fondateur.whatsapp||''):'';
+  // Photo fondateur
+  var prev = document.getElementById('fond-photo-preview');
+  if(prev){
+    if(fondateur&&fondateur.photo){
+      prev.innerHTML = '<img src="'+fondateur.photo+'" style="width:100%;height:100%;object-fit:cover">';
+    } else {
+      prev.innerHTML = fondateur&&fondateur.nom ? fondateur.nom.charAt(0).toUpperCase() : '👑';
+    }
+  }
+  var fmsg = document.getElementById('fond-msg');
+  if(fmsg) fmsg.style.display = 'none';
+  window._fondPhotoData = fondateur&&fondateur.photo ? fondateur.photo : null;
+}
+
+function fondPreviewPhoto(input){
+  var file = input.files[0]; if(!file) return;
+  var reader = new FileReader();
+  reader.onload = function(e){
+    window._fondPhotoData = e.target.result;
+    var prev = document.getElementById('fond-photo-preview');
+    if(prev) prev.innerHTML = '<img src="'+e.target.result+'" style="width:100%;height:100%;object-fit:cover">';
+  };
+  reader.readAsDataURL(file);
+}
+
+function saveFondateurInfo(){
+  if(currentRole!=='fondateur'){ showToast('Réservé au Fondateur'); return; }
+  var shop = window._currentShop;
+  if(!shop){ showToast('Aucune boutique connectée'); return; }
+  var fmsg = document.getElementById('fond-msg');
+  function sm(t,ok){
+    if(!fmsg) return;
+    fmsg.style.display='block';
+    fmsg.style.background=ok?'rgba(34,197,94,0.1)':'rgba(239,68,68,0.1)';
+    fmsg.style.color=ok?'#22c55e':'#ef4444';
+    fmsg.textContent=t;
+  }
+  var nom   = (document.getElementById('fond-nom')||{}).value.trim();
+  var code  = (document.getElementById('fond-code')||{}).value.trim().toUpperCase();
+  var wa    = (document.getElementById('fond-whatsapp')||{}).value.trim();
+  if(!nom){ sm('Le nom est obligatoire',false); return; }
+  if(!code||code.length<3){ sm('Le code doit faire au moins 3 caractères',false); return; }
+
+  // Mettre à jour le gérant fondateur (id=1)
+  var idxF = gerants.findIndex(function(g){ return g.id===1; });
+  if(idxF>=0){
+    gerants[idxF].nom       = nom;
+    gerants[idxF].whatsapp  = wa;
+    if(window._fondPhotoData) gerants[idxF].photo = window._fondPhotoData;
+  }
+
+  // Mettre à jour le code fondateur dans Firebase /info
+  var uid = shop.uid;
+  db.ref('gdv_shops/'+uid+'/info/codeFondateur').set(code);
+  window._currentShop.codeFondateur = code;
+  window.FONDATEUR_CODE = code;
+
+  // Mettre à jour photo fondateur si changée
+  if(window._fondPhotoData){
+    db.ref('gdv_shops/'+uid+'/info/fondateurPhoto').set(window._fondPhotoData);
+    window._currentShop.fondateurPhoto = window._fondPhotoData;
+  }
+
+  // Sauvegarder nom+whatsapp fondateur dans les données
+  saveAll();
+
+  // Mettre à jour le cache localStorage
+  try{
+    localStorage.setItem('agv_shop_'+uid, JSON.stringify(window._currentShop));
+    if(shop.codeAcces) localStorage.setItem('agv_shop_'+shop.codeAcces, JSON.stringify(window._currentShop));
+    if(shop.code_acces) localStorage.setItem('agv_shop_'+shop.code_acces, JSON.stringify(window._currentShop));
+  }catch(e){}
+
+  sm('✅ Informations Fondateur enregistrées!', true);
+  showToast('✅ Profil Fondateur mis à jour!');
 }
 
 function paramPreviewLogo(input){
@@ -3743,15 +3855,22 @@ function saveParametresBoutique(){
       db.ref('gdv_shops/'+uid+'/info/'+k).set(updates[k]);
     });
 
-    // Mettre à jour le cache localStorage
-    try{ localStorage.setItem('agv_shop_'+uid, JSON.stringify(window._currentShop)); }catch(e){}
+    // Mettre à jour le cache localStorage (par uid ET par code)
+    try{
+      localStorage.setItem('agv_shop_'+uid, JSON.stringify(window._currentShop));
+      if(shop.codeAcces) localStorage.setItem('agv_shop_'+shop.codeAcces, JSON.stringify(window._currentShop));
+      if(shop.code_acces) localStorage.setItem('agv_shop_'+shop.code_acces, JSON.stringify(window._currentShop));
+    }catch(e){}
 
-    // Mettre à jour le brand header
-    updateBrand();
+    // Mettre à jour le brand header via la fonction exposée
+    if(typeof window._updateBrandFn === 'function') window._updateBrandFn();
+
+    // Mettre à jour le logo sidebar si présent
     if(logoData){
-      var logoEls = document.querySelectorAll('.brand-logo');
-      logoEls.forEach(function(el){ el.src = logoData; });
+      var logoSidebar = document.getElementById('agv-sidebar-logo');
+      if(logoSidebar){ logoSidebar.src = logoData; logoSidebar.style.display='block'; }
     }
+
     sm('✅ Paramètres enregistrés avec succès!', true);
     showToast('✅ Boutique mise à jour!');
   }
