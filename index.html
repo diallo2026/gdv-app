@@ -836,56 +836,57 @@ function agvLogin(){
   if(code==='AGVADMIN2026'){agvLoadAdmin();return;}
   var btn=document.getElementById('l-btn');
   if(btn){btn.disabled=true;btn.textContent='Connexion...';}
-  // Recherche rapide via index code->uid
+
+  // ─── ÉTAPE 1 : cache local IMMÉDIAT (0ms, avant tout Firebase) ───
+  var cachedDirect = null;
+  try{ cachedDirect = JSON.parse(localStorage.getItem('agv_shop_'+code)||'null'); }catch(e){}
+  if(cachedDirect && !cachedDirect.blocked){
+    window._currentShop = cachedDirect;
+    if(btn){btn.disabled=false;btn.textContent='Se connecter';}
+    agvLaunchApp(cachedDirect);
+    // Sync silencieuse en arrière-plan
+    var _uid0 = cachedDirect.uid;
+    if(_uid0) db.ref('gdv_shops/'+_uid0+'/info').once('value',function(snap){
+      var f=snap.val(); if(!f||f.blocked) return;
+      try{ localStorage.setItem('agv_shop_'+code,JSON.stringify(f)); }catch(e){}
+      Object.assign(window._currentShop,f);
+      if(typeof window._updateBrandFn==='function') window._updateBrandFn();
+    });
+    return;
+  }
+
+  // ─── ÉTAPE 2 : index Firebase code→uid (première connexion) ───
   db.ref('gdv_codes/'+code).once('value',function(snapCode){
     var uid = snapCode.val();
     if(!uid){
-      // Pas d'index - chercher dans le cache ou Firebase complet
-      var cached = null;
-      try{ cached=JSON.parse(localStorage.getItem('agv_shop_'+code)||'null'); }catch(e){}
-      if(cached){
-        if(cached.blocked){agvMsg('Accès suspendu.',false);if(btn){btn.disabled=false;btn.textContent='Se connecter';}return;}
-        window._currentShop=cached;
-        if(btn){btn.disabled=false;btn.textContent='Se connecter';}
-        agvLaunchApp(cached);
-        return;
-      }
       agvMsg('Code incorrect. Vérifiez votre code.',false);
       if(btn){btn.disabled=false;btn.textContent='Se connecter';}
       return;
     }
-    // 1. Chercher dans le cache local IMMÉDIATEMENT (0ms)
+    // Cache par uid
     var cachedShop = null;
-    try{
-      cachedShop = JSON.parse(localStorage.getItem('agv_shop_'+uid) || localStorage.getItem('agv_shop_'+code) || 'null');
-    }catch(e){}
+    try{ cachedShop = JSON.parse(localStorage.getItem('agv_shop_'+uid)||'null'); }catch(e){}
     if(cachedShop && !cachedShop.blocked){
       window._currentShop = cachedShop;
+      try{ localStorage.setItem('agv_shop_'+code, JSON.stringify(cachedShop)); }catch(e){}
       if(btn){btn.disabled=false;btn.textContent='Se connecter';}
       agvLaunchApp(cachedShop);
-      // Rafraîchir les infos en arrière-plan (non bloquant)
       db.ref('gdv_shops/'+uid+'/info').once('value',function(snap){
-        var found=snap.val(); if(!found) return;
-        if(found.blocked){return;}
-        try{
-          localStorage.setItem('agv_shop_'+uid, JSON.stringify(found));
-          localStorage.setItem('agv_shop_'+code, JSON.stringify(found));
-        }catch(e){}
-        Object.assign(window._currentShop, found);
+        var f=snap.val(); if(!f||f.blocked) return;
+        try{ localStorage.setItem('agv_shop_'+uid,JSON.stringify(f)); localStorage.setItem('agv_shop_'+code,JSON.stringify(f)); }catch(e){}
+        Object.assign(window._currentShop,f);
         if(typeof window._updateBrandFn==='function') window._updateBrandFn();
       });
       return;
     }
-    // 2. Pas de cache : lire Firebase (première connexion)
+    // Aucun cache : lire Firebase complet
     db.ref('gdv_shops/'+uid+'/info').once('value',function(snap){
       var found=snap.val();
       if(!found){agvMsg('Boutique introuvable.',false);if(btn){btn.disabled=false;btn.textContent='Se connecter';}return;}
       if(found.blocked){agvMsg('⛔ Accès suspendu. Contactez le concepteur.',false);if(btn){btn.disabled=false;btn.textContent='Se connecter';}return;}
-      try{
-        localStorage.setItem('agv_shop_'+uid, JSON.stringify(found));
-        localStorage.setItem('agv_shop_'+code, JSON.stringify(found));
-      }catch(e){}
+      try{ localStorage.setItem('agv_shop_'+uid,JSON.stringify(found)); localStorage.setItem('agv_shop_'+code,JSON.stringify(found)); }catch(e){}
       window._currentShop=found;
+      if(btn){btn.disabled=false;btn.textContent='Se connecter';}
       agvLaunchApp(found);
     });
   });
@@ -2147,14 +2148,7 @@ window.addEventListener('DOMContentLoaded',function(){
         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" stroke-width="1.5" stroke-linecap="round"/></svg>
         Ventes avec Facture
       </button>
-      <button class="nav-item" id="nav-dettes" onclick="showView('dettes')">
-        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" stroke-width="1.5"/></svg>
-        Dettes
-      </button>
-      <button class="nav-item" id="nav-factures" onclick="showView('factures')">
-        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" stroke-width="1.5"/></svg>
-        Factures Clients
-      </button>
+      
       <hr class="nav-sep">
       <div class="nav-label">Gestion</div>
       <button class="nav-item" id="nav-salaires" onclick="showView('salaires')">
@@ -3986,6 +3980,9 @@ function applyRoleUI(){
   // Paramètres: fondateur uniquement
   var _npar=document.getElementById('nav-parametres');
   if(_npar) _npar.style.display = isFondateur ? 'flex' : 'none';
+  // Dettes: visible pour tous (gérant ET fondateur)
+  var _ndet=document.getElementById('nav-dettes');
+  if(_ndet) _ndet.style.display = 'flex';
   // Rediriger gérant si sur vue interdite
   if(!isFondateur && (currentView==='dashboard'||currentView==='repartition'||currentView==='inventaire')){
     if(typeof showView==='function') setTimeout(function(){showView('ventes');},0);
@@ -5114,7 +5111,21 @@ function renderSalaires(){
           +'<div style="flex:1;min-width:120px;padding:10px;background:var(--bg2);border-radius:8px;text-align:center"><div style="font-size:11px;color:var(--text3)">CA</div><div style="font-weight:700;color:var(--blue)">'+fmtGNF(_ca)+'</div></div>'
           +'<div style="flex:1;min-width:120px;padding:10px;background:var(--bg2);border-radius:8px;text-align:center"><div style="font-size:11px;color:var(--text3)">Benefice brut</div><div style="font-weight:700">'+fmtGNF(_ben)+'</div></div>'
           +'<div style="flex:1;min-width:120px;padding:10px;background:var(--bg2);border-radius:8px;text-align:center"><div style="font-size:11px;color:var(--text3)">Depenses</div><div style="font-weight:700;color:var(--red)">-'+fmtGNF(_dep)+'</div></div>'
-          +'<div style="flex:1;min-width:140px;padding:10px;background:var(--accent-light);border-radius:8px;text-align:center;border:1px solid var(--accent)"><div style="font-size:11px;color:var(--accent)">Votre part ('+g.pct+'%)</div><div style="font-weight:700;font-size:16px;color:var(--accent)">'+fmtGNF(_part)+'</div></div>'
+          +(function(){
+            var _dsolG=getDettesSolde();
+            var _dG=_dsolG.filter(function(d){return d.type==='gerant'&&d.personneId===g.id&&d.solde>0;});
+            var _dedG=_dG.reduce(function(s,d){return s+(d.solde||0);},0);
+            _dedG=Math.min(_part,_dedG);
+            var _netG=_part-_dedG;
+            return '<div style="flex:1;min-width:140px;padding:10px;background:var(--accent-light);border-radius:8px;text-align:center;border:1px solid var(--accent)">'
+              +'<div style="font-size:11px;color:var(--accent)">Votre part ('+g.pct+'%)</div>'
+              +(_dedG>0
+                ? '<div style="font-size:12px;color:var(--text3);text-decoration:line-through">'+fmtGNF(_part)+'</div>'
+                  +'<div style="font-weight:700;font-size:16px;color:var(--accent)">'+fmtGNF(_netG)+'</div>'
+                  +'<div style="font-size:10px;color:var(--red)">💳 -'+fmtGNF(_dedG)+' dettes</div>'
+                : '<div style="font-weight:700;font-size:16px;color:var(--accent)">'+fmtGNF(_part)+'</div>'
+              )+'</div>';
+          })()
           +'</div>';
         gerantOnly.appendChild(_div);
       }
@@ -5142,25 +5153,73 @@ function renderSalaires(){
     <span style="font-size:12px;color:var(--text3);font-weight:400">− ${fmtGNF(montantFonds)} fonds (${totalRepPct}%) = </span>
     <span style="color:${resteColor}">${fmtGNF(reste)}</span>`;
 
-  document.getElementById('sal-fixes-list').innerHTML=gerantsSalaires.length
-    ?`<div style="margin-top:10px">${gerantsSalaires.map(g=>`
-      <div class="repartition-row">
-        <div class="rep-name"><span style="font-size:18px;margin-right:6px">${g.nom.charAt(0)}</span>${g.nom}</div>
-        <div class="rep-pct"><span class="badge blue">Salaire fixe</span></div>
-        <div class="rep-amount">${fmtGNF(g.salaire)}</div>
-      </div>`).join('')}</div>`
-    :'<div style="font-size:12px;color:var(--text3);margin-top:8px">Aucun gérant rémunéré en salaire fixe.</div>';
+  // Afficher salaires fixes avec déduction des dettes
+  var _dsol = getDettesSolde();
+  document.getElementById('sal-fixes-list').innerHTML = gerantsSalaires.length
+    ? '<div style="margin-top:10px">'+gerantsSalaires.map(function(g){
+        // Trouver les dettes non soldées de ce gérant/fondateur
+        var dettesG = g.id===1
+          ? _dsol.filter(function(d){return d.type==='fondateur'&&d.solde>0;})
+          : _dsol.filter(function(d){return d.type==='gerant'&&d.personneId===g.id&&d.solde>0;});
+        var totalDette = dettesG.reduce(function(s,d){return s+(d.solde||0);},0);
+        var deduction  = Math.min(g.salaire, totalDette); // On ne déduit pas plus que le salaire
+        var net        = g.salaire - deduction;
+        var detteHtml  = '';
+        if(deduction>0){
+          detteHtml = '<div style="margin-top:6px;padding:6px 10px;background:rgba(239,68,68,0.08);border-radius:6px;border-left:3px solid var(--red)">'
+            +'<div style="font-size:11px;color:var(--text3);margin-bottom:3px">💳 Dettes à déduire ce mois</div>'
+            + dettesG.map(function(d){
+                var dDed = Math.min(d.solde, g.salaire - dettesG.slice(0,dettesG.indexOf(d)).reduce(function(s,x){return s+Math.min(x.solde,g.salaire);},0));
+                if(dDed<=0) return '';
+                return '<div style="display:flex;justify-content:space-between;font-size:12px;color:var(--red);font-weight:600">'
+                  +'<span>'+d.desc+'</span><span>-'+fmtGNF(dDed)+'</span></div>';
+              }).join('')
+            +'</div>';
+        }
+        var netColor = net>0?'var(--green)':'var(--text3)';
+        return '<div style="background:var(--surface2);border-radius:10px;padding:12px;margin-bottom:8px">'
+          +'<div class="repartition-row" style="margin-bottom:'+(deduction>0?'8':'0')+'px">'
+          +'<div class="rep-name"><span style="font-size:18px;margin-right:6px">'+g.nom.charAt(0)+'</span>'+g.nom+'</div>'
+          +'<div class="rep-pct"><span class="badge blue">Salaire fixe</span></div>'
+          +'<div style="text-align:right">'
+          +(deduction>0
+            ? '<div style="font-size:12px;color:var(--text3);text-decoration:line-through">'+fmtGNF(g.salaire)+'</div>'
+              +'<div style="font-size:15px;font-weight:700;color:'+netColor+'">'+fmtGNF(net)+'<span style="font-size:10px;color:var(--text3);font-weight:400"> net</span></div>'
+            : '<div class="rep-amount">'+fmtGNF(g.salaire)+'</div>'
+          )+'</div></div>'
+          + detteHtml
+          +'</div>';
+      }).join('')+'</div>'
+    : '<div style="font-size:12px;color:var(--text3);margin-top:8px">Aucun gérant rémunéré en salaire fixe.</div>';
 
   if(gerantsPct.length===0){
     document.getElementById('sal-pct-list').innerHTML='<div style="font-size:12px;color:var(--text3);margin-top:8px">Aucun gérant rémunéré en pourcentage.</div>';
   } else {
-    const rows=gerantsPct.map(g=>{
+    var _dsolPct = getDettesSolde();
+    const rows=gerantsPct.map(function(g){
       const part=reste>0?Math.round(reste*(g.pct/100)):0;
-      return `<div class="repartition-row">
-        <div class="rep-name"><span style="font-size:18px;margin-right:6px">${g.nom.charAt(0)}</span>${g.nom}</div>
-        <div class="rep-pct"><span class="badge purple">${g.pct}%</span></div>
-        <div class="rep-amount">${fmtGNF(part)}</div>
-      </div>`;
+      // Dettes non soldées de ce gérant
+      var dettesG2 = g.id===1
+        ? _dsolPct.filter(function(d){return d.type==='fondateur'&&d.solde>0;})
+        : _dsolPct.filter(function(d){return d.type==='gerant'&&d.personneId===g.id&&d.solde>0;});
+      var totalDette2 = dettesG2.reduce(function(s,d){return s+(d.solde||0);},0);
+      var deduction2  = Math.min(part, totalDette2);
+      var net2        = part - deduction2;
+      var detteHtml2  = deduction2>0
+        ? '<div style="margin-top:4px;font-size:11px;color:var(--red)">💳 Dettes: -'+fmtGNF(deduction2)+' → Net: '+fmtGNF(net2)+'</div>'
+        : '';
+      return '<div style="background:var(--surface2);border-radius:10px;padding:10px;margin-bottom:6px">'
+        +'<div class="repartition-row">'
+        +'<div class="rep-name"><span style="font-size:18px;margin-right:6px">'+g.nom.charAt(0)+'</span>'+g.nom+'</div>'
+        +'<div class="rep-pct"><span class="badge purple">'+g.pct+'%</span></div>'
+        +'<div style="text-align:right">'
+        +(deduction2>0
+          ? '<div style="font-size:12px;color:var(--text3);text-decoration:line-through">'+fmtGNF(part)+'</div>'
+            +'<div style="font-size:15px;font-weight:700;color:var(--green)">'+fmtGNF(net2)+'<span style="font-size:10px;font-weight:400;color:var(--text3)"> net</span></div>'
+          : '<div class="rep-amount">'+fmtGNF(part)+'</div>'
+        )+'</div></div>'
+        + detteHtml2
+        +'</div>';
     });
     const fondateurPct=Math.max(0,100-totalGerantPct);
     const fondateurPart=reste>0?Math.round(reste*(fondateurPct/100)):0;
@@ -5673,12 +5732,24 @@ function renderSalairesGerant(){
   var dep=depM.reduce(function(s,d){return s+d.montant;},0);
   var salaire=g.type==='fixe'?g.salaire:g.type==='pourcentage'?Math.round((ben-dep)*(g.pct||0)/100):0;
   var el=document.getElementById('sal-gerant-resume'); if(!el) return;
+  // Calculer déduction dettes pour ce gérant
+  var _dsolGSelf = getDettesSolde();
+  var _dGSelf = g.id===1
+    ? _dsolGSelf.filter(function(d){return d.type==='fondateur'&&d.solde>0;})
+    : _dsolGSelf.filter(function(d){return d.type==='gerant'&&d.personneId===g.id&&d.solde>0;});
+  var _dedGSelf = Math.min(salaire, _dGSelf.reduce(function(s,d){return s+(d.solde||0);},0));
+  var _netGSelf = salaire - _dedGSelf;
+  var _salHtml = _dedGSelf>0
+    ? '<div style="font-size:12px;color:var(--text3);text-decoration:line-through">'+fmtGNF(salaire)+'</div>'
+      +'<div style="font-weight:700;font-size:15px;color:var(--accent)">'+fmtGNF(_netGSelf)+'</div>'
+      +'<div style="font-size:10px;color:var(--red)">💳 -'+fmtGNF(_dedGSelf)+' dettes</div>'
+    : '<div style="font-weight:700;font-size:15px;color:var(--accent)">'+fmtGNF(salaire)+'</div><div style="font-size:10px;color:var(--text3)">'+(g.type==='fixe'?'Fixe':g.type==='pourcentage'?g.pct+'% ben.':'')+'</div>';
   el.innerHTML='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;padding:8px 0">'
     +'<div style="background:var(--bg2);border-radius:8px;padding:10px;text-align:center"><div style="font-size:11px;color:var(--text3)">Mois</div><div style="font-weight:700;font-size:12px">'+getMonthLabel(mk)+'</div></div>'
     +'<div style="background:var(--bg2);border-radius:8px;padding:10px;text-align:center"><div style="font-size:11px;color:var(--text3)">Ventes</div><div style="font-weight:700;color:var(--green)">'+ventesM.length+'</div></div>'
     +'<div style="background:var(--bg2);border-radius:8px;padding:10px;text-align:center"><div style="font-size:11px;color:var(--text3)">CA</div><div style="font-weight:700;color:var(--blue)">'+fmtGNF(ca)+'</div></div>'
     +'<div style="background:var(--bg2);border-radius:8px;padding:10px;text-align:center"><div style="font-size:11px;color:var(--text3)">Depenses</div><div style="font-weight:700;color:var(--red)">'+fmtGNF(dep)+'</div></div>'
-    +'<div style="background:var(--accent-light);border:1px solid var(--accent);border-radius:8px;padding:10px;text-align:center"><div style="font-size:11px;color:var(--accent)">Votre salaire</div><div style="font-weight:700;font-size:15px;color:var(--accent)">'+fmtGNF(salaire)+'</div><div style="font-size:10px;color:var(--text3)">'+(g.type==='fixe'?'Fixe':g.type==='pourcentage'?g.pct+'% ben.':'')+'</div></div>'
+    +'<div style="background:var(--accent-light);border:1px solid var(--accent);border-radius:8px;padding:10px;text-align:center"><div style="font-size:11px;color:var(--accent)">Votre salaire</div>'+_salHtml+'</div>'
     +'</div>';
   // Sync sal-month-filter pour que les calculs principaux soient corrects
   var salFil=document.getElementById('sal-month-filter');
@@ -6887,11 +6958,14 @@ function openDetteGerantModal(){
   _peuplerDetteClientDatalist();
   const sel=document.getElementById('dg-personne');
   if(currentRole==='fondateur'){
+    // Fondateur : peut saisir pour tout le monde
     sel.innerHTML='<option value="fondateur">👑 Fondateur</option>'+
       gerants.filter(function(g){return g.id!==1;}).map(function(g){return '<option value="'+g.id+'">'+g.nom+'</option>';}).join('');
   } else {
+    // Gérant : peut saisir pour lui-même ET pour le fondateur
     var _g=gerants.find(function(x){return x.id==currentGerantId;});
-    sel.innerHTML=_g?('<option value="'+_g.id+'">'+_g.nom+'</option>'):'<option value="">—</option>';
+    sel.innerHTML='<option value="fondateur">👑 Fondateur</option>'+
+      (_g?('<option value="'+_g.id+'">'+_g.nom+'</option>'):'');
   }
   document.getElementById('dg-montant').value='';
   document.getElementById('dg-desc').value='';
