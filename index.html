@@ -1236,6 +1236,75 @@ function agvPrintPDF(type, extraData){
     return;
   }
 
+  // ── VENTES FILTRÉES (vue ventes avec filtres actifs) ──
+  if(type==='ventes-filtre'){
+    var yr2b=parseInt((document.getElementById('v-year-filter')||{}).value)||0;
+    var mo2b=(document.getElementById('v-month-filter')||{}).value||'';
+    var dayF=_vFilterDay||'';
+    function matchVF(ds){var d=new Date(ds);if(isNaN(d))return false;var y2=d.getFullYear(),m2=String(d.getMonth()+1).padStart(2,'0'),d2=String(d.getDate()).padStart(2,'0');var dk=y2+'-'+m2+'-'+d2;if(dayF&&dk!==dayF)return false;if(yr2b&&y2!==yr2b)return false;if(mo2b&&m2!==mo2b)return false;return true;}
+    var filtV=ventes.filter(function(v){return v.type!=='entree'&&matchVF(v.ts||v.date);});
+    var tCAf=filtV.reduce(function(s,v){return s+(v.total||0);},0);
+    var tBenf=filtV.reduce(function(s,v){return s+(v.benefice||0);},0);
+    var mNF=['','Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
+    var periodeF=dayF?new Date(dayF+'T12:00:00').toLocaleDateString('fr-FR'):(mo2b?mNF[parseInt(mo2b)]+' '+(yr2b||''):(yr2b||'Toutes périodes'));
+    var bodyVF=makeHeader('VENTES');
+    bodyVF+='<div class="pdf-title">🛒 Ventes — '+periodeF+'</div>';
+    bodyVF+='<div class="pdf-stats"><div class="pdf-stat"><div class="pdf-stat-label">Nb ventes</div><div class="pdf-stat-val">'+filtV.length+'</div></div><div class="pdf-stat"><div class="pdf-stat-label">CA</div><div class="pdf-stat-val green">'+fmtGNF(tCAf)+'</div></div><div class="pdf-stat"><div class="pdf-stat-label">Bénéfice</div><div class="pdf-stat-val blue">'+fmtGNF(tBenf)+'</div></div></div>';
+    bodyVF+='<table><thead><tr><th>Date</th><th>Produit</th><th>Catégorie</th><th>Qté</th><th class="right">Prix U.</th><th class="right">Total</th><th class="right">Bénéfice</th><th>Gérant</th></tr></thead><tbody>';
+    filtV.slice().sort(function(a,b){return new Date(b.ts||b.date)-new Date(a.ts||a.date);}).forEach(function(v){var p=products.find(function(x){return x.reference===v.ref;});bodyVF+='<tr><td>'+new Date(v.ts||v.date).toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit',year:'2-digit',hour:'2-digit',minute:'2-digit'})+'</td><td style="font-weight:600">'+(v.produit||v.name||'—')+'</td><td>'+(v.categorie||(p?p.categorie:'')||'—')+'</td><td style="text-align:center">'+(v.qty||v.qte||1)+'</td><td style="text-align:right">'+fmtGNF(v.prixU||0)+'</td><td style="text-align:right;font-weight:700;color:#16a34a">'+fmtGNF(v.total||0)+'</td><td style="text-align:right;color:#7c3aed">'+fmtGNF(v.benefice||0)+'</td><td style="font-size:9px">'+(v.gerant||'—')+'</td></tr>';});
+    bodyVF+='<tr class="total"><td colspan="5">TOTAL</td><td style="text-align:right">'+fmtGNF(tCAf)+'</td><td style="text-align:right">'+fmtGNF(tBenf)+'</td><td></td></tr></tbody></table>'+makeFooter();
+    openPrint(bodyVF);
+    return;
+  }
+
+  // ── RÉCAPITULATIF ANNUEL ──
+  if(type==='recap'){
+    var yrR=parseInt((document.getElementById('recap-year')||{}).value)||now.getFullYear();
+    function inYR(ds){var d=new Date(ds);return !isNaN(d)&&d.getFullYear()===yrR;}
+    var yvR=ventes.filter(function(v){return v.type!=='entree'&&inYR(v.ts||v.date);});
+    var ydR=depenses.filter(function(d){return inYR(d.date||d.ts);});
+    var yaR=appros.filter(function(a){return inYR(a.date||a.ts);});
+    var tCAR=yvR.reduce(function(s,v){return s+(v.total||0);},0);
+    var tBenR=yvR.reduce(function(s,v){return s+(v.benefice!=null?v.benefice:v.total||0);},0);
+    var tDepR=ydR.reduce(function(s,d){return s+(d.montant||0);},0);
+    var tApR=yaR.reduce(function(s,a){return s+(a.montant||0);},0);
+    var stockR=products.reduce(function(s,p){return s+(p.total||0);},0);
+    var caNetR=tCAR-tApR, benNetR=tBenR-tDepR;
+    var tSalG=0,tSalF=0;
+    gerants.forEach(function(g){var sal=(g.salaire||0)*12;if(g.id===1)tSalF+=sal;else tSalG+=sal;});
+    var mNLR=['Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
+    var byMR=Array.from({length:12},function(_,i){return {ca:0,dep:0,appro:0};});
+    yvR.forEach(function(v){byMR[new Date(v.ts||v.date).getMonth()].ca+=v.total||0;});
+    ydR.forEach(function(d){byMR[new Date(d.date||d.ts).getMonth()].dep+=d.montant||0;});
+    yaR.forEach(function(a){byMR[new Date(a.date||a.ts).getMonth()].appro+=a.montant||0;});
+    var maxMR=Math.max.apply(null,byMR.map(function(m){return Math.max(m.ca,m.dep);})||[1])||1;
+    var bWR=22,svgWR=(bWR*2+8)*12+20,svgHR=120;
+    var barsR=byMR.map(function(m,i){var x=10+i*(bWR*2+8);var hC=Math.round(m.ca/maxMR*(svgHR-25));var hD=Math.round(m.dep/maxMR*(svgHR-25));return '<rect x="'+x+'" y="'+(svgHR-20-hC)+'" width="'+bWR+'" height="'+hC+'" rx="2" fill="#16a34a" opacity=".85"/><rect x="'+(x+bWR+2)+'" y="'+(svgHR-20-hD)+'" width="'+bWR+'" height="'+hD+'" rx="2" fill="#dc2626" opacity=".7"/><text x="'+(x+bWR)+'" y="'+(svgHR-3)+'" text-anchor="middle" font-size="7" fill="#666" font-family="Arial">'+['J','F','M','A','M','J','J','A','S','O','N','D'][i]+'</text>';}).join('');
+    var svgR='<svg viewBox="0 0 '+svgWR+' '+svgHR+'" style="width:100%;max-height:130px"><text x="10" y="10" font-size="8" fill="#16a34a" font-family="Arial">■ CA</text><text x="35" y="10" font-size="8" fill="#dc2626" font-family="Arial">■ Dépenses</text>'+barsR+'</svg>';
+    var bodyR=makeHeader('RÉCAPITULATIF ANNUEL');
+    bodyR+='<div class="pdf-title">📈 Récapitulatif Annuel — '+yrR+'</div>';
+    bodyR+='<div class="pdf-stats">'
+      +'<div class="pdf-stat"><div class="pdf-stat-label">Ventes totales</div><div class="pdf-stat-val green">'+fmtGNF(tCAR)+'</div></div>'
+      +'<div class="pdf-stat"><div class="pdf-stat-label">Dépenses totales</div><div class="pdf-stat-val red">'+fmtGNF(tDepR)+'</div></div>'
+      +'<div class="pdf-stat"><div class="pdf-stat-label">Approvisionnement</div><div class="pdf-stat-val blue">'+fmtGNF(tApR)+'</div></div>'
+      +'<div class="pdf-stat"><div class="pdf-stat-label">CA Net (−appro)</div><div class="pdf-stat-val blue">'+fmtGNF(caNetR)+'</div></div>'
+      +'<div class="pdf-stat"><div class="pdf-stat-label">Bénéfice net</div><div class="pdf-stat-val '+(benNetR>=0?'green':'red')+'">'+fmtGNF(benNetR)+'</div></div>'
+      +'<div class="pdf-stat"><div class="pdf-stat-label">Valeur stock</div><div class="pdf-stat-val">'+fmtGNF(stockR)+'</div></div>'
+      +'</div>';
+    bodyR+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px">'
+      +'<div style="background:#f5f7fa;border:1px solid #e0e6ef;border-radius:6px;padding:10px;text-align:center"><div style="font-size:9px;color:#666;text-transform:uppercase;margin-bottom:4px">Salaires Fondateur</div><div style="font-size:14px;font-weight:700;color:#1e3a5f">'+fmtGNF(tSalF)+'</div></div>'
+      +'<div style="background:#f5f7fa;border:1px solid #e0e6ef;border-radius:6px;padding:10px;text-align:center"><div style="font-size:9px;color:#666;text-transform:uppercase;margin-bottom:4px">Salaires Gérants</div><div style="font-size:14px;font-weight:700;color:#16a34a">'+fmtGNF(tSalG)+'</div></div>'
+      +'</div>';
+    bodyR+='<div class="section-title">📊 Évolution mensuelle '+yrR+'</div>'+svgR;
+    bodyR+='<div class="section-title">📆 Tableau mensuel</div>';
+    bodyR+='<table><thead><tr><th>Mois</th><th class="right">CA</th><th class="right">Dépenses</th><th class="right">Appro</th><th class="right">Résultat net</th></tr></thead><tbody>';
+    byMR.forEach(function(m,i){var net=m.ca-m.dep-m.appro;bodyR+='<tr><td style="font-weight:600">'+mNLR[i]+'</td><td style="text-align:right;color:#16a34a;font-weight:700">'+fmtGNF(m.ca)+'</td><td style="text-align:right;color:#dc2626">'+fmtGNF(m.dep)+'</td><td style="text-align:right;color:#2563eb">'+fmtGNF(m.appro)+'</td><td style="text-align:right;font-weight:700;color:'+(net>=0?'#16a34a':'#dc2626')+'">'+fmtGNF(net)+'</td></tr>';});
+    bodyR+='<tr class="total"><td>TOTAL '+yrR+'</td><td style="text-align:right">'+fmtGNF(tCAR)+'</td><td style="text-align:right">'+fmtGNF(tDepR)+'</td><td style="text-align:right">'+fmtGNF(tApR)+'</td><td style="text-align:right">'+fmtGNF(benNetR)+'</td></tr>';
+    bodyR+='</tbody></table>'+makeFooter();
+    openPrint(bodyR);
+    return;
+  }
+
   // ── DASHBOARD avec graphique catégories ──
   if(type==='dashboard'){
     var _dashY = (document.getElementById('dash-year-filter')||{}).value || String(now.getFullYear());
@@ -2545,6 +2614,10 @@ window.addEventListener('DOMContentLoaded',function(){
         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" stroke-width="1.5" stroke-linecap="round"/></svg>
         Rapports
       </button>
+      <button class="nav-item" id="nav-recap" onclick="showView('recap')">
+        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M11 3.055A9.001 9.001 0 1020.945 13H11V3.055z" stroke-width="1.5" stroke-linecap="round"/><path d="M20.488 9H15V3.512A9.025 9.025 0 0120.488 9z" stroke-width="1.5" stroke-linecap="round"/></svg>
+        Récap Annuel
+      </button>
       <button class="nav-item" id="nav-entrees" onclick="showView('entrees')">
         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M3 16v2a2 2 0 002 2h14a2 2 0 002-2v-2M7 10l5 5 5-5M12 15V3" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
         Entrées Mensuelles
@@ -2727,8 +2800,18 @@ window.addEventListener('DOMContentLoaded',function(){
     <div class="view" id="view-ventes">
       <div class="topbar">
         <h1>Gestion des ventes</h1>
-        <div style="display:flex;gap:8px">
-          <button class="btn-print" onclick="agvPrintPDF('ventes')">🖨️ PDF A4</button>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+          <!-- Filtres date -->
+          <select id="v-year-filter" onchange="renderVentesHistory()" style="padding:5px 8px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text);font-family:inherit;font-size:12px;font-weight:600"></select>
+          <select id="v-month-filter" onchange="renderVentesHistory()" style="padding:5px 8px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text);font-family:inherit;font-size:12px;font-weight:600">
+            <option value="">Tous les mois</option>
+            <option value="01">Janvier</option><option value="02">Février</option><option value="03">Mars</option>
+            <option value="04">Avril</option><option value="05">Mai</option><option value="06">Juin</option>
+            <option value="07">Juillet</option><option value="08">Août</option><option value="09">Septembre</option>
+            <option value="10">Octobre</option><option value="11">Novembre</option><option value="12">Décembre</option>
+          </select>
+          <button id="v-print-day-btn" onclick="printVentesJour()" style="display:none;padding:5px 10px;border:1px solid var(--accent);border-radius:8px;background:var(--accent);color:#fff;font-family:inherit;font-size:12px;font-weight:700;cursor:pointer">🖨️ Imprimer ce jour</button>
+          <button onclick="agvPrintPDF('ventes-filtre')" class="btn-print">🖨️ PDF A4</button>
           <button class="btn btn-success" onclick="openVenteRapide()" style="display:flex;align-items:center;gap:6px">⚡ Vente rapide</button>
         </div>
       </div>
@@ -2770,8 +2853,12 @@ window.addEventListener('DOMContentLoaded',function(){
           </div>
         </div>
         <div class="card">
-          <div class="card-title">Historique des mouvements (session)</div>
-          <div id="ventes-history" style="max-height:400px;overflow-y:auto">
+          <!-- Stats du filtre actif -->
+          <div id="v-filter-stats" style="margin-bottom:10px"></div>
+          <!-- Calendrier des jours du mois (clic = filtre du jour) -->
+          <div id="v-day-picker" style="margin-bottom:12px"></div>
+          <div class="card-title" style="margin-bottom:8px">Historique des mouvements</div>
+          <div id="ventes-history" style="max-height:420px;overflow-y:auto">
             <div class="empty"><div class="empty-icon">📋</div><div class="empty-text">Aucun mouvement enregistré</div></div>
           </div>
           <div id="ventes-total" style="margin-top:12px;border-top:1px solid var(--border);padding-top:10px;font-weight:600;color:var(--accent);font-size:15px;text-align:right"></div>
@@ -3050,6 +3137,18 @@ window.addEventListener('DOMContentLoaded',function(){
       </div>
     </div>
 
+
+    <!-- RECAP ANNUEL VIEW -->
+    <div class="view" id="view-recap">
+      <div class="topbar">
+        <h1>📈 Récapitulatif Annuel</h1>
+        <div style="display:flex;gap:8px;align-items:center">
+          <select id="recap-year" onchange="renderRecapAnnuel()" style="padding:6px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text);font-family:inherit;font-size:13px;font-weight:600"></select>
+          <button onclick="agvPrintPDF('recap')" class="btn-print">🖨️ PDF A4</button>
+        </div>
+      </div>
+      <div id="recap-content"></div>
+    </div>
 
     <!-- RAPPORT VIEW -->
     <div class="view" id="view-rapport">
@@ -4740,6 +4839,263 @@ function gotoMoisRpt(el){
   switchRapportTab('mois');
 }
 
+// ==================== VENTES FILTRÉES PAR DATE ====================
+var _vFilterDay = ''; // 'YYYY-MM-DD' ou ''
+
+function initVentesFilters(){
+  var ysel = document.getElementById('v-year-filter');
+  if(ysel && !ysel.dataset.init){
+    var curY = new Date().getFullYear();
+    var opts = '<option value="">Toutes années</option>';
+    for(var y=2020;y<=2040;y++) opts+='<option value="'+y+'"'+(y===curY?' selected':'')+'>'+y+'</option>';
+    ysel.innerHTML = opts;
+    ysel.dataset.init = '1';
+  }
+  // Mois en cours par défaut
+  var msel = document.getElementById('v-month-filter');
+  if(msel && !msel.dataset.init){
+    msel.value = String(new Date().getMonth()+1).padStart(2,'0');
+    msel.dataset.init = '1';
+  }
+  _vFilterDay = '';
+  renderVentesHistory();
+}
+
+function renderVentesHistory(){
+  var ysel = document.getElementById('v-year-filter');
+  var msel = document.getElementById('v-month-filter');
+  var yr   = parseInt((ysel||{}).value)||0;
+  var mo   = (msel||{}).value||'';
+
+  function matchV(ds){
+    var d = new Date(ds);
+    if(isNaN(d)) return false;
+    var y2=d.getFullYear(), m2=String(d.getMonth()+1).padStart(2,'0');
+    var d2=String(d.getDate()).padStart(2,'0');
+    var dk = y2+'-'+m2+'-'+d2;
+    if(_vFilterDay && dk!==_vFilterDay) return false;
+    if(yr && y2!==yr) return false;
+    if(mo && m2!==mo) return false;
+    return true;
+  }
+
+  var filtered = ventes.filter(function(v){ return v.type!=='entree' && matchV(v.ts||v.date); });
+
+  // Afficher le calendrier du mois sélectionné
+  renderVDayPicker(yr||new Date().getFullYear(), mo||String(new Date().getMonth()+1).padStart(2,'0'));
+
+  // Stats du filtre
+  var tCA  = filtered.reduce(function(s,v){return s+(v.total||0);},0);
+  var tBen = filtered.reduce(function(s,v){return s+(v.benefice||0);},0);
+  var statsEl = document.getElementById('v-filter-stats');
+  if(statsEl){
+    var label = _vFilterDay ? '📅 '+new Date(_vFilterDay+'T12:00:00').toLocaleDateString('fr-FR') : (mo?['','Jan','Fév','Mar','Avr','Mai','Jun','Jul','Aoû','Sep','Oct','Nov','Déc'][parseInt(mo)]+' '+(yr||''):yr||'Toutes périodes');
+    statsEl.innerHTML = '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:4px">'
+      +'<div style="background:var(--green-bg);border:1px solid var(--green-border);border-radius:8px;padding:6px 12px;font-size:12px"><span style="color:var(--text3)">Ventes</span> <strong style="color:var(--green)">'+filtered.length+'</strong></div>'
+      +'<div style="background:var(--green-bg);border:1px solid var(--green-border);border-radius:8px;padding:6px 12px;font-size:12px"><span style="color:var(--text3)">CA</span> <strong style="color:var(--green)">'+fmtGNF(tCA)+'</strong></div>'
+      +'<div style="background:var(--accent-light);border:1px solid var(--accent);border-radius:8px;padding:6px 12px;font-size:12px"><span style="color:var(--text3)">Bénéfice</span> <strong style="color:var(--accent)">'+fmtGNF(tBen)+'</strong></div>'
+      +(_vFilterDay?'<button onclick="_vFilterDay=\'\';renderVentesHistory()" style="padding:4px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text3);font-size:11px;cursor:pointer;font-family:inherit">✕ Tout le mois</button>':'')
+      +'</div>';
+  }
+
+  // Bouton imprimer du jour
+  var printBtn = document.getElementById('v-print-day-btn');
+  if(printBtn) printBtn.style.display = _vFilterDay ? 'block' : 'none';
+
+  // Historique
+  var hist = document.getElementById('ventes-history');
+  if(!hist) return;
+  if(!filtered.length){
+    hist.innerHTML='<div class="empty"><div class="empty-icon">📋</div><div class="empty-text">Aucune vente '+(label||'')+'</div></div>';
+    var tot=document.getElementById('ventes-total'); if(tot) tot.innerHTML='';
+    return;
+  }
+  var sorted = filtered.slice().sort(function(a,b){ return new Date(b.ts||b.date)-new Date(a.ts||a.date); });
+  hist.innerHTML = sorted.map(function(v){
+    var p=products.find(function(x){return x.reference===v.ref;});
+    var cat=v.categorie||(p?p.categorie:'')||'—';
+    var isSortie=v.type!=='entree';
+    var dateStr=new Date(v.ts||v.date).toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit',year:'2-digit',hour:'2-digit',minute:'2-digit'});
+    return '<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border)">'
+      +'<div style="font-size:18px">'+(isSortie?'📤':'📥')+'</div>'
+      +'<div style="flex:1;min-width:0">'
+      +'<div style="font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+(v.produit||v.name||v.ref||'—')+'</div>'
+      +'<div style="font-size:11px;color:var(--text3)">'+cat+' • '+(v.qty||v.qte||1)+' unité(s) • '+dateStr+'</div>'
+      +'</div>'
+      +'<div style="text-align:right;flex-shrink:0">'
+      +'<div style="font-weight:700;color:'+(isSortie?'var(--green)':'var(--blue)')+'">'+fmtGNF(v.total||0)+'</div>'
+      +(v.benefice?'<div style="font-size:11px;color:#7c3aed">+'+fmtGNF(v.benefice)+'</div>':'')
+      +'<div style="font-size:10px;color:var(--text3)">'+(v.gerant||'')+'</div>'
+      +'</div></div>';
+  }).join('');
+  var tot=document.getElementById('ventes-total');
+  if(tot) tot.innerHTML='Total : <span style="color:var(--green)">'+fmtGNF(tCA)+'</span> | Bénéfice : <span style="color:var(--accent)">'+fmtGNF(tBen)+'</span>';
+}
+
+function renderVDayPicker(yr, mo){
+  var el = document.getElementById('v-day-picker');
+  if(!el || !mo) return;
+  var moInt = parseInt(mo), yrInt = parseInt(yr)||new Date().getFullYear();
+  var daysInMonth = new Date(yrInt, moInt, 0).getDate();
+  var mNames=['','Jan','Fév','Mar','Avr','Mai','Jun','Jul','Aoû','Sep','Oct','Nov','Déc'];
+  // Compter ventes par jour
+  var byDay={};
+  ventes.filter(function(v){return v.type!=='entree';}).forEach(function(v){
+    var d=new Date(v.ts||v.date);
+    if(isNaN(d)||d.getFullYear()!==yrInt||(d.getMonth()+1)!==moInt) return;
+    var dk=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+    byDay[dk]=(byDay[dk]||0)+1;
+  });
+  var html='<div style="margin-bottom:6px;font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase">'+mNames[moInt]+' '+yrInt+' — Cliquez un jour pour filtrer</div>';
+  html+='<div style="display:flex;flex-wrap:wrap;gap:4px">';
+  for(var d=1;d<=daysInMonth;d++){
+    var dk=yrInt+'-'+String(moInt).padStart(2,'0')+'-'+String(d).padStart(2,'0');
+    var cnt=byDay[dk]||0;
+    var isSelected=_vFilterDay===dk;
+    var bg=isSelected?'var(--accent)':cnt>0?'var(--green-bg)':'var(--surface2)';
+    var color=isSelected?'#fff':cnt>0?'var(--green)':'var(--text3)';
+    var border=isSelected?'var(--accent)':cnt>0?'var(--green-border)':'var(--border)';
+    html+='<button onclick="vFilterDay(\''+dk+'\')" style="width:36px;height:36px;border:1.5px solid '+border+';border-radius:6px;background:'+bg+';color:'+color+';font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;position:relative">'
+      +d+(cnt>0?'<span style="position:absolute;top:1px;right:2px;font-size:8px">'+cnt+'</span>':'')
+      +'</button>';
+  }
+  html+='</div>';
+  el.innerHTML=html;
+}
+
+function vFilterDay(dk){
+  _vFilterDay = (_vFilterDay===dk)?'':dk; // toggle
+  renderVentesHistory();
+}
+
+function printVentesJour(){
+  agvPrintPDF('rapport-jour', _vFilterDay||new Date().toISOString().slice(0,10));
+}
+
+// ==================== RÉCAPITULATIF ANNUEL ====================
+function initRecapAnnuel(){
+  var sel=document.getElementById('recap-year');
+  if(sel&&!sel.dataset.init){
+    var curY=new Date().getFullYear();
+    var opts='';
+    for(var y=2040;y>=2020;y--) opts+='<option value="'+y+'"'+(y===curY?' selected':'')+'>'+y+'</option>';
+    sel.innerHTML=opts;
+    sel.dataset.init='1';
+  }
+  renderRecapAnnuel();
+}
+
+function renderRecapAnnuel(){
+  var yr=parseInt((document.getElementById('recap-year')||{}).value)||new Date().getFullYear();
+  function inY(ds){var d=new Date(ds);return !isNaN(d)&&d.getFullYear()===yr;}
+
+  // Calculs annuels
+  var yVentes   = ventes.filter(function(v){return v.type!=='entree'&&inY(v.ts||v.date);});
+  var yDep      = depenses.filter(function(d){return inY(d.date||d.ts);});
+  var yAppros   = appros.filter(function(a){return inY(a.date||a.ts);});
+  var tCA       = yVentes.reduce(function(s,v){return s+(v.total||0);},0);
+  var tBen      = yVentes.reduce(function(s,v){return s+(v.benefice!=null?v.benefice:v.total||0);},0);
+  var tDep      = yDep.reduce(function(s,d){return s+(d.montant||0);},0);
+  var tAppro    = yAppros.reduce(function(s,a){return s+(a.montant||0);},0);
+  var stockVal  = products.reduce(function(s,p){return s+(p.total||0);},0);
+  var caNet     = tCA-tAppro; // CA après approvisionnement
+  var benNet    = tBen-tDep;  // Bénéfice net
+
+  // Salaires gérants et fondateur
+  var mNames=['','Jan','Fév','Mar','Avr','Mai','Jun','Jul','Aoû','Sep','Oct','Nov','Déc'];
+  var totalSalGerants = 0, totalSalFondateur = 0;
+  gerants.forEach(function(g){
+    var isFond = g.role==='fondateur'||g.id===1;
+    // Salaires du mois * 12 ou montant réel payé
+    var salAnnuel = 0;
+    if(g.salaireMois){
+      Object.keys(g.salaireMois).forEach(function(mk){
+        var parts=mk.split('-'); if(parseInt(parts[0])===yr) salAnnuel+=(g.salaireMois[mk]||0);
+      });
+    }
+    if(salAnnuel===0) salAnnuel = (g.salaire||0)*12; // estimation
+    if(isFond) totalSalFondateur+=salAnnuel;
+    else totalSalGerants+=salAnnuel;
+  });
+
+  var mNamesLong=['Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
+
+  // Graphique CA mensuel SVG
+  var byM=Array.from({length:12},function(_,i){return {ca:0,dep:0,appro:0};});
+  yVentes.forEach(function(v){byM[new Date(v.ts||v.date).getMonth()].ca+=v.total||0;});
+  yDep.forEach(function(d){byM[new Date(d.date||d.ts).getMonth()].dep+=d.montant||0;});
+  yAppros.forEach(function(a){byM[new Date(a.date||a.ts).getMonth()].appro+=a.montant||0;});
+  var maxM=Math.max.apply(null,byM.map(function(m){return Math.max(m.ca,m.dep);})||[1])||1;
+  var bW=28,bGap=6,svgW=(bW*2+bGap+4)*12+20,svgH=130;
+  var barsSVG=byM.map(function(m,i){
+    var x=10+i*(bW*2+bGap+4);
+    var hCA=Math.round(m.ca/maxM*(svgH-30));
+    var hDep=Math.round(m.dep/maxM*(svgH-30));
+    return '<rect x="'+x+'" y="'+(svgH-25-hCA)+'" width="'+bW+'" height="'+hCA+'" rx="3" fill="#16a34a" opacity=".85"/>'
+      +'<rect x="'+(x+bW+3)+'" y="'+(svgH-25-hDep)+'" width="'+bW+'" height="'+hDep+'" rx="3" fill="#dc2626" opacity=".7"/>'
+      +'<text x="'+(x+bW)+'" y="'+(svgH-5)+'" text-anchor="middle" font-size="8" fill="var(--text3)" font-family="sans-serif">'+mNames[i+1]+'</text>';
+  }).join('');
+  var legendSVG='<text x="12" y="12" font-size="9" fill="#16a34a" font-family="sans-serif">■ CA</text>'
+    +'<text x="50" y="12" font-size="9" fill="#dc2626" font-family="sans-serif">■ Dépenses</text>';
+  var svg='<svg viewBox="0 0 '+svgW+' '+svgH+'" style="width:100%;max-height:'+svgH+'px">'+legendSVG+barsSVG+'</svg>';
+
+  // Tableau mensuel détaillé
+  var rowsMois=byM.map(function(m,i){
+    var net=m.ca-m.dep-m.appro;
+    return '<tr style="border-bottom:1px solid var(--border)">'
+      +'<td style="padding:7px;font-weight:600">'+mNamesLong[i]+'</td>'
+      +'<td style="padding:7px;text-align:right;color:var(--green);font-weight:700">'+fmtGNF(m.ca)+'</td>'
+      +'<td style="padding:7px;text-align:right;color:var(--red)">'+fmtGNF(m.dep)+'</td>'
+      +'<td style="padding:7px;text-align:right;color:var(--text3)">'+fmtGNF(m.appro)+'</td>'
+      +'<td style="padding:7px;text-align:right;font-weight:700;color:'+(net>=0?'var(--green)':'var(--red)')+'">'+fmtGNF(net)+'</td>'
+      +'</tr>';
+  }).join('');
+
+  var html='';
+  // Grandes stats
+  html+='<div class="stats" style="margin-bottom:20px">'
+    +'<div class="stat"><div class="stat-label"><div class="dot green"></div>Ventes totales</div><div class="stat-val green" style="font-size:18px">'+fmtGNF(tCA)+'</div><div class="stat-sub">'+yVentes.length+' ventes</div></div>'
+    +'<div class="stat"><div class="stat-label"><div class="dot red"></div>Dépenses totales</div><div class="stat-val red" style="font-size:18px">'+fmtGNF(tDep)+'</div><div class="stat-sub">'+yDep.length+' dépenses</div></div>'
+    +'<div class="stat"><div class="stat-label"><div class="dot blue"></div>Approvisionnement</div><div class="stat-val blue" style="font-size:18px">'+fmtGNF(tAppro)+'</div><div class="stat-sub">'+yAppros.length+' appros</div></div>'
+    +'<div class="stat"><div class="stat-label"><div class="dot purple"></div>CA Net (−appro)</div><div class="stat-val purple" style="font-size:18px">'+fmtGNF(caNet)+'</div><div class="stat-sub">après approvisionnement</div></div>'
+    +'<div class="stat"><div class="stat-label"><div class="dot '+(benNet>=0?'green':'red')+'"></div>Bénéfice net</div><div class="stat-val '+(benNet>=0?'green':'red')+'" style="font-size:18px">'+fmtGNF(benNet)+'</div><div class="stat-sub">CA − achats − dépenses</div></div>'
+    +'<div class="stat"><div class="stat-label"><div class="dot blue"></div>Valeur stock</div><div class="stat-val blue" style="font-size:18px">'+fmtGNF(stockVal)+'</div><div class="stat-sub">prix achat actuel</div></div>'
+    +'</div>';
+
+  // Salaires
+  html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px">'
+    +'<div class="card"><div class="card-title">👑 Salaires Fondateur '+yr+'</div>'
+    +'<div style="font-size:24px;font-weight:800;color:var(--accent);margin:12px 0">'+fmtGNF(totalSalFondateur)+'</div>'
+    +'<div style="font-size:12px;color:var(--text3)">Estimation annuelle (12 mois)</div></div>'
+    +'<div class="card"><div class="card-title">👥 Salaires Gérants '+yr+'</div>'
+    +'<div style="font-size:24px;font-weight:800;color:var(--green);margin:12px 0">'+fmtGNF(totalSalGerants)+'</div>'
+    +'<div style="font-size:12px;color:var(--text3)">'+gerants.filter(function(g){return g.id!==1;}).length+' gérant(s)</div></div>'
+    +'</div>';
+
+  // Graphique
+  html+='<div class="card" style="margin-bottom:16px"><div class="card-title">📊 Évolution CA vs Dépenses — '+yr+'</div>'+svg+'</div>';
+
+  // Tableau mensuel
+  html+='<div class="card"><div class="card-title">📆 Détail mensuel '+yr+'</div>'
+    +'<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px">'
+    +'<thead><tr style="background:var(--surface2)">'
+    +'<th style="padding:8px;text-align:left">Mois</th>'
+    +'<th style="padding:8px;text-align:right">CA</th>'
+    +'<th style="padding:8px;text-align:right">Dépenses</th>'
+    +'<th style="padding:8px;text-align:right">Approvisionnement</th>'
+    +'<th style="padding:8px;text-align:right">Résultat net</th>'
+    +'</tr></thead><tbody>'+rowsMois
+    +'<tr style="background:var(--accent-light);font-weight:700">'
+    +'<td style="padding:8px">TOTAL '+yr+'</td>'
+    +'<td style="padding:8px;text-align:right;color:var(--green)">'+fmtGNF(tCA)+'</td>'
+    +'<td style="padding:8px;text-align:right;color:var(--red)">'+fmtGNF(tDep)+'</td>'
+    +'<td style="padding:8px;text-align:right;color:var(--blue)">'+fmtGNF(tAppro)+'</td>'
+    +'<td style="padding:8px;text-align:right;color:'+(benNet>=0?'var(--green)':'var(--red)')+'">'+fmtGNF(benNet)+'</td>'
+    +'</tr></tbody></table></div></div>';
+
+  document.getElementById('recap-content').innerHTML=html;
+}
+
 function doLogout(){
   currentRole=null; currentGerantId=null;
   window._boutiqueLoggedOut=true;
@@ -5298,11 +5654,12 @@ function showView(v){
   currentView=v;
   if(v==='produits'){renderTable()}
   if(v==='inventaire'){renderInventaire()}
-  if(v==='ventes'){buildDatalist2();renderVentesView()}
+  if(v==='ventes'){buildDatalist2();initVentesFilters();renderVentesView()}
   if(v==='depenses'){renderDepenses()}
   if(v==='parametres'){renderParametresBoutique()}
   if(v==='journalier'){jourInit();renderJournalier()}
   if(v==='rapport'){initRapport();}
+  if(v==='recap'){initRecapAnnuel();}
   if(v==='salaires'){
     // Initialiser les filtres année/mois avant de rendre
     var _sySel=document.getElementById('sal-year-filter');
