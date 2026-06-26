@@ -1008,22 +1008,41 @@ function agvLaunchApp(shop){
     }
   } catch(e){}
 
-  // 2. Firebase : synchronisation en arrière-plan, ne bloque PAS l'affichage
   var ref = db.ref('gdv_shops/'+shop.uid+'/data');
   window._agvDbListener = ref;
   ref.on('value', function(snap){
     var data = snap.val();
-    if(data) try{ localStorage.setItem(cacheKey, JSON.stringify(data)); }catch(e){}
-    // Reset + rechargement uniquement si les données ont changé
+    // PROTECTION ABSOLUE : si Firebase renvoie null ou données vides,
+    // NE JAMAIS écraser les données existantes en mémoire
+    if(!data){
+      window._AGV_READY = true;
+      agvSetOnlineStatus(true);
+      return; // Garder les données actuelles intactes
+    }
+    // Vérification supplémentaire : si les données Firebase semblent vides
+    // mais qu'on a déjà des données en mémoire, les conserver
+    var fbHasData = (data.ventes && (Array.isArray(data.ventes)?data.ventes.length:Object.keys(data.ventes).length) > 0)
+      || (data.products && (Array.isArray(data.products)?data.products.length:Object.keys(data.products).length) > 0)
+      || (data.depenses && (Array.isArray(data.depenses)?data.depenses.length:Object.keys(data.depenses).length) > 0);
+    var memHasData = ventes.length > 0 || products.length > 0;
+    if(!fbHasData && memHasData){
+      // Firebase a des données vides mais on a déjà des données en mémoire
+      // → On ignore cette mise à jour Firebase et on resauvegarde
+      console.warn('AGV: Firebase vide détecté alors que données en mémoire existent. Resauvegarde...');
+      window._AGV_READY = true;
+      if(window.sauvegarderFirebase) setTimeout(window.sauvegarderFirebase, 500);
+      return;
+    }
+    // Sauvegarder dans le cache local avant le reset
+    try{ localStorage.setItem(cacheKey, JSON.stringify(data)); }catch(e){}
+    // Reset sécurisé + rechargement
     products=[]; ventes=[]; depenses=[]; gerants=[];
     entrees=[]; appros=[]; repConfig=[]; dettes=[]; clients=[]; factureVentes=[];
     applyData(data);
     window._AGV_READY = true;
     agvSetOnlineStatus(true);
   }, function(err){
-    // Erreur Firebase (hors ligne)
     agvSetOnlineStatus(false);
-    // Sauvegarder et fermer si données en attente
     agvHandleOffline();
   });
 
@@ -2123,6 +2142,10 @@ window.addEventListener('DOMContentLoaded',function(){
         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" stroke-width="1.5"/></svg>
         Historique Journalier
       </button>
+      <button class="nav-item" id="nav-rapport" onclick="showView('rapport')">
+        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" stroke-width="1.5" stroke-linecap="round"/></svg>
+        Rapports
+      </button>
       <button class="nav-item" id="nav-entrees" onclick="showView('entrees')">
         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M3 16v2a2 2 0 002 2h14a2 2 0 002-2v-2M7 10l5 5 5-5M12 15V3" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
         Entrées Mensuelles
@@ -2195,7 +2218,19 @@ window.addEventListener('DOMContentLoaded',function(){
     <div class="view active" id="view-dashboard">
       <div class="topbar">
         <h1>Tableau de bord</h1>
-        <span id="dash-date" style="font-size:12px;color:var(--text3)"></span>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <span id="dash-date" style="font-size:12px;color:var(--text3)"></span>
+          <select id="dash-year-filter" onchange="renderDashboard()" style="padding:5px 8px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text);font-family:inherit;font-size:12px;font-weight:600"></select>
+          <select id="dash-month-filter" onchange="renderDashboard()" style="padding:5px 8px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text);font-family:inherit;font-size:12px;font-weight:600">
+            <option value="">📅 Mois en cours</option>
+            <option value="01">Janvier</option><option value="02">Février</option>
+            <option value="03">Mars</option><option value="04">Avril</option>
+            <option value="05">Mai</option><option value="06">Juin</option>
+            <option value="07">Juillet</option><option value="08">Août</option>
+            <option value="09">Septembre</option><option value="10">Octobre</option>
+            <option value="11">Novembre</option><option value="12">Décembre</option>
+          </select>
+        </div>
       </div>
       <div class="stats" id="stats-cards"></div>
       <div id="dash-dettes-widget" style="margin-bottom:8px"></div>
@@ -2616,6 +2651,57 @@ window.addEventListener('DOMContentLoaded',function(){
       </div>
     </div>
 
+
+    <!-- RAPPORT VIEW -->
+    <div class="view" id="view-rapport">
+      <div class="topbar">
+        <h1>📊 Rapports</h1>
+        <button onclick="printView()" class="btn-print">🖨️ Imprimer</button>
+      </div>
+      <!-- Onglets Journalier / Mensuel / Annuel -->
+      <div style="display:flex;gap:4px;margin-bottom:16px;background:var(--surface2);border-radius:10px;padding:4px">
+        <button id="rpt-tab-jour"   onclick="switchRapportTab('jour')"   style="flex:1;padding:8px;border:none;border-radius:8px;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;background:var(--accent);color:#fff">📅 Journalier</button>
+        <button id="rpt-tab-mois"   onclick="switchRapportTab('mois')"   style="flex:1;padding:8px;border:none;border-radius:8px;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;background:transparent;color:var(--text3)">📆 Mensuel</button>
+        <button id="rpt-tab-annuel" onclick="switchRapportTab('annuel')" style="flex:1;padding:8px;border:none;border-radius:8px;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;background:transparent;color:var(--text3)">📈 Annuel</button>
+      </div>
+
+      <!-- RAPPORT JOURNALIER -->
+      <div id="rpt-jour">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;align-items:flex-end">
+          <div><label style="font-size:11px;font-weight:700;color:var(--text3);display:block;margin-bottom:3px">DATE</label>
+          <input type="date" id="rpt-jour-date" onchange="renderRapportJour()" style="padding:6px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text);font-family:inherit;font-size:13px"></div>
+        </div>
+        <div id="rpt-jour-stats" class="stats" style="margin-bottom:14px"></div>
+        <div id="rpt-jour-content"></div>
+      </div>
+
+      <!-- RAPPORT MENSUEL -->
+      <div id="rpt-mois" style="display:none">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;align-items:flex-end">
+          <div><label style="font-size:11px;font-weight:700;color:var(--text3);display:block;margin-bottom:3px">ANNÉE</label>
+          <select id="rpt-mois-year" onchange="renderRapportMois()" style="padding:6px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text);font-family:inherit;font-size:13px"></select></div>
+          <div><label style="font-size:11px;font-weight:700;color:var(--text3);display:block;margin-bottom:3px">MOIS</label>
+          <select id="rpt-mois-month" onchange="renderRapportMois()" style="padding:6px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text);font-family:inherit;font-size:13px">
+            <option value="01">Janvier</option><option value="02">Février</option><option value="03">Mars</option>
+            <option value="04">Avril</option><option value="05">Mai</option><option value="06">Juin</option>
+            <option value="07">Juillet</option><option value="08">Août</option><option value="09">Septembre</option>
+            <option value="10">Octobre</option><option value="11">Novembre</option><option value="12">Décembre</option>
+          </select></div>
+        </div>
+        <div id="rpt-mois-stats" class="stats" style="margin-bottom:14px"></div>
+        <div id="rpt-mois-content"></div>
+      </div>
+
+      <!-- RAPPORT ANNUEL -->
+      <div id="rpt-annuel" style="display:none">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;align-items:flex-end">
+          <div><label style="font-size:11px;font-weight:700;color:var(--text3);display:block;margin-bottom:3px">ANNÉE</label>
+          <select id="rpt-annuel-year" onchange="renderRapportAnnuel()" style="padding:6px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text);font-family:inherit;font-size:13px"></select></div>
+        </div>
+        <div id="rpt-annuel-stats" class="stats" style="margin-bottom:14px"></div>
+        <div id="rpt-annuel-content"></div>
+      </div>
+    </div>
 
     <!-- ALERTES VIEW -->
     <div class="view" id="view-alertes">
@@ -4048,6 +4134,201 @@ function agvHandleOffline(){
 }
 
 
+// ==================== RAPPORTS ====================
+var _rptTab = 'jour';
+
+function switchRapportTab(tab){
+  _rptTab = tab;
+  ['jour','mois','annuel'].forEach(function(t){
+    var el  = document.getElementById('rpt-'+t);
+    var btn = document.getElementById('rpt-tab-'+t);
+    if(el)  el.style.display  = t===tab?'':'none';
+    if(btn){ btn.style.background = t===tab?'var(--accent)':'transparent'; btn.style.color = t===tab?'#fff':'var(--text3)'; }
+  });
+  if(tab==='jour')   renderRapportJour();
+  if(tab==='mois')   renderRapportMois();
+  if(tab==='annuel') renderRapportAnnuel();
+}
+
+function initRapport(){
+  // Date du jour par défaut
+  var djEl = document.getElementById('rpt-jour-date');
+  if(djEl && !djEl.value) djEl.value = new Date().toISOString().slice(0,10);
+  // Années 2020-2040
+  ['rpt-mois-year','rpt-annuel-year'].forEach(function(id){
+    var sel = document.getElementById(id);
+    if(!sel || sel.dataset.init) return;
+    var curY = new Date().getFullYear();
+    sel.innerHTML = '';
+    for(var y=2040;y>=2020;y--) sel.innerHTML += '<option value="'+y+'"'+(y===curY?' selected':'')+'>'+y+'</option>';
+    sel.dataset.init='1';
+  });
+  // Mois en cours
+  var mmEl = document.getElementById('rpt-mois-month');
+  if(mmEl && !mmEl.dataset.init){ mmEl.value = String(new Date().getMonth()+1).padStart(2,'0'); mmEl.dataset.init='1'; }
+  switchRapportTab('jour');
+}
+
+function _rptFmtDate(ds){ try{ return new Date(ds).toLocaleDateString('fr-FR'); }catch(e){ return ds||'—'; } }
+
+function renderRapportJour(){
+  var dateVal = (document.getElementById('rpt-jour-date')||{}).value || new Date().toISOString().slice(0,10);
+  // Filtrer ventes, dépenses, entrées de ce jour
+  var jVentes  = ventes.filter(function(v){ var d=new Date(v.ts||v.date); return d.toISOString&&d.toISOString().slice(0,10)===dateVal; });
+  var jDep     = depenses.filter(function(d){ return (d.date||'').slice(0,10)===dateVal; });
+  var jEntrees = (typeof entrees!=='undefined'?entrees:[]).filter(function(e){ return (e.date||e.ts||'').slice(0,10)===dateVal; });
+  var tCA   = jVentes.reduce(function(s,v){return s+(v.total||0);},0);
+  var tBen  = jVentes.reduce(function(s,v){return s+(v.benefice!=null?v.benefice:v.total||0);},0);
+  var tDep  = jDep.reduce(function(s,d){return s+(d.montant||0);},0);
+  var net   = tBen - tDep;
+  var sEl = document.getElementById('rpt-jour-stats');
+  if(sEl) sEl.innerHTML =
+    '<div class="stat"><div class="stat-label"><div class="dot green"></div>CA</div><div class="stat-val green">'+fmtGNF(tCA)+'</div><div class="stat-sub">'+jVentes.length+' vente(s)</div></div>'+
+    '<div class="stat"><div class="stat-label"><div class="dot red"></div>Dépenses</div><div class="stat-val red">'+fmtGNF(tDep)+'</div><div class="stat-sub">'+jDep.length+' dépense(s)</div></div>'+
+    '<div class="stat"><div class="stat-label"><div class="dot blue"></div>Entrées stock</div><div class="stat-val blue">'+jEntrees.length+'</div><div class="stat-sub">unités reçues</div></div>'+
+    '<div class="stat"><div class="stat-label"><div class="dot '+(net>=0?'green':'red')+'"></div>Bénéfice net</div><div class="stat-val '+(net>=0?'green':'red')+'">'+fmtGNF(net)+'</div><div class="stat-sub">CA − achats − dép.</div></div>';
+  var cEl = document.getElementById('rpt-jour-content');
+  if(!cEl) return;
+  var html = '';
+  if(jVentes.length){
+    html += '<div class="card" style="margin-bottom:12px"><h3 style="font-size:13px;font-weight:700;margin-bottom:10px;color:var(--green)">🛒 Ventes ('+jVentes.length+')</h3>';
+    html += '<table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr style="background:var(--surface2)"><th style="padding:7px;text-align:left">Produit</th><th style="padding:7px;text-align:left">Catégorie</th><th style="padding:7px;text-align:center">Qté</th><th style="padding:7px;text-align:right">Prix U.</th><th style="padding:7px;text-align:right">Total</th><th style="padding:7px;text-align:right">Bénéfice</th><th style="padding:7px">Gérant</th></tr></thead><tbody>';
+    jVentes.forEach(function(v){
+      var p = products.find(function(x){return x.reference===v.ref;});
+      var cat = v.categorie||(p?p.categorie:'')||'—';
+      html += '<tr style="border-bottom:1px solid var(--border)"><td style="padding:6px">'+(v.produit||v.name||v.ref||'—')+'</td><td style="padding:6px"><span style="padding:2px 6px;border-radius:8px;background:var(--surface2);font-size:11px">'+cat+'</span></td><td style="padding:6px;text-align:center;font-weight:700">'+(v.qty||v.qte||1)+'</td><td style="padding:6px;text-align:right">'+fmtGNF(v.prixU||0)+'</td><td style="padding:6px;text-align:right;font-weight:700;color:var(--green)">'+fmtGNF(v.total||0)+'</td><td style="padding:6px;text-align:right;color:#7c3aed">'+fmtGNF(v.benefice||0)+'</td><td style="padding:6px;font-size:11px;color:var(--text3)">'+(v.gerant||'—')+'</td></tr>';
+    });
+    html += '</tbody></table></div>';
+  }
+  if(jDep.length){
+    html += '<div class="card" style="margin-bottom:12px"><h3 style="font-size:13px;font-weight:700;margin-bottom:10px;color:var(--red)">💸 Dépenses ('+jDep.length+')</h3>';
+    html += '<table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr style="background:var(--surface2)"><th style="padding:7px;text-align:left">Description</th><th style="padding:7px;text-align:left">Catégorie</th><th style="padding:7px;text-align:right">Montant</th><th style="padding:7px">Gérant</th></tr></thead><tbody>';
+    jDep.forEach(function(d){ html += '<tr style="border-bottom:1px solid var(--border)"><td style="padding:6px">'+(d.desc||d.description||'—')+'</td><td style="padding:6px"><span style="padding:2px 6px;border-radius:8px;background:var(--surface2);font-size:11px">'+(d.cat||d.categorie||'—')+'</span></td><td style="padding:6px;text-align:right;font-weight:700;color:var(--red)">'+fmtGNF(d.montant||0)+'</td><td style="padding:6px;font-size:11px;color:var(--text3)">'+(d.gerant||'—')+'</td></tr>'; });
+    html += '</tbody></table></div>';
+  }
+  if(jEntrees.length){
+    html += '<div class="card"><h3 style="font-size:13px;font-weight:700;margin-bottom:10px;color:var(--blue)">📥 Entrées stock ('+jEntrees.length+')</h3>';
+    html += '<table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr style="background:var(--surface2)"><th style="padding:7px;text-align:left">Produit</th><th style="padding:7px;text-align:left">Catégorie</th><th style="padding:7px;text-align:center">Qté</th><th style="padding:7px;text-align:right">Prix achat</th><th style="padding:7px">Gérant</th></tr></thead><tbody>';
+    jEntrees.forEach(function(e){ var p2=products.find(function(x){return x.reference===(e.ref||e.reference);}); html += '<tr style="border-bottom:1px solid var(--border)"><td style="padding:6px">'+(e.produit||e.designation||'—')+'</td><td style="padding:6px;font-size:11px">'+(e.categorie||(p2?p2.categorie:'')||'—')+'</td><td style="padding:6px;text-align:center;font-weight:700;color:var(--blue)">+'+(e.qte||e.qty||0)+'</td><td style="padding:6px;text-align:right">'+fmtGNF(e.nouveauPrix||e.prixAchat||0)+'</td><td style="padding:6px;font-size:11px;color:var(--text3)">'+(e.gerant||'—')+'</td></tr>'; });
+    html += '</tbody></table></div>';
+  }
+  if(!html) html = '<div class="empty"><div class="empty-icon">📅</div><div class="empty-text">Aucune activité ce jour</div></div>';
+  cEl.innerHTML = html;
+}
+
+function renderRapportMois(){
+  var yr  = parseInt((document.getElementById('rpt-mois-year')||{}).value)  || new Date().getFullYear();
+  var mo  = parseInt((document.getElementById('rpt-mois-month')||{}).value) || (new Date().getMonth()+1);
+  var moStr = String(mo).padStart(2,'0');
+  function inMonth(ds){ var d=new Date(ds); return !isNaN(d)&&d.getFullYear()===yr&&(d.getMonth()+1)===mo; }
+  var mVentes  = ventes.filter(function(v){return v.type!=='entree'&&inMonth(v.ts||v.date);});
+  var mDep     = depenses.filter(function(d){return inMonth(d.date||d.ts);});
+  var mEntrees = (typeof entrees!=='undefined'?entrees:[]).filter(function(e){return inMonth(e.date||e.ts);});
+  var tCA  = mVentes.reduce(function(s,v){return s+(v.total||0);},0);
+  var tBen = mVentes.reduce(function(s,v){return s+(v.benefice!=null?v.benefice:v.total||0);},0);
+  var tDep = mDep.reduce(function(s,d){return s+(d.montant||0);},0);
+  var net  = tBen - tDep;
+  var mNames=['','Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
+  var sEl = document.getElementById('rpt-mois-stats');
+  if(sEl) sEl.innerHTML =
+    '<div class="stat"><div class="stat-label"><div class="dot green"></div>CA '+mNames[mo]+' '+yr+'</div><div class="stat-val green">'+fmtGNF(tCA)+'</div><div class="stat-sub">'+mVentes.length+' vente(s)</div></div>'+
+    '<div class="stat"><div class="stat-label"><div class="dot red"></div>Dépenses</div><div class="stat-val red">'+fmtGNF(tDep)+'</div><div class="stat-sub">'+mDep.length+' dépense(s)</div></div>'+
+    '<div class="stat"><div class="stat-label"><div class="dot blue"></div>Entrées stock</div><div class="stat-val blue">'+mEntrees.length+'</div></div>'+
+    '<div class="stat"><div class="stat-label"><div class="dot '+(net>=0?'green':'red')+'"></div>Bénéfice net</div><div class="stat-val '+(net>=0?'green':'red')+'">'+fmtGNF(net)+'</div></div>';
+  // Tableau récap par jour
+  var byDay = {};
+  mVentes.forEach(function(v){ var dk=(new Date(v.ts||v.date)).toISOString().slice(0,10); byDay[dk]=byDay[dk]||{ca:0,ben:0,dep:0,nv:0,nd:0}; byDay[dk].ca+=v.total||0; byDay[dk].ben+=v.benefice!=null?v.benefice:v.total||0; byDay[dk].nv++; });
+  mDep.forEach(function(d){ var dk=(d.date||d.ts||'').slice(0,10); byDay[dk]=byDay[dk]||{ca:0,ben:0,dep:0,nv:0,nd:0}; byDay[dk].dep+=d.montant||0; byDay[dk].nd++; });
+  var days = Object.keys(byDay).sort();
+  var cEl = document.getElementById('rpt-mois-content');
+  if(!cEl) return;
+  var html = '<div class="card"><h3 style="font-size:13px;font-weight:700;margin-bottom:12px">📆 Détail par jour — '+mNames[mo]+' '+yr+'</h3>';
+  if(!days.length){ html += '<div class="empty"><div class="empty-text">Aucune activité ce mois</div></div></div>'; cEl.innerHTML=html; return; }
+  html += '<table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr style="background:var(--surface2)"><th style="padding:8px;text-align:left">Date</th><th style="padding:8px;text-align:right">Ventes</th><th style="padding:8px;text-align:right">CA</th><th style="padding:8px;text-align:right">Dépenses</th><th style="padding:8px;text-align:right">Bénéfice net</th></tr></thead><tbody>';
+  var totCA=0,totDep=0,totBen=0;
+  days.forEach(function(dk){
+    var row=byDay[dk];
+    var netJ=row.ben-row.dep; totCA+=row.ca; totDep+=row.dep; totBen+=row.ben;
+    html += '<tr style="border-bottom:1px solid var(--border);cursor:pointer" onclick="document.getElementById(\'rpt-jour-date\').value=\''+dk+'\';switchRapportTab(\'jour\')">'
+      +'<td style="padding:7px;font-weight:600">'+new Date(dk).toLocaleDateString('fr-FR')+'</td>'
+      +'<td style="padding:7px;text-align:right;color:var(--text3)">'+row.nv+'</td>'
+      +'<td style="padding:7px;text-align:right;font-weight:700;color:var(--green)">'+fmtGNF(row.ca)+'</td>'
+      +'<td style="padding:7px;text-align:right;color:var(--red)">'+fmtGNF(row.dep)+'</td>'
+      +'<td style="padding:7px;text-align:right;font-weight:700;color:'+(netJ>=0?'var(--green)':'var(--red)')+'">'+fmtGNF(netJ)+'</td></tr>';
+  });
+  html += '<tr style="background:var(--surface2);font-weight:700"><td style="padding:8px">TOTAL</td><td></td><td style="padding:8px;text-align:right;color:var(--green)">'+fmtGNF(totCA)+'</td><td style="padding:8px;text-align:right;color:var(--red)">'+fmtGNF(totDep)+'</td><td style="padding:8px;text-align:right;color:'+(totBen-totDep>=0?'var(--green)':'var(--red)')+'">'+fmtGNF(totBen-totDep)+'</td></tr>';
+  html += '</tbody></table></div>';
+  cEl.innerHTML = html;
+}
+
+function renderRapportAnnuel(){
+  var yr = parseInt((document.getElementById('rpt-annuel-year')||{}).value) || new Date().getFullYear();
+  function inYear(ds){ var d=new Date(ds); return !isNaN(d)&&d.getFullYear()===yr; }
+  var mNames=['Jan','Fév','Mar','Avr','Mai','Jun','Jul','Aoû','Sep','Oct','Nov','Déc'];
+  var byMonth = Array.from({length:12},function(_,i){return {m:i+1,ca:0,ben:0,dep:0,nv:0,nd:0};});
+  ventes.filter(function(v){return v.type!=='entree'&&inYear(v.ts||v.date);}).forEach(function(v){
+    var mi=new Date(v.ts||v.date).getMonth();
+    byMonth[mi].ca+=v.total||0; byMonth[mi].ben+=v.benefice!=null?v.benefice:v.total||0; byMonth[mi].nv++;
+  });
+  depenses.filter(function(d){return inYear(d.date||d.ts);}).forEach(function(d){
+    var mi=new Date(d.date||d.ts).getMonth();
+    byMonth[mi].dep+=d.montant||0; byMonth[mi].nd++;
+  });
+  var tCA=byMonth.reduce(function(s,m){return s+m.ca;},0);
+  var tBen=byMonth.reduce(function(s,m){return s+m.ben;},0);
+  var tDep=byMonth.reduce(function(s,m){return s+m.dep;},0);
+  var net=tBen-tDep;
+  var sEl=document.getElementById('rpt-annuel-stats');
+  if(sEl) sEl.innerHTML=
+    '<div class="stat"><div class="stat-label"><div class="dot green"></div>CA Annuel '+yr+'</div><div class="stat-val green">'+fmtGNF(tCA)+'</div></div>'+
+    '<div class="stat"><div class="stat-label"><div class="dot red"></div>Dépenses</div><div class="stat-val red">'+fmtGNF(tDep)+'</div></div>'+
+    '<div class="stat"><div class="stat-label"><div class="dot purple"></div>Bénéfice brut</div><div class="stat-val purple">'+fmtGNF(tBen)+'</div></div>'+
+    '<div class="stat"><div class="stat-label"><div class="dot '+(net>=0?'green':'red')+'"></div>Bénéfice net</div><div class="stat-val '+(net>=0?'green':'red')+'">'+fmtGNF(net)+'</div></div>';
+  // Graphique barres SVG + tableau
+  var maxCA=Math.max.apply(null,byMonth.map(function(m){return m.ca;}))||1;
+  var barW=32, gap=8, svgW=(barW+gap)*12+gap, svgH=140;
+  var bars=byMonth.map(function(m,i){
+    var bh=Math.round(m.ca/maxCA*(svgH-30));
+    var x=gap+i*(barW+gap), y=svgH-30-bh;
+    var col=m.ca>0?'var(--accent)':'var(--border)';
+    return '<rect x="'+x+'" y="'+y+'" width="'+barW+'" height="'+bh+'" rx="4" fill="'+col+'" opacity=".85"/>'
+      +(m.ca>0?'<text x="'+(x+barW/2)+'" y="'+(y-4)+'" text-anchor="middle" font-size="9" fill="var(--text3)" font-family="sans-serif">'+fmtGNFShort(m.ca)+'</text>':'')
+      +'<text x="'+(x+barW/2)+'" y="'+(svgH-8)+'" text-anchor="middle" font-size="10" fill="var(--text3)" font-family="sans-serif">'+mNames[i]+'</text>';
+  }).join('');
+  var svg='<svg viewBox="0 0 '+svgW+' '+svgH+'" style="width:100%;max-height:160px">'+bars+'</svg>';
+  var cEl=document.getElementById('rpt-annuel-content');
+  if(!cEl) return;
+  var html='<div class="card" style="margin-bottom:12px">'+svg+'</div>';
+  html+='<div class="card"><h3 style="font-size:13px;font-weight:700;margin-bottom:12px">📈 Récapitulatif mensuel '+yr+'</h3>';
+  html+='<table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr style="background:var(--surface2)"><th style="padding:8px;text-align:left">Mois</th><th style="padding:8px;text-align:right">Ventes</th><th style="padding:8px;text-align:right">CA</th><th style="padding:8px;text-align:right">Dépenses</th><th style="padding:8px;text-align:right">Bénéfice net</th></tr></thead><tbody>';
+  byMonth.forEach(function(m){
+    var netM=m.ben-m.dep;
+    var mPad=String(m.m).padStart(2,'0');
+    var fullMois=['Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'][m.m-1];
+    html+='<tr style="border-bottom:1px solid var(--border)" data-ry="'+yr+'" data-rm="'+mPad+'">'
+      +'<td style="padding:7px;font-weight:600;cursor:pointer;color:var(--accent)" onclick="gotoMoisRpt(this)">'+fullMois+'</td>'
+      +'<td style="padding:7px;text-align:right;color:var(--text3)">'+m.nv+'</td>'
+      +'<td style="padding:7px;text-align:right;font-weight:700;color:var(--green)">'+fmtGNF(m.ca)+'</td>'
+      +'<td style="padding:7px;text-align:right;color:var(--red)">'+fmtGNF(m.dep)+'</td>'
+      +'<td style="padding:7px;text-align:right;font-weight:700;color:'+(netM>=0?'var(--green)':'var(--red)')+'">'+fmtGNF(netM)+'</td></tr>';
+  });;
+  html+='<tr style="background:var(--surface2);font-weight:700"><td style="padding:8px">TOTAL '+yr+'</td><td></td><td style="padding:8px;text-align:right;color:var(--green)">'+fmtGNF(tCA)+'</td><td style="padding:8px;text-align:right;color:var(--red)">'+fmtGNF(tDep)+'</td><td style="padding:8px;text-align:right;color:'+(net>=0?'var(--green)':'var(--red)')+'">'+fmtGNF(net)+'</td></tr>';
+  html+='</tbody></table></div>';
+  cEl.innerHTML=html;
+}
+
+function gotoMoisRpt(el){
+  var tr=el.closest('tr');
+  if(!tr) return;
+  var ry=tr.getAttribute('data-ry'), rm=tr.getAttribute('data-rm');
+  if(!ry||!rm) return;
+  var ysel=document.getElementById('rpt-mois-year');
+  var msel=document.getElementById('rpt-mois-month');
+  if(ysel) ysel.value=ry;
+  if(msel) msel.value=rm;
+  switchRapportTab('mois');
+}
+
 function doLogout(){
   currentRole=null; currentGerantId=null;
   window._boutiqueLoggedOut=true;
@@ -4610,6 +4891,7 @@ function showView(v){
   if(v==='depenses'){renderDepenses()}
   if(v==='parametres'){renderParametresBoutique()}
   if(v==='journalier'){jourInit();renderJournalier()}
+  if(v==='rapport'){initRapport();}
   if(v==='salaires'){
     // Initialiser les filtres année/mois avant de rendre
     var _sySel=document.getElementById('sal-year-filter');
@@ -4669,16 +4951,46 @@ function showView(v){
 
 // ==================== DASHBOARD ====================
 function renderDashboard(){
+  // Filtre mois/année du dashboard
+  var _dashYear  = (document.getElementById('dash-year-filter')||{}).value||'';
+  var _dashMonth = (document.getElementById('dash-month-filter')||{}).value||'';
+  // Peupler le sélecteur d'années avec 2020-2040
+  var _dysel = document.getElementById('dash-year-filter');
+  if(_dysel && !_dysel.dataset.init){
+    var _curY = new Date().getFullYear();
+    var _yopts = '<option value="">Toutes années</option>';
+    for(var _y=2020;_y<=2040;_y++) _yopts+='<option value="'+_y+'"'+(_y===_curY?' selected':'')+'>'+_y+'</option>';
+    _dysel.innerHTML = _yopts;
+    _dysel.dataset.init='1';
+    _dashYear = String(_curY);
+  }
+  // Construire la clé de filtre mois (YYYY-MM) ou juste l'année
+  function _dashFilter(dateStr){
+    if(!dateStr) return true;
+    var d = new Date(dateStr);
+    if(isNaN(d)) return true;
+    var yMatch = !_dashYear  || d.getFullYear()===parseInt(_dashYear);
+    var mMatch = !_dashMonth || (String(d.getMonth()+1).padStart(2,'0')===_dashMonth);
+    return yMatch && mMatch;
+  }
+  // Afficher la période dans le titre
+  var _dashDateEl = document.getElementById('dash-date');
+  if(_dashDateEl){
+    var _mNames=['','Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
+    var _periodLabel = (_dashMonth?_mNames[parseInt(_dashMonth)]+' ':'')+(_dashYear||'');
+    _dashDateEl.textContent = _periodLabel ? '📅 '+_periodLabel : '📅 Période complète';
+  }
+
   const total=products.length;
   const stockVal=products.reduce((s,p)=>s+p.total,0);
   const alerts=products.filter(p=>p.stock_initial>0&&p.stock_initial<=p.seuil_alerte).length;
   const rupture=products.filter(p=>p.stock_initial===0).length;
-  const sorties=ventes.filter(v=>v.type!=='entree');
+  const sorties=ventes.filter(v=>v.type!=='entree' && _dashFilter(v.ts||v.date));
   const totalCABrut=sorties.reduce((s,v)=>s+v.total,0);
-  const totalAppros=appros.reduce((s,a)=>s+(a.montant||0),0);
+  const totalAppros=appros.filter(a=>_dashFilter(a.date||a.ts)).reduce((s,a)=>s+(a.montant||0),0);
   const totalCA=totalCABrut-totalAppros;
   const totalBeneficeBrut=sorties.reduce((s,v)=>s+(v.benefice!=null?v.benefice:v.total),0);
-  const totalDepenses=depenses.reduce((s,d)=>s+(d.montant||0),0);
+  const totalDepenses=depenses.filter(d=>_dashFilter(d.date||d.ts)).reduce((s,d)=>s+(d.montant||0),0);
   const totalBenefice=totalBeneficeBrut-totalDepenses;
   document.getElementById('nb-alertes').textContent=alerts+rupture;
   // Dettes dashboard widget
