@@ -299,11 +299,21 @@ body{font-family:'DM Sans',sans-serif;background:#060d24;color:#e2e8f0;min-heigh
   .btn-print{display:flex;align-items:center;gap:6px;padding:7px 14px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text2);font-size:13px;cursor:pointer;transition:.15s}
   .btn-print:hover{background:var(--surface2);color:var(--text)}
   @media print{
-    .sidebar,.topbar button,.btn-print,.nav-item,#syncIndicator,.modal,.overlay,
-    #btn-add-appro,#btn-config-rep,#btn-add-dep,#btn-nouveau-produit{display:none!important}
-    .view{display:block!important}
-    body{background:#fff}
-    .main{margin:0;padding:0}
+    @page{ size:A4 portrait; margin:15mm 12mm; }
+    *{ -webkit-print-color-adjust:exact!important; print-color-adjust:exact!important; }
+    .sidebar,.topbar,.btn-print,.nav-item,#syncIndicator,.modal,.overlay,
+    #btn-add-appro,#btn-config-rep,#btn-add-dep,#btn-nouveau-produit,
+    .row-actions,.filters,.pag-btns,.no-print{ display:none!important }
+    body{ background:#fff!important; color:#000!important; font-size:11pt; }
+    .main{ margin:0!important; padding:0!important; }
+    .view{ display:block!important; page-break-inside:avoid; }
+    .card{ box-shadow:none!important; border:1px solid #ddd!important; page-break-inside:avoid; }
+    table{ page-break-inside:auto; }
+    tr{ page-break-inside:avoid; page-break-after:auto; }
+    thead{ display:table-header-group; }
+    .stat{ border:1px solid #ddd!important; }
+    h1{ font-size:16pt!important; }
+    .agv-print-header{ display:block!important; }
   }
 
   /* DASHBOARD */
@@ -1060,20 +1070,266 @@ function agvLaunchApp(shop){
 
 // ===== IMPRESSION PROPRE =====
 function printView(){
-  // Forcer l'affichage complet avant impression
-  var histEl=document.getElementById('ventes-history');
-  var histOld='';
-  if(histEl){histOld=histEl.style.maxHeight;histEl.style.maxHeight='none';histEl.style.overflow='visible';}
-  var ventesContent=document.getElementById('ventes-content');
-  var vcOld='';
-  if(ventesContent){vcOld=ventesContent.style.display;ventesContent.style.display='block';}
-  // Cacher les barres de filtres
-  var filtreBarre=document.querySelector('[style*="Trier"]');
-  // Lancer impression
+  // Déterminer la vue active
+  var activeView = document.querySelector('.view.active');
+  var viewId = activeView ? activeView.id : '';
+  var viewName = viewId.replace('view-','');
+  agvPrintPDF(viewName);
+}
+
+// ==================== IMPRESSION PDF A4 UNIVERSELLE ====================
+function agvPrintPDF(type, extraData){
+  var shop = window._currentShop || {};
+  var shopNom = shop.entreprise || 'Ma Boutique';
+  var shopAdr = shop.adresse || '';
+  var shopTel = shop.tel || '';
+  var now = new Date();
+  var dateStr = now.toLocaleDateString('fr-FR',{weekday:'long',year:'numeric',month:'long',day:'numeric'});
+  var timeStr = now.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});
+
+  // CSS commun pour tous les PDF
+  var css = [
+    '@page{size:A4 portrait;margin:15mm 12mm}',
+    '*{margin:0;padding:0;box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact}',
+    'body{font-family:Arial,Helvetica,sans-serif;font-size:11px;color:#111;background:#fff;line-height:1.4}',
+    '.pdf-header{display:flex;justify-content:space-between;align-items:flex-start;padding-bottom:10px;border-bottom:2px solid #1e3a5f;margin-bottom:14px}',
+    '.pdf-logo{width:48px;height:48px;object-fit:contain;border-radius:6px}',
+    '.pdf-shop{flex:1;padding:0 12px}.pdf-shop-name{font-size:16px;font-weight:700;color:#1e3a5f}',
+    '.pdf-shop-sub{font-size:10px;color:#666;margin-top:2px}',
+    '.pdf-meta{text-align:right;font-size:10px;color:#666}',
+    '.pdf-title{font-size:14px;font-weight:700;color:#1e3a5f;margin:12px 0 10px;padding-bottom:6px;border-bottom:1px solid #e0e0e0;text-transform:uppercase;letter-spacing:.05em}',
+    '.pdf-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:14px}',
+    '.pdf-stat{background:#f5f7fa;border:1px solid #e0e6ef;border-radius:6px;padding:8px 10px;text-align:center}',
+    '.pdf-stat-label{font-size:9px;color:#666;text-transform:uppercase;letter-spacing:.04em;margin-bottom:3px}',
+    '.pdf-stat-val{font-size:13px;font-weight:700;color:#1e3a5f}',
+    '.pdf-stat-val.green{color:#16a34a}.pdf-stat-val.red{color:#dc2626}.pdf-stat-val.blue{color:#2563eb}',
+    'table{width:100%;border-collapse:collapse;font-size:10px;margin-bottom:14px}',
+    'thead th{background:#1e3a5f;color:#fff;padding:6px 8px;text-align:left;font-size:9px;text-transform:uppercase;letter-spacing:.04em}',
+    'thead th:last-child,thead th.right{text-align:right}',
+    'tbody td{padding:5px 8px;border-bottom:1px solid #ececec}',
+    'tbody tr:nth-child(even){background:#f9f9f9}',
+    'tbody tr.total{background:#1e3a5f!important;color:#fff;font-weight:700}',
+    '.section-title{font-size:11px;font-weight:700;color:#1e3a5f;margin:12px 0 6px;padding:4px 8px;background:#f0f4ff;border-left:3px solid #1e3a5f}',
+    '.badge{display:inline-block;padding:1px 6px;border-radius:10px;font-size:9px;font-weight:700}',
+    '.badge-green{background:#dcfce7;color:#16a34a}.badge-red{background:#fee2e2;color:#dc2626}.badge-blue{background:#dbeafe;color:#2563eb}',
+    '.pdf-footer{margin-top:20px;padding-top:8px;border-top:1px solid #e0e0e0;font-size:9px;color:#999;text-align:center}',
+    '.no-break{page-break-inside:avoid}',
+    '@media print{.no-print{display:none!important}}'
+  ].join('');
+
+  // En-tête commun
+  function makeHeader(titre){
+    var logoHtml = shop.logo ? '<img class="pdf-logo" src="'+shop.logo+'">' : '<div style="width:48px;height:48px;background:#1e3a5f;border-radius:6px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:20px;font-weight:700">'+shopNom.charAt(0)+'</div>';
+    return '<div class="pdf-header">'
+      +'<div>'+logoHtml+'</div>'
+      +'<div class="pdf-shop"><div class="pdf-shop-name">'+shopNom+'</div>'
+      +(shopAdr?'<div class="pdf-shop-sub">📍 '+shopAdr+'</div>':'')
+      +(shopTel?'<div class="pdf-shop-sub">📞 '+shopTel+'</div>':'')+'</div>'
+      +'<div class="pdf-meta"><div style="font-weight:700;font-size:11px;color:#1e3a5f">'+titre+'</div>'
+      +'<div>'+dateStr+'</div><div>'+timeStr+'</div></div>'
+      +'</div>';
+  }
+
+  function makeFooter(){
+    return '<div class="pdf-footer">Document généré par App AGV — '+shopNom+' — '+dateStr+' à '+timeStr+'</div>';
+  }
+
+  function openPrint(body){
+    var win = window.open('','_blank','width=900,height=700');
+    if(!win){ alert('Autorisez les popups pour imprimer'); return; }
+    win.document.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>'+shopNom+'</title><style>'+css+'</style></head><body>');
+    win.document.write(body);
+    win.document.write('<div class="no-print" style="position:fixed;top:10px;right:10px;display:flex;gap:8px">'
+      +'<button onclick="window.print()" style="padding:8px 18px;background:#1e3a5f;color:#fff;border:none;border-radius:6px;font-size:13px;font-weight:700;cursor:pointer">🖨️ Imprimer / PDF</button>'
+      +'<button onclick="window.close()" style="padding:8px 14px;background:#eee;color:#333;border:none;border-radius:6px;font-size:13px;cursor:pointer">✕ Fermer</button>'
+      +'</div>');
+    win.document.write('</body></html>');
+    win.document.close();
+    setTimeout(function(){ win.focus(); win.print(); }, 600);
+  }
+
+  // ── RAPPORT JOURNALIER ──
+  if(type==='rapport-jour' || type==='rapport'){
+    var dateVal = extraData || (document.getElementById('rpt-jour-date')||{}).value || now.toISOString().slice(0,10);
+    var dateLabel = new Date(dateVal).toLocaleDateString('fr-FR',{weekday:'long',year:'numeric',month:'long',day:'numeric'});
+    var jV = ventes.filter(function(v){ return v.type!=='entree' && (v.ts||v.date||'').slice(0,10)===dateVal; });
+    var jD = depenses.filter(function(d){ return (d.date||'').slice(0,10)===dateVal; });
+    var jE = (typeof entrees!=='undefined'?entrees:[]).filter(function(e){ return (e.date||e.ts||'').slice(0,10)===dateVal; });
+    var tCA=jV.reduce(function(s,v){return s+(v.total||0);},0);
+    var tBen=jV.reduce(function(s,v){return s+(v.benefice!=null?v.benefice:v.total||0);},0);
+    var tDep=jD.reduce(function(s,d){return s+(d.montant||0);},0);
+    var body = makeHeader('RAPPORT JOURNALIER');
+    body += '<div class="pdf-title">📅 Rapport du '+dateLabel+'</div>';
+    body += '<div class="pdf-stats">'
+      +'<div class="pdf-stat"><div class="pdf-stat-label">Ventes</div><div class="pdf-stat-val">'+jV.length+'</div></div>'
+      +'<div class="pdf-stat"><div class="pdf-stat-label">Chiffre d\'affaires</div><div class="pdf-stat-val green">'+fmtGNF(tCA)+'</div></div>'
+      +'<div class="pdf-stat"><div class="pdf-stat-label">Dépenses</div><div class="pdf-stat-val red">'+fmtGNF(tDep)+'</div></div>'
+      +'<div class="pdf-stat"><div class="pdf-stat-label">Bénéfice net</div><div class="pdf-stat-val '+(tBen-tDep>=0?'green':'red')+'">'+fmtGNF(tBen-tDep)+'</div></div>'
+      +'</div>';
+    if(jV.length){
+      body += '<div class="section-title">🛒 Ventes ('+jV.length+')</div>';
+      body += '<table><thead><tr><th>Produit</th><th>Catégorie</th><th>Qté</th><th class="right">Prix U.</th><th class="right">Total</th><th class="right">Bénéfice</th><th>Gérant</th></tr></thead><tbody>';
+      jV.forEach(function(v){ var p=products.find(function(x){return x.reference===v.ref;}); body+='<tr><td>'+( v.produit||v.name||v.ref||'—')+'</td><td>'+(v.categorie||(p?p.categorie:'')||'—')+'</td><td style="text-align:center">'+(v.qty||v.qte||1)+'</td><td style="text-align:right">'+fmtGNF(v.prixU||0)+'</td><td style="text-align:right;font-weight:700;color:#16a34a">'+fmtGNF(v.total||0)+'</td><td style="text-align:right;color:#7c3aed">'+fmtGNF(v.benefice||0)+'</td><td>'+(v.gerant||'—')+'</td></tr>'; });
+      body += '<tr class="total"><td colspan="4">TOTAL VENTES</td><td style="text-align:right">'+fmtGNF(tCA)+'</td><td style="text-align:right">'+fmtGNF(tBen)+'</td><td></td></tr></tbody></table>';
+    }
+    if(jD.length){
+      body += '<div class="section-title">💸 Dépenses ('+jD.length+')</div>';
+      body += '<table><thead><tr><th>Description</th><th>Catégorie</th><th class="right">Montant</th><th>Gérant</th></tr></thead><tbody>';
+      jD.forEach(function(d){ body+='<tr><td>'+(d.desc||d.description||'—')+'</td><td>'+(d.cat||d.categorie||'—')+'</td><td style="text-align:right;color:#dc2626;font-weight:700">'+fmtGNF(d.montant||0)+'</td><td>'+(d.gerant||'—')+'</td></tr>'; });
+      body += '<tr class="total"><td colspan="2">TOTAL DÉPENSES</td><td style="text-align:right">'+fmtGNF(tDep)+'</td><td></td></tr></tbody></table>';
+    }
+    if(jE.length){
+      body += '<div class="section-title">📥 Entrées stock ('+jE.length+')</div>';
+      body += '<table><thead><tr><th>Produit</th><th>Catégorie</th><th>Qté</th><th class="right">Prix achat</th><th>Gérant</th></tr></thead><tbody>';
+      jE.forEach(function(e){ var p2=products.find(function(x){return x.reference===(e.ref||e.reference);}); body+='<tr><td>'+(e.produit||e.designation||'—')+'</td><td>'+(e.categorie||(p2?p2.categorie:'')||'—')+'</td><td style="text-align:center;color:#2563eb;font-weight:700">+'+(e.qte||e.qty||0)+'</td><td style="text-align:right">'+fmtGNF(e.nouveauPrix||e.prixAchat||0)+'</td><td>'+(e.gerant||'—')+'</td></tr>'; });
+      body += '</tbody></table>';
+    }
+    if(!jV.length && !jD.length && !jE.length) body += '<div style="text-align:center;padding:30px;color:#999;font-style:italic">Aucune activité ce jour</div>';
+    body += makeFooter();
+    openPrint(body);
+    return;
+  }
+
+  // ── RAPPORT MENSUEL ──
+  if(type==='rapport-mois'){
+    var yr  = parseInt((document.getElementById('rpt-mois-year')||{}).value)  || now.getFullYear();
+    var mo  = parseInt((document.getElementById('rpt-mois-month')||{}).value) || (now.getMonth()+1);
+    var mNames2=['','Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
+    function inM(ds){ var d=new Date(ds); return !isNaN(d)&&d.getFullYear()===yr&&(d.getMonth()+1)===mo; }
+    var mV=ventes.filter(function(v){return v.type!=='entree'&&inM(v.ts||v.date);});
+    var mD=depenses.filter(function(d){return inM(d.date||d.ts);});
+    var mE=(typeof entrees!=='undefined'?entrees:[]).filter(function(e){return inM(e.date||e.ts);});
+    var tCA2=mV.reduce(function(s,v){return s+(v.total||0);},0);
+    var tBen2=mV.reduce(function(s,v){return s+(v.benefice!=null?v.benefice:v.total||0);},0);
+    var tDep2=mD.reduce(function(s,d){return s+(d.montant||0);},0);
+    // Regrouper par jour
+    var byDay2={};
+    mV.forEach(function(v){ var dk=(new Date(v.ts||v.date)).toISOString().slice(0,10); byDay2[dk]=byDay2[dk]||{ca:0,ben:0,dep:0,nv:0}; byDay2[dk].ca+=v.total||0; byDay2[dk].ben+=v.benefice!=null?v.benefice:v.total||0; byDay2[dk].nv++; });
+    mD.forEach(function(d){ var dk=(d.date||d.ts||'').slice(0,10); byDay2[dk]=byDay2[dk]||{ca:0,ben:0,dep:0,nv:0}; byDay2[dk].dep+=d.montant||0; });
+    var body2 = makeHeader('RAPPORT MENSUEL');
+    body2 += '<div class="pdf-title">📆 Rapport — '+mNames2[mo]+' '+yr+'</div>';
+    body2 += '<div class="pdf-stats">'
+      +'<div class="pdf-stat"><div class="pdf-stat-label">Ventes</div><div class="pdf-stat-val">'+mV.length+'</div></div>'
+      +'<div class="pdf-stat"><div class="pdf-stat-label">Chiffre d\'affaires</div><div class="pdf-stat-val green">'+fmtGNF(tCA2)+'</div></div>'
+      +'<div class="pdf-stat"><div class="pdf-stat-label">Dépenses</div><div class="pdf-stat-val red">'+fmtGNF(tDep2)+'</div></div>'
+      +'<div class="pdf-stat"><div class="pdf-stat-label">Bénéfice net</div><div class="pdf-stat-val '+(tBen2-tDep2>=0?'green':'red')+'">'+fmtGNF(tBen2-tDep2)+'</div></div>'
+      +'</div>';
+    body2 += '<div class="section-title">📊 Récapitulatif par jour</div>';
+    body2 += '<table><thead><tr><th>Date</th><th>Ventes</th><th class="right">CA</th><th class="right">Dépenses</th><th class="right">Bénéfice net</th></tr></thead><tbody>';
+    Object.keys(byDay2).sort().forEach(function(dk){ var r=byDay2[dk]; var netJ=r.ben-r.dep; body2+='<tr><td>'+new Date(dk).toLocaleDateString('fr-FR')+'</td><td style="text-align:center">'+r.nv+'</td><td style="text-align:right;color:#16a34a;font-weight:700">'+fmtGNF(r.ca)+'</td><td style="text-align:right;color:#dc2626">'+fmtGNF(r.dep)+'</td><td style="text-align:right;font-weight:700;color:'+(netJ>=0?'#16a34a':'#dc2626')+'">'+fmtGNF(netJ)+'</td></tr>'; });
+    body2 += '<tr class="total"><td colspan="2">TOTAL '+mNames2[mo].toUpperCase()+' '+yr+'</td><td style="text-align:right">'+fmtGNF(tCA2)+'</td><td style="text-align:right">'+fmtGNF(tDep2)+'</td><td style="text-align:right">'+fmtGNF(tBen2-tDep2)+'</td></tr></tbody></table>';
+    if(mV.length){
+      body2 += '<div class="section-title no-break">🛒 Détail des ventes</div>';
+      body2 += '<table><thead><tr><th>Date</th><th>Produit</th><th>Catégorie</th><th>Qté</th><th class="right">Total</th><th class="right">Bénéfice</th><th>Gérant</th></tr></thead><tbody>';
+      mV.forEach(function(v){ var p=products.find(function(x){return x.reference===v.ref;}); body2+='<tr><td>'+new Date(v.ts||v.date).toLocaleDateString('fr-FR')+'</td><td>'+(v.produit||v.name||'—')+'</td><td>'+(v.categorie||(p?p.categorie:'')||'—')+'</td><td style="text-align:center">'+(v.qty||v.qte||1)+'</td><td style="text-align:right;color:#16a34a;font-weight:700">'+fmtGNF(v.total||0)+'</td><td style="text-align:right;color:#7c3aed">'+fmtGNF(v.benefice||0)+'</td><td>'+(v.gerant||'—')+'</td></tr>'; });
+      body2 += '</tbody></table>';
+    }
+    if(mD.length){
+      body2 += '<div class="section-title no-break">💸 Détail des dépenses</div>';
+      body2 += '<table><thead><tr><th>Date</th><th>Description</th><th>Catégorie</th><th class="right">Montant</th><th>Gérant</th></tr></thead><tbody>';
+      mD.forEach(function(d){ body2+='<tr><td>'+new Date(d.date||d.ts).toLocaleDateString('fr-FR')+'</td><td>'+(d.desc||d.description||'—')+'</td><td>'+(d.cat||d.categorie||'—')+'</td><td style="text-align:right;color:#dc2626;font-weight:700">'+fmtGNF(d.montant||0)+'</td><td>'+(d.gerant||'—')+'</td></tr>'; });
+      body2 += '</tbody></table>';
+    }
+    body2 += makeFooter();
+    openPrint(body2);
+    return;
+  }
+
+  // ── RAPPORT ANNUEL ──
+  if(type==='rapport-annuel'){
+    var yrA = parseInt((document.getElementById('rpt-annuel-year')||{}).value) || now.getFullYear();
+    var mNamesA=['Jan','Fév','Mar','Avr','Mai','Jun','Jul','Aoû','Sep','Oct','Nov','Déc'];
+    var mFullA=['Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
+    function inYr(ds){ var d=new Date(ds); return !isNaN(d)&&d.getFullYear()===yrA; }
+    var byM2=Array.from({length:12},function(_,i){return {m:i+1,ca:0,ben:0,dep:0,nv:0,nd:0};});
+    ventes.filter(function(v){return v.type!=='entree'&&inYr(v.ts||v.date);}).forEach(function(v){ var mi=new Date(v.ts||v.date).getMonth(); byM2[mi].ca+=v.total||0; byM2[mi].ben+=v.benefice!=null?v.benefice:v.total||0; byM2[mi].nv++; });
+    depenses.filter(function(d){return inYr(d.date||d.ts);}).forEach(function(d){ var mi=new Date(d.date||d.ts).getMonth(); byM2[mi].dep+=d.montant||0; byM2[mi].nd++; });
+    var tCAA=byM2.reduce(function(s,m){return s+m.ca;},0);
+    var tBenA=byM2.reduce(function(s,m){return s+m.ben;},0);
+    var tDepA=byM2.reduce(function(s,m){return s+m.dep;},0);
+    var body3=makeHeader('RAPPORT ANNUEL');
+    body3+='<div class="pdf-title">📈 Rapport Annuel '+yrA+'</div>';
+    body3+='<div class="pdf-stats">'
+      +'<div class="pdf-stat"><div class="pdf-stat-label">CA Annuel</div><div class="pdf-stat-val green">'+fmtGNF(tCAA)+'</div></div>'
+      +'<div class="pdf-stat"><div class="pdf-stat-label">Bénéfice brut</div><div class="pdf-stat-val blue">'+fmtGNF(tBenA)+'</div></div>'
+      +'<div class="pdf-stat"><div class="pdf-stat-label">Total Dépenses</div><div class="pdf-stat-val red">'+fmtGNF(tDepA)+'</div></div>'
+      +'<div class="pdf-stat"><div class="pdf-stat-label">Bénéfice net</div><div class="pdf-stat-val '+(tBenA-tDepA>=0?'green':'red')+'">'+fmtGNF(tBenA-tDepA)+'</div></div>'
+      +'</div>';
+    body3+='<div class="section-title">📊 Récapitulatif mensuel '+yrA+'</div>';
+    body3+='<table><thead><tr><th>Mois</th><th>Ventes</th><th class="right">CA</th><th class="right">Dépenses</th><th class="right">Bénéfice net</th></tr></thead><tbody>';
+    byM2.forEach(function(m){ var netM2=m.ben-m.dep; body3+='<tr><td style="font-weight:600">'+mFullA[m.m-1]+'</td><td style="text-align:center">'+m.nv+'</td><td style="text-align:right;color:'+(m.ca>0?'#16a34a':'#999');body3+=';font-weight:700">'+fmtGNF(m.ca)+'</td><td style="text-align:right;color:#dc2626">'+fmtGNF(m.dep)+'</td><td style="text-align:right;font-weight:700;color:'+(netM2>=0?'#16a34a':'#dc2626')+'">'+fmtGNF(netM2)+'</td></tr>'; });
+    body3+='<tr class="total"><td colspan="2">TOTAL '+yrA+'</td><td style="text-align:right">'+fmtGNF(tCAA)+'</td><td style="text-align:right">'+fmtGNF(tDepA)+'</td><td style="text-align:right">'+fmtGNF(tBenA-tDepA)+'</td></tr></tbody></table>';
+    body3+=makeFooter();
+    openPrint(body3);
+    return;
+  }
+
+  // ── INVENTAIRE / STOCK ──
+  if(type==='inventaire' || type==='produits'){
+    var prods = products.slice().sort(function(a,b){return (a.categorie||'').localeCompare(b.categorie||'')||a.designation.localeCompare(b.designation);});
+    var stockTotal=prods.reduce(function(s,p){return s+(p.total||0);},0);
+    var bodyI=makeHeader('ÉTAT DU STOCK');
+    bodyI+='<div class="pdf-title">📦 Inventaire — '+dateStr+'</div>';
+    bodyI+='<div class="pdf-stats">'
+      +'<div class="pdf-stat"><div class="pdf-stat-label">Références</div><div class="pdf-stat-val">'+prods.length+'</div></div>'
+      +'<div class="pdf-stat"><div class="pdf-stat-label">Valeur stock</div><div class="pdf-stat-val green">'+fmtGNF(stockTotal)+'</div></div>'
+      +'<div class="pdf-stat"><div class="pdf-stat-label">Alertes</div><div class="pdf-stat-val red">'+prods.filter(function(p){return p.stock_initial<=p.seuil_alerte;}).length+'</div></div>'
+      +'<div class="pdf-stat"><div class="pdf-stat-label">Ruptures</div><div class="pdf-stat-val red">'+prods.filter(function(p){return p.stock_initial===0;}).length+'</div></div>'
+      +'</div>';
+    bodyI+='<table><thead><tr><th>Référence</th><th>Désignation</th><th>Catégorie</th><th class="right">Stock</th><th class="right">Seuil</th><th class="right">Prix achat</th><th class="right">Prix vente</th><th class="right">Valeur</th><th>Statut</th></tr></thead><tbody>';
+    prods.forEach(function(p){
+      var statut=p.stock_initial===0?'RUPTURE':p.stock_initial<=p.seuil_alerte?'ALERTE':'OK';
+      var sc=statut==='RUPTURE'?'#dc2626':statut==='ALERTE'?'#d97706':'#16a34a';
+      bodyI+='<tr><td style="font-family:monospace;font-size:9px">'+(p.reference||'—')+'</td><td style="font-weight:600">'+p.designation+'</td><td>'+(p.categorie||'—')+'</td><td style="text-align:right;font-weight:700">'+p.stock_initial+'</td><td style="text-align:right;color:#999">'+p.seuil_alerte+'</td><td style="text-align:right">'+fmtGNF(p.prix_achat||0)+'</td><td style="text-align:right">'+fmtGNF(p.prix_vente||0)+'</td><td style="text-align:right;font-weight:700;color:#16a34a">'+fmtGNF(p.total||0)+'</td><td><span style="font-size:9px;font-weight:700;color:'+sc+'">'+statut+'</span></td></tr>';
+    });
+    bodyI+='<tr class="total"><td colspan="7">VALEUR TOTALE DU STOCK</td><td style="text-align:right">'+fmtGNF(stockTotal)+'</td><td></td></tr></tbody></table>';
+    bodyI+=makeFooter();
+    openPrint(bodyI);
+    return;
+  }
+
+  // ── RAPPORT VENTES (vue sorties) ──
+  if(type==='sorties' || type==='ventes'){
+    var ysel2=document.getElementById('sort-year-filter');
+    var msel2=document.getElementById('sort-month-filter');
+    var yr2=parseInt((ysel2||{}).value)||now.getFullYear();
+    var mo2=parseInt((msel2||{}).value)||(now.getMonth()+1);
+    function inPer(ds){ var d=new Date(ds); return !isNaN(d)&&d.getFullYear()===yr2&&(d.getMonth()+1)===mo2; }
+    var mNamesV=['','Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
+    var sv=ventes.filter(function(v){return v.type!=='entree'&&inPer(v.ts||v.date);});
+    var tCA3=sv.reduce(function(s,v){return s+(v.total||0);},0);
+    var tBen3=sv.reduce(function(s,v){return s+(v.benefice||0);},0);
+    var bodyV=makeHeader('SORTIES MENSUELLES');
+    bodyV+='<div class="pdf-title">🛒 Ventes — '+mNamesV[mo2]+' '+yr2+'</div>';
+    bodyV+='<div class="pdf-stats"><div class="pdf-stat"><div class="pdf-stat-label">Ventes</div><div class="pdf-stat-val">'+sv.length+'</div></div><div class="pdf-stat"><div class="pdf-stat-label">CA</div><div class="pdf-stat-val green">'+fmtGNF(tCA3)+'</div></div><div class="pdf-stat"><div class="pdf-stat-label">Bénéfice</div><div class="pdf-stat-val blue">'+fmtGNF(tBen3)+'</div></div></div>';
+    bodyV+='<table><thead><tr><th>Date</th><th>Produit</th><th>Catégorie</th><th>Qté</th><th class="right">Prix U.</th><th class="right">Total</th><th class="right">Bénéfice</th><th>Gérant</th></tr></thead><tbody>';
+    sv.forEach(function(v){ var p=products.find(function(x){return x.reference===v.ref;}); bodyV+='<tr><td>'+new Date(v.ts||v.date).toLocaleDateString('fr-FR')+'</td><td style="font-weight:600">'+(v.produit||v.name||'—')+'</td><td>'+(v.categorie||(p?p.categorie:'')||'—')+'</td><td style="text-align:center">'+(v.qty||v.qte||1)+'</td><td style="text-align:right">'+fmtGNF(v.prixU||0)+'</td><td style="text-align:right;font-weight:700;color:#16a34a">'+fmtGNF(v.total||0)+'</td><td style="text-align:right;color:#7c3aed">'+fmtGNF(v.benefice||0)+'</td><td style="font-size:9px">'+(v.gerant||'—')+'</td></tr>'; });
+    bodyV+='<tr class="total"><td colspan="5">TOTAL</td><td style="text-align:right">'+fmtGNF(tCA3)+'</td><td style="text-align:right">'+fmtGNF(tBen3)+'</td><td></td></tr></tbody></table>';
+    bodyV+=makeFooter();
+    openPrint(bodyV);
+    return;
+  }
+
+  // ── DÉPENSES ──
+  if(type==='depenses'){
+    var mselD=document.getElementById('dep-month-filter');
+    var yselD=document.getElementById('dep-year-filter');
+    function inPD(ds){ if(!(mselD&&mselD.value)) return true; var d=new Date(ds); if(isNaN(d))return false; var mk2=String(d.getFullYear())+'-'+String(d.getMonth()+1).padStart(2,'0'); return mk2===((yselD&&yselD.value?yselD.value:now.getFullYear())+'-'+mselD.value); }
+    var dd=depenses.filter(function(d){return inPD(d.date||d.ts);});
+    var tDD=dd.reduce(function(s,d){return s+(d.montant||0);},0);
+    var bodyD=makeHeader('DÉPENSES');
+    bodyD+='<div class="pdf-title">💸 Dépenses</div>';
+    bodyD+='<div class="pdf-stats"><div class="pdf-stat"><div class="pdf-stat-label">Dépenses</div><div class="pdf-stat-val">'+dd.length+'</div></div><div class="pdf-stat"><div class="pdf-stat-label">Total</div><div class="pdf-stat-val red">'+fmtGNF(tDD)+'</div></div></div>';
+    bodyD+='<table><thead><tr><th>Date</th><th>Description</th><th>Catégorie</th><th class="right">Montant</th><th>Gérant</th></tr></thead><tbody>';
+    dd.forEach(function(d){ bodyD+='<tr><td>'+new Date(d.date||d.ts).toLocaleDateString('fr-FR')+'</td><td style="font-weight:600">'+(d.desc||d.description||'—')+'</td><td>'+(d.cat||d.categorie||'—')+'</td><td style="text-align:right;font-weight:700;color:#dc2626">'+fmtGNF(d.montant||0)+'</td><td style="font-size:9px">'+(d.gerant||'—')+'</td></tr>'; });
+    bodyD+='<tr class="total"><td colspan="3">TOTAL DÉPENSES</td><td style="text-align:right">'+fmtGNF(tDD)+'</td><td></td></tr></tbody></table>';
+    bodyD+=makeFooter();
+    openPrint(bodyD);
+    return;
+  }
+
+  // ── DEFAULT : imprimer la vue active via window.print() ──
   window.print();
-  // Restaurer
-  if(histEl){histEl.style.maxHeight=histOld;histEl.style.overflow='auto';}
-  if(ventesContent){ventesContent.style.display=vcOld;}
 }
 
 // ===== ADMIN =====
@@ -2656,7 +2912,11 @@ window.addEventListener('DOMContentLoaded',function(){
     <div class="view" id="view-rapport">
       <div class="topbar">
         <h1>📊 Rapports</h1>
-        <button onclick="printView()" class="btn-print">🖨️ Imprimer</button>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <button onclick="agvPrintPDF('rapport-jour')" class="btn-print">🖨️ Jour</button>
+          <button onclick="agvPrintPDF('rapport-mois')" class="btn-print">🖨️ Mois</button>
+          <button onclick="agvPrintPDF('rapport-annuel')" class="btn-print">🖨️ Année</button>
+        </div>
       </div>
       <!-- Onglets Journalier / Mensuel / Annuel -->
       <div style="display:flex;gap:4px;margin-bottom:16px;background:var(--surface2);border-radius:10px;padding:4px">
@@ -2778,7 +3038,7 @@ window.addEventListener('DOMContentLoaded',function(){
         <select class="filter-sel" id="sort-year-filter" onchange="onSortYearChange()" style="border-radius:6px;padding:5px 10px"></select>
         <select class="filter-sel" id="sort-month-filter" onchange="renderSorties()" style="border-radius:6px;padding:5px 28px 5px 10px"></select>
         <button onclick="openCompMois()" style="padding:6px 12px;border:1px solid var(--accent);border-radius:8px;background:var(--accent-light);color:var(--accent);font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;display:flex;align-items:center;gap:5px">📊 Comparer mois</button>
-        <button class="btn-print" onclick="printView()">🖨️ Imprimer</button>
+        <button class="btn-print" onclick="agvPrintPDF('sorties')">🖨️ PDF A4</button>
       </div>
     </div>
     <div class="stats" id="sorties-stats-cards" style="margin-bottom:16px"></div>
