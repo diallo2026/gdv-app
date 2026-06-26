@@ -1151,10 +1151,11 @@ function agvPrintPDF(type, extraData){
   // ── RAPPORT JOURNALIER ──
   if(type==='rapport-jour' || type==='rapport'){
     var dateVal = extraData || (document.getElementById('rpt-jour-date')||{}).value || now.toISOString().slice(0,10);
-    var dateLabel = new Date(dateVal).toLocaleDateString('fr-FR',{weekday:'long',year:'numeric',month:'long',day:'numeric'});
-    var jV = ventes.filter(function(v){ return v.type!=='entree' && (v.ts||v.date||'').slice(0,10)===dateVal; });
-    var jD = depenses.filter(function(d){ return (d.date||'').slice(0,10)===dateVal; });
-    var jE = (typeof entrees!=='undefined'?entrees:[]).filter(function(e){ return (e.date||e.ts||'').slice(0,10)===dateVal; });
+    var dateLabel = new Date(dateVal+'T12:00:00').toLocaleDateString('fr-FR',{weekday:'long',year:'numeric',month:'long',day:'numeric'});
+    function matchDayPDF(ds){ if(!ds)return false; var d=new Date(ds); if(isNaN(d))return false; var y=d.getFullYear(),m=String(d.getMonth()+1).padStart(2,'0'),j=String(d.getDate()).padStart(2,'0'); return (y+'-'+m+'-'+j)===dateVal; }
+    var jV = ventes.filter(function(v){ return v.type!=='entree' && matchDayPDF(v.ts||v.date); });
+    var jD = depenses.filter(function(d){ return matchDayPDF(d.date||d.ts); });
+    var jE = (typeof entrees!=='undefined'?entrees:[]).filter(function(e){ return matchDayPDF(e.date||e.ts); });
     var tCA=jV.reduce(function(s,v){return s+(v.total||0);},0);
     var tBen=jV.reduce(function(s,v){return s+(v.benefice!=null?v.benefice:v.total||0);},0);
     var tDep=jD.reduce(function(s,d){return s+(d.montant||0);},0);
@@ -1235,7 +1236,149 @@ function agvPrintPDF(type, extraData){
     return;
   }
 
-  // ── RAPPORT ANNUEL ──
+  // ── DASHBOARD avec graphique catégories ──
+  if(type==='dashboard'){
+    var _dashY = (document.getElementById('dash-year-filter')||{}).value || String(now.getFullYear());
+    var _dashM = (document.getElementById('dash-month-filter')||{}).value || '';
+    function _dfDash(ds){ var d=new Date(ds); if(isNaN(d))return true; var yOk=!_dashY||d.getFullYear()===parseInt(_dashY); var mOk=!_dashM||(String(d.getMonth()+1).padStart(2,'0')===_dashM); return yOk&&mOk; }
+    var _mNames=['','Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
+    var _period = (_dashM?_mNames[parseInt(_dashM)]+' ':'')+(_dashY||'Toute période');
+    var _sv=ventes.filter(function(v){return v.type!=='entree'&&_dfDash(v.ts||v.date);});
+    var _sd=depenses.filter(function(d){return _dfDash(d.date||d.ts);});
+    var _tCA=_sv.reduce(function(s,v){return s+(v.total||0);},0);
+    var _tBen=_sv.reduce(function(s,v){return s+(v.benefice!=null?v.benefice:v.total||0);},0);
+    var _tDep=_sd.reduce(function(s,d){return s+(d.montant||0);},0);
+    var _stockV=products.reduce(function(s,p){return s+(p.total||0);},0);
+    // Graphique barres catégories (SVG)
+    var cats={};
+    products.forEach(function(p){cats[p.categorie||'Sans cat']=(cats[p.categorie||'Sans cat']||0)+1;});
+    var sortedCats=Object.entries(cats).sort(function(a,b){return b[1]-a[1];}).slice(0,10);
+    var maxC2=sortedCats[0]?sortedCats[0][1]:1;
+    var barH=18,barGap=6,svgH=(barH+barGap)*sortedCats.length+20;
+    var catSVG='<svg viewBox="0 0 400 '+svgH+'" style="width:100%;max-height:'+svgH+'px">';
+    sortedCats.forEach(function(e,i){
+      var bw=Math.round(e[1]/maxC2*260);
+      var y=10+i*(barH+barGap);
+      catSVG+='<text x="0" y="'+(y+13)+'" font-size="10" fill="#444" font-family="Arial">'+e[0]+'</text>';
+      catSVG+='<rect x="110" y="'+y+'" width="'+bw+'" height="'+barH+'" rx="3" fill="#1e3a5f" opacity=".8"/>';
+      catSVG+='<text x="'+(115+bw)+'" y="'+(y+13)+'" font-size="10" fill="#1e3a5f" font-weight="700" font-family="Arial">'+e[1]+'</text>';
+    });
+    catSVG+='</svg>';
+    // Alertes stock
+    var alerts=products.filter(function(p){return p.stock_initial===0||p.stock_initial<=p.seuil_alerte;}).slice(0,8);
+    var bodyDB=makeHeader('TABLEAU DE BORD');
+    bodyDB+='<div class="pdf-title">📊 Tableau de bord — '+_period+'</div>';
+    bodyDB+='<div class="pdf-stats"><div class="pdf-stat"><div class="pdf-stat-label">Chiffre d\'affaires</div><div class="pdf-stat-val green">'+fmtGNF(_tCA)+'</div></div><div class="pdf-stat"><div class="pdf-stat-label">Bénéfice net</div><div class="pdf-stat-val '+((_tBen-_tDep)>=0?'green':'red')+'">'+fmtGNF(_tBen-_tDep)+'</div></div><div class="pdf-stat"><div class="pdf-stat-label">Dépenses</div><div class="pdf-stat-val red">'+fmtGNF(_tDep)+'</div></div><div class="pdf-stat"><div class="pdf-stat-label">Valeur stock</div><div class="pdf-stat-val blue">'+fmtGNF(_stockV)+'</div></div></div>';
+    bodyDB+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">';
+    bodyDB+='<div><div class="section-title">📦 Produits par catégorie</div>'+catSVG+'</div>';
+    if(alerts.length){
+      bodyDB+='<div><div class="section-title">⚠️ Alertes stock</div><table><thead><tr><th>Produit</th><th class="right">Stock</th><th class="right">Seuil</th><th>Statut</th></tr></thead><tbody>';
+      alerts.forEach(function(p){ var s=p.stock_initial===0?'RUPTURE':'ALERTE'; bodyDB+='<tr><td>'+p.designation+'</td><td style="text-align:right">'+p.stock_initial+'</td><td style="text-align:right;color:#999">'+p.seuil_alerte+'</td><td style="font-weight:700;color:'+(p.stock_initial===0?'#dc2626':'#d97706')+'">'+s+'</td></tr>'; });
+      bodyDB+='</tbody></table></div>';
+    }
+    bodyDB+='</div>'+makeFooter();
+    openPrint(bodyDB);
+    return;
+  }
+
+  // ── RAPPORT JOURNALIER depuis l'onglet journalier ──
+  if(type==='journalier'){
+    var _mk = document.getElementById('jour-month-filter')?document.getElementById('jour-month-filter').value:'';
+    var _dk = document.getElementById('jour-day-filter')?document.getElementById('jour-day-filter').value:'';
+    var dateJ = _dk || (_mk?_mk+'-01':'');
+    agvPrintPDF('rapport-jour', dateJ||now.toISOString().slice(0,10));
+    return;
+  }
+
+  // ── VENTES (vue gestion des ventes) ──
+  if(type==='ventes'){
+    var allSorties = ventes.filter(function(v){return v.type!=='entree';});
+    var tCAV=allSorties.reduce(function(s,v){return s+(v.total||0);},0);
+    var tBenV=allSorties.reduce(function(s,v){return s+(v.benefice||0);},0);
+    var bodyVt=makeHeader('LISTE DES VENTES');
+    bodyVt+='<div class="pdf-title">🛒 Ventes — Toutes périodes</div>';
+    bodyVt+='<div class="pdf-stats"><div class="pdf-stat"><div class="pdf-stat-label">Nb ventes</div><div class="pdf-stat-val">'+allSorties.length+'</div></div><div class="pdf-stat"><div class="pdf-stat-label">CA Total</div><div class="pdf-stat-val green">'+fmtGNF(tCAV)+'</div></div><div class="pdf-stat"><div class="pdf-stat-label">Bénéfice total</div><div class="pdf-stat-val blue">'+fmtGNF(tBenV)+'</div></div></div>';
+    bodyVt+='<table><thead><tr><th>Date</th><th>Produit</th><th>Catégorie</th><th>Qté</th><th class="right">Prix U.</th><th class="right">Total</th><th class="right">Bénéfice</th><th>Gérant</th></tr></thead><tbody>';
+    allSorties.slice(0,200).forEach(function(v){ var p=products.find(function(x){return x.reference===v.ref;}); bodyVt+='<tr><td>'+new Date(v.ts||v.date).toLocaleDateString('fr-FR')+'</td><td style="font-weight:600">'+(v.produit||v.name||'—')+'</td><td>'+(v.categorie||(p?p.categorie:'')||'—')+'</td><td style="text-align:center">'+(v.qty||v.qte||1)+'</td><td style="text-align:right">'+fmtGNF(v.prixU||0)+'</td><td style="text-align:right;font-weight:700;color:#16a34a">'+fmtGNF(v.total||0)+'</td><td style="text-align:right;color:#7c3aed">'+fmtGNF(v.benefice||0)+'</td><td style="font-size:9px">'+(v.gerant||'—')+'</td></tr>'; });
+    bodyVt+='<tr class="total"><td colspan="5">TOTAL</td><td style="text-align:right">'+fmtGNF(tCAV)+'</td><td style="text-align:right">'+fmtGNF(tBenV)+'</td><td></td></tr></tbody></table>';
+    bodyVt+=makeFooter();
+    openPrint(bodyVt);
+    return;
+  }
+
+  // ── DETTES ──
+  if(type==='dettes'){
+    var das=getDettesSolde();
+    var tDClient=das.filter(function(d){return d.type==='client'&&d.solde>0;}).reduce(function(s,d){return s+d.solde;},0);
+    var tDPerso=das.filter(function(d){return (d.type==='fondateur'||d.type==='gerant')&&d.solde>0;}).reduce(function(s,d){return s+d.solde;},0);
+    var tDFourn=das.filter(function(d){return d.type==='fournisseur'&&d.solde>0;}).reduce(function(s,d){return s+d.solde;},0);
+    var bodyDT=makeHeader('GESTION DES DETTES');
+    bodyDT+='<div class="pdf-title">💳 État des Dettes</div>';
+    bodyDT+='<div class="pdf-stats"><div class="pdf-stat"><div class="pdf-stat-label">Clients</div><div class="pdf-stat-val red">'+fmtGNF(tDClient)+'</div></div><div class="pdf-stat"><div class="pdf-stat-label">Personnel</div><div class="pdf-stat-val red">'+fmtGNF(tDPerso)+'</div></div><div class="pdf-stat"><div class="pdf-stat-label">Fournisseurs</div><div class="pdf-stat-val red">'+fmtGNF(tDFourn)+'</div></div><div class="pdf-stat"><div class="pdf-stat-label">TOTAL DETTES</div><div class="pdf-stat-val red">'+fmtGNF(tDClient+tDPerso+tDFourn)+'</div></div></div>';
+    var active=das.filter(function(d){return d.solde>0;});
+    if(active.length){
+      bodyDT+='<table><thead><tr><th>Nom</th><th>Type</th><th>Description</th><th class="right">Montant</th><th class="right">Payé</th><th class="right">Reste</th></tr></thead><tbody>';
+      active.forEach(function(d){ bodyDT+='<tr><td style="font-weight:600">'+(d.nom||d.personneNom||'—')+'</td><td><span style="font-size:9px;padding:1px 5px;border-radius:8px;background:#fee2e2;color:#dc2626">'+d.type+'</span></td><td>'+(d.desc||'—')+'</td><td style="text-align:right">'+fmtGNF(d.montant||0)+'</td><td style="text-align:right;color:#16a34a">'+fmtGNF((d.montant||0)-(d.solde||0))+'</td><td style="text-align:right;font-weight:700;color:#dc2626">'+fmtGNF(d.solde||0)+'</td></tr>'; });
+      bodyDT+='<tr class="total"><td colspan="5">TOTAL RESTANT</td><td style="text-align:right">'+fmtGNF(tDClient+tDPerso+tDFourn)+'</td></tr></tbody></table>';
+    }
+    bodyDT+=makeFooter();
+    openPrint(bodyDT);
+    return;
+  }
+
+  // ── APPROVISIONNEMENT ──
+  if(type==='appro'){
+    var tAppro=appros.reduce(function(s,a){return s+(a.montant||0);},0);
+    var bodyAp=makeHeader('APPROVISIONNEMENTS');
+    bodyAp+='<div class="pdf-title">🔄 Approvisionnements</div>';
+    bodyAp+='<div class="pdf-stats"><div class="pdf-stat"><div class="pdf-stat-label">Nb appros</div><div class="pdf-stat-val">'+appros.length+'</div></div><div class="pdf-stat"><div class="pdf-stat-label">Total investi</div><div class="pdf-stat-val red">'+fmtGNF(tAppro)+'</div></div></div>';
+    bodyAp+='<table><thead><tr><th>Date</th><th>Désignation</th><th>Fournisseur</th><th class="right">Montant</th><th>Gérant</th></tr></thead><tbody>';
+    appros.slice().sort(function(a,b){return new Date(b.date||b.ts)-new Date(a.date||a.ts);}).forEach(function(a){ bodyAp+='<tr><td>'+new Date(a.date||a.ts).toLocaleDateString('fr-FR')+'</td><td style="font-weight:600">'+(a.designation||a.desc||'—')+'</td><td>'+(a.fournisseur||'—')+'</td><td style="text-align:right;font-weight:700;color:#dc2626">'+fmtGNF(a.montant||0)+'</td><td style="font-size:9px">'+(a.gerant||'—')+'</td></tr>'; });
+    bodyAp+='<tr class="total"><td colspan="3">TOTAL</td><td style="text-align:right">'+fmtGNF(tAppro)+'</td><td></td></tr></tbody></table>';
+    bodyAp+=makeFooter();
+    openPrint(bodyAp);
+    return;
+  }
+
+  // ── SALAIRES ──
+  if(type==='salaires'){
+    var tSalaires=gerants.reduce(function(s,g){return s+(g.salaire||0);},0);
+    var bodyS=makeHeader('SALAIRES');
+    bodyS+='<div class="pdf-title">💰 Récapitulatif Salaires</div>';
+    bodyS+='<div class="pdf-stats"><div class="pdf-stat"><div class="pdf-stat-label">Gérants</div><div class="pdf-stat-val">'+gerants.length+'</div></div><div class="pdf-stat"><div class="pdf-stat-label">Total salaires fixes</div><div class="pdf-stat-val red">'+fmtGNF(tSalaires)+'</div></div></div>';
+    bodyS+='<table><thead><tr><th>Nom</th><th>Type</th><th class="right">Montant</th></tr></thead><tbody>';
+    gerants.forEach(function(g){ var typeLabel=g.type==='salaire'?'Salaire fixe':(g.type==='pourcentage'?g.pct+'% des bénéfices':'—'); bodyS+='<tr><td style="font-weight:600">'+g.nom+'</td><td>'+typeLabel+'</td><td style="text-align:right;font-weight:700;color:#16a34a">'+fmtGNF(g.salaire||0)+'</td></tr>'; });
+    bodyS+='</tbody></table>';
+    bodyS+=makeFooter();
+    openPrint(bodyS);
+    return;
+  }
+
+  // ── ENTREES MENSUELLES avec graphique ──
+  if(type==='entrees'){
+    var entreesFilt = (typeof entrees!=='undefined'?entrees:[]);
+    var tQteE=entreesFilt.reduce(function(s,e){return s+(e.qte||e.qty||1);},0);
+    var tMontE=entreesFilt.reduce(function(s,e){return s+(e.total||0);},0);
+    // Graphique par mois
+    var byME={};
+    entreesFilt.forEach(function(e){ var d=new Date(e.date||e.ts); if(isNaN(d))return; var mk=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'); byME[mk]=(byME[mk]||0)+(e.qte||1); });
+    var mksE=Object.keys(byME).sort().slice(-12);
+    var maxME=Math.max.apply(null,mksE.map(function(k){return byME[k];})||[1])||1;
+    var svgE='<svg viewBox="0 0 400 120" style="width:100%;max-height:120px">';
+    mksE.forEach(function(mk,i){ var bh=Math.round(byME[mk]/maxME*80); var x=i*(400/mksE.length)+2; var w=(400/mksE.length)-4; svgE+='<rect x="'+x+'" y="'+(90-bh)+'" width="'+w+'" height="'+bh+'" rx="3" fill="#2563eb" opacity=".8"/>'; svgE+='<text x="'+(x+w/2)+'" y="108" text-anchor="middle" font-size="7" fill="#666" font-family="Arial">'+mk.slice(5)+'</text>'; });
+    svgE+='</svg>';
+    var bodyE=makeHeader('ENTRÉES MENSUELLES');
+    bodyE+='<div class="pdf-title">📥 Entrées de stock</div>';
+    bodyE+='<div class="pdf-stats"><div class="pdf-stat"><div class="pdf-stat-label">Entrées</div><div class="pdf-stat-val">'+entreesFilt.length+'</div></div><div class="pdf-stat"><div class="pdf-stat-label">Unités reçues</div><div class="pdf-stat-val blue">'+tQteE+'</div></div><div class="pdf-stat"><div class="pdf-stat-label">Montant total</div><div class="pdf-stat-val">'+fmtGNF(tMontE)+'</div></div></div>';
+    if(mksE.length>1){ bodyE+='<div class="section-title">📈 Évolution des entrées</div>'+svgE; }
+    bodyE+='<table><thead><tr><th>Date</th><th>Produit</th><th>Catégorie</th><th>Qté</th><th class="right">Prix achat</th><th class="right">Total</th><th>Gérant</th></tr></thead><tbody>';
+    entreesFilt.slice(0,150).forEach(function(e){ var p2=products.find(function(x){return x.reference===(e.ref||e.reference);}); bodyE+='<tr><td>'+new Date(e.date||e.ts).toLocaleDateString('fr-FR')+'</td><td style="font-weight:600">'+(e.produit||e.designation||'—')+'</td><td>'+(e.categorie||(p2?p2.categorie:'')||'—')+'</td><td style="text-align:center;font-weight:700;color:#2563eb">+'+(e.qte||e.qty||0)+'</td><td style="text-align:right">'+fmtGNF(e.nouveauPrix||e.prixAchat||0)+'</td><td style="text-align:right;font-weight:700">'+fmtGNF(e.total||0)+'</td><td style="font-size:9px">'+(e.gerant||'—')+'</td></tr>'; });
+    bodyE+='</tbody></table>'+makeFooter();
+    openPrint(bodyE);
+    return;
+  }
+
+  // ── RAPPORT ANNUEL avec graphique SVG ──
   if(type==='rapport-annuel'){
     var yrA = parseInt((document.getElementById('rpt-annuel-year')||{}).value) || now.getFullYear();
     var mNamesA=['Jan','Fév','Mar','Avr','Mai','Jun','Jul','Aoû','Sep','Oct','Nov','Déc'];
@@ -2539,7 +2682,7 @@ window.addEventListener('DOMContentLoaded',function(){
           <svg class="search-ico" width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35" stroke-width="2"/></svg>
           <input type="text" id="search-input" placeholder="Référence, désignation..." oninput="renderTable()">
         </div>
-        <button class="btn-print" onclick="printView()">🖨️ Imprimer</button>
+        <button class="btn-print" onclick="agvPrintPDF('inventaire')">🖨️ PDF A4</button>
         <button class="btn btn-primary" id="btn-add-prod" onclick="openAdd()">+ Ajouter</button>
       </div>
       <div class="filters" id="cat-filters"></div>
@@ -2585,7 +2728,7 @@ window.addEventListener('DOMContentLoaded',function(){
       <div class="topbar">
         <h1>Gestion des ventes</h1>
         <div style="display:flex;gap:8px">
-          <button class="btn-print" onclick="printView()">🖨️ Imprimer</button>
+          <button class="btn-print" onclick="agvPrintPDF('ventes')">🖨️ PDF A4</button>
           <button class="btn btn-success" onclick="openVenteRapide()" style="display:flex;align-items:center;gap:6px">⚡ Vente rapide</button>
         </div>
       </div>
@@ -2994,7 +3137,7 @@ window.addEventListener('DOMContentLoaded',function(){
         <select class="filter-sel" id="ent-year-filter" onchange="onEntYearChange()" style="border-radius:6px;padding:5px 10px"></select>
         <select class="filter-sel" id="ent-month-filter" onchange="renderEntrees()" style="border-radius:6px;padding:5px 28px 5px 10px"></select>
         <button onclick="openCompMois()" style="padding:6px 12px;border:1px solid var(--accent);border-radius:8px;background:var(--accent-light);color:var(--accent);font-size:12px;font-weight:700;cursor:pointer;font-family:inherit">📊 Comparer</button>
-        <button class="btn-print" onclick="printView()">🖨️ Imprimer</button>
+        <button class="btn-print" onclick="agvPrintPDF('entrees')">🖨️ Imprimer</button>
         <button class="btn btn-primary btn-sm" onclick="openEntreeModal()">+ Nouvelle entrée</button>
       </div>
     </div>
@@ -3080,7 +3223,7 @@ window.addEventListener('DOMContentLoaded',function(){
       <div style="display:flex;gap:8px;align-items:center">
         <select class="filter-sel" id="appro-year-filter" onchange="onApproYearChange()" style="border-radius:6px;padding:5px 10px"></select>
         <select class="filter-sel" id="appro-month-filter" onchange="renderAppro()" style="border-radius:6px;padding:5px 28px 5px 10px"></select>
-        <button class="btn-print" onclick="printView()">🖨️ Imprimer</button>
+        <button class="btn-print" onclick="agvPrintPDF('appro')">🖨️ PDF A4</button>
         <button class="btn btn-primary btn-sm" id="btn-add-appro" onclick="openApproModal()">+ Nouvel approvisionnement</button>
       </div>
     </div>
@@ -3188,7 +3331,7 @@ window.addEventListener('DOMContentLoaded',function(){
   <div id="view-dettes" class="view">
     <div class="topbar">
       <h1>💳 Gestion des Dettes</h1>
-      <button class="btn-print" onclick="printView()">🖨️ Imprimer</button>
+      <button class="btn-print" onclick="agvPrintPDF('dettes')">🖨️ Imprimer</button>
     </div>
     <!-- Stats globales -->
     <div class="stats" id="dettes-stats" style="margin-bottom:16px"></div>
@@ -4433,10 +4576,18 @@ function _rptFmtDate(ds){ try{ return new Date(ds).toLocaleDateString('fr-FR'); 
 
 function renderRapportJour(){
   var dateVal = (document.getElementById('rpt-jour-date')||{}).value || new Date().toISOString().slice(0,10);
-  // Filtrer ventes, dépenses, entrées de ce jour
-  var jVentes  = ventes.filter(function(v){ var d=new Date(v.ts||v.date); return d.toISOString&&d.toISOString().slice(0,10)===dateVal; });
-  var jDep     = depenses.filter(function(d){ return (d.date||'').slice(0,10)===dateVal; });
-  var jEntrees = (typeof entrees!=='undefined'?entrees:[]).filter(function(e){ return (e.date||e.ts||'').slice(0,10)===dateVal; });
+  // Filtre robuste : comparer YYYY-MM-DD en local sans décalage fuseau
+  function matchDay(ds){
+    if(!ds) return false;
+    var d = new Date(ds);
+    if(isNaN(d)) return false;
+    // Utiliser toLocaleDateString pour éviter le décalage UTC
+    var y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,'0'), j=String(d.getDate()).padStart(2,'0');
+    return (y+'-'+m+'-'+j)===dateVal;
+  }
+  var jVentes  = ventes.filter(function(v){ return v.type!=='entree' && matchDay(v.ts||v.date); });
+  var jDep     = depenses.filter(function(d){ return matchDay(d.date||d.ts); });
+  var jEntrees = (typeof entrees!=='undefined'?entrees:[]).filter(function(e){ return matchDay(e.date||e.ts); });
   var tCA   = jVentes.reduce(function(s,v){return s+(v.total||0);},0);
   var tBen  = jVentes.reduce(function(s,v){return s+(v.benefice!=null?v.benefice:v.total||0);},0);
   var tDep  = jDep.reduce(function(s,d){return s+(d.montant||0);},0);
