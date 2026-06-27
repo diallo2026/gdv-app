@@ -626,7 +626,7 @@ function landingGoShop(){
           return;
         }
       }
-      try{localStorage.setItem('agv_shop_'+code,JSON.stringify(found));}catch(e){}
+      found.uid=uid; try{localStorage.setItem('agv_shop_'+code,JSON.stringify(found));}catch(e){}
       window._lastShopCode=code;
       window._shopLoginData=found;
       agvShow('agv-shop-login');
@@ -902,8 +902,30 @@ function agvLogin(){
   });
 }
 
+
+// ==================== EN LIGNE / HORS LIGNE ====================
+function agvSetOnlineStatus(online){
+  var ind  = document.getElementById('syncIndicator');
+  var dot  = document.getElementById('syncDot');
+  var txt  = document.getElementById('syncText');
+  if(!ind) return;
+  ind.style.display = 'flex';
+  if(online){
+    if(dot){ dot.classList.remove('offline'); }
+    if(txt){ txt.textContent='En ligne ✓'; txt.classList.remove('offline'); }
+    ind.style.background   = 'rgba(240,253,244,0.97)';
+    ind.style.borderColor  = '#86efac';
+  } else {
+    if(dot){ dot.classList.add('offline'); }
+    if(txt){ txt.textContent='Hors ligne'; txt.classList.add('offline'); }
+    ind.style.background  = 'rgba(254,242,242,0.97)';
+    ind.style.borderColor = '#fca5a5';
+  }
+}
+
 // ===== LANCEMENT DE L'APP =====
 function agvLaunchApp(shop){
+  if(!shop || !shop.uid){ console.error('agvLaunchApp: shop.uid manquant', shop); return; }
   agvShow('agv-app');
   agvSetOnlineStatus(navigator.onLine);
 
@@ -2329,7 +2351,7 @@ function agvLoadShopLogin(code){
     }
     db.ref('gdv_shops/'+uid+'/info').once('value',function(snapShop){
       var shop=snapShop.val();
-      if(shop) try{localStorage.setItem('agv_shop_'+code,JSON.stringify(shop));}catch(e){}
+      if(shop){ shop.uid=uid; try{localStorage.setItem('agv_shop_'+code,JSON.stringify(shop));}catch(e){} }
       snap={val:function(){return null;}}; // dummy
       var fakeSnap={forEach:function(){}};
 
@@ -2463,10 +2485,18 @@ function agvShopLogin(role){
     if(match){
       agvShopLoginMsg('Connexion réussie !', true);
       window._currentShop=shop;
-      setTimeout(function(){
-        agvLaunchApp(shop);
+      function _doLaunchFondateur(s){
+        agvLaunchApp(s);
         currentRole='fondateur'; currentGerantId=null;
         if(typeof applyRoleUI==='function') applyRoleUI();
+      }
+      setTimeout(function(){
+        if(shop.uid){ _doLaunchFondateur(shop); return; }
+        // uid manquant → le récupérer
+        db.ref('gdv_codes/'+(window._lastShopCode||'')).once('value',function(snap){
+          var uid=snap.val(); if(uid) shop.uid=uid;
+          _doLaunchFondateur(shop);
+        });
       }, 600);
     } else {
       agvShopLoginMsg('Code fondateur incorrect', false);
@@ -2485,10 +2515,17 @@ function agvShopLogin(role){
     if(pwd===gerantCode){
       agvShopLoginMsg('Connexion réussie !', true);
       window._currentShop=shop;
-      setTimeout(function(){
-        agvLaunchApp(shop);
+      function _doLaunchGerant(s){
+        agvLaunchApp(s);
         currentRole='gerant'; currentGerantId=gerantId;
         if(typeof applyRoleUI==='function') applyRoleUI();
+      }
+      setTimeout(function(){
+        if(shop.uid){ _doLaunchGerant(shop); return; }
+        db.ref('gdv_codes/'+(window._lastShopCode||'')).once('value',function(snap){
+          var uid=snap.val(); if(uid) shop.uid=uid;
+          _doLaunchGerant(shop);
+        });
       }, 600);
     } else {
       agvShopLoginMsg('Code gérant incorrect', false);
@@ -4828,26 +4865,6 @@ function fmtGNFShort(v){
   return v+'';
 }
 
-
-// ==================== EN LIGNE / HORS LIGNE ====================
-function agvSetOnlineStatus(online){
-  var ind  = document.getElementById('syncIndicator');
-  var dot  = document.getElementById('syncDot');
-  var txt  = document.getElementById('syncText');
-  if(!ind) return;
-  ind.style.display = 'flex';
-  if(online){
-    if(dot){ dot.classList.remove('offline'); }
-    if(txt){ txt.textContent='En ligne ✓'; txt.classList.remove('offline'); }
-    ind.style.background   = 'rgba(240,253,244,0.97)';
-    ind.style.borderColor  = '#86efac';
-  } else {
-    if(dot){ dot.classList.add('offline'); }
-    if(txt){ txt.textContent='Hors ligne'; txt.classList.add('offline'); }
-    ind.style.background  = 'rgba(254,242,242,0.97)';
-    ind.style.borderColor = '#fca5a5';
-  }
-}
 
 function agvHandleOffline(){
   // Quand hors ligne : sauvegarder ce qu'on a et notifier
