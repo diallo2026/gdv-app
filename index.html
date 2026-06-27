@@ -575,26 +575,16 @@ function landingGoShop(){
         if(btn){ btn.textContent='Accéder →'; btn.disabled=false; }
         window._lastShopCode=code;
         window._shopLoginData=cachedShop;
-        // Afficher directement login-screen avec code boutique pré-rempli
-        var lsc=document.getElementById('login-screen');
-        var lsh=document.getElementById('login-shop-code');
-        if(lsh) lsh.value=code;
-        if(lsc) lsc.style.display='flex';
-        document.getElementById('agv-landing').style.display='none';
-        setTimeout(function(){var lc=document.getElementById('login-code');if(lc)lc.focus();},100);
+        agvShow('agv-shop-login');
+        agvLoadShopLogin(code);
         return;
       }
     } else {
       if(btn){ btn.textContent='Accéder →'; btn.disabled=false; }
       window._lastShopCode=code;
       window._shopLoginData=cachedShop;
-      // Afficher directement login-screen avec code boutique pré-rempli
-        var lsc2=document.getElementById('login-screen');
-        var lsh2=document.getElementById('login-shop-code');
-        if(lsh2) lsh2.value=code;
-        if(lsc2) lsc2.style.display='flex';
-        document.getElementById('agv-landing').style.display='none';
-        setTimeout(function(){var lc2=document.getElementById('login-code');if(lc2)lc2.focus();},100);
+      agvShow('agv-shop-login');
+      agvLoadShopLogin(code);
       return;
     }
   }
@@ -639,13 +629,8 @@ function landingGoShop(){
       try{localStorage.setItem('agv_shop_'+code,JSON.stringify(found));}catch(e){}
       window._lastShopCode=code;
       window._shopLoginData=found;
-      // Afficher directement login-screen avec code boutique pré-rempli
-      var lsc3=document.getElementById('login-screen');
-      var lsh3=document.getElementById('login-shop-code');
-      if(lsh3) lsh3.value=code;
-      if(lsc3) lsc3.style.display='flex';
-      document.getElementById('agv-landing').style.display='none';
-      setTimeout(function(){var lc3=document.getElementById('login-code');if(lc3)lc3.focus();},100);
+      agvShow('agv-shop-login');
+      agvLoadShopLogin(code);
     });
   });
 }
@@ -2719,11 +2704,7 @@ window.addEventListener('DOMContentLoaded',function(){
       <h1 style="font-size:20px;font-weight:700;color:var(--text)" id="login-brand-name">AGV — Gestion Boutique</h1>
     </div>
     <div class="form-group" style="margin-bottom:14px">
-      <label class="form-label">Code de la boutique</label>
-      <input class="form-input" id="login-shop-code" type="text" placeholder="Ex: SHOP2025" style="text-transform:uppercase;letter-spacing:.1em" onkeydown="if(event.key==='Enter')document.getElementById('login-code').focus()">
-    </div>
-    <div class="form-group" style="margin-bottom:14px">
-      <label class="form-label">Code d'accès (Fondateur ou Gérant)</label>
+      <label class="form-label">Code d'accès</label>
       <input class="form-input" id="login-code" type="password" placeholder="••••••" style="letter-spacing:.3em" onkeydown="if(event.key==='Enter')doLogin()">
     </div>
     <div class="login-err" id="login-err">Code incorrect ou compte bloqué.</div>
