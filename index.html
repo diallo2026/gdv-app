@@ -981,7 +981,6 @@ function agvLaunchApp(shop){
     safe(renderDettesFournisseurs);
     safe(renderAppro);
     safe(renderJournalier);
-    safe(renderManagerList);
     safe(buildMonthFilters);
     var _nb=document.getElementById('nb-produits');
     if(_nb) _nb.textContent=products.length;
@@ -5251,6 +5250,16 @@ let repConfig = [];    // Configuration répartition des fonds
 let dettes = [];       // Dettes (fondateur, gérants, clients)
 let clients = [];      // Clients enregistrés
 let factureVentes = [];// Ventes avec facture
+
+// Intercepter les erreurs Firebase permission_denied silencieusement
+window.addEventListener('unhandledrejection', function(e){
+  if(e.reason && e.reason.message && e.reason.message.indexOf('permission_denied') !== -1){
+    e.preventDefault(); // Empêcher l'affichage dans la console
+    // Log discret
+    // console.info('Firebase: accès refusé (normal pour utilisateur non-admin)');
+    return false;
+  }
+});
 
 // ===== PONT FIREBASE =====
 window._boutique = {
