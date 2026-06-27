@@ -931,6 +931,24 @@ function applyRoleUI(){
 }
 
 
+function agvSetOnlineStatus(online){
+  var ind  = document.getElementById('syncIndicator');
+  var dot  = document.getElementById('syncDot');
+  var txt  = document.getElementById('syncText');
+  if(!ind) return;
+  ind.style.display = 'flex';
+  if(online){
+    if(dot){ dot.classList.remove('offline'); }
+    if(txt){ txt.textContent='En ligne ✓'; txt.classList.remove('offline'); }
+    ind.style.background   = 'rgba(240,253,244,0.97)';
+    ind.style.borderColor  = '#86efac';
+  } else {
+    if(dot){ dot.classList.add('offline'); }
+    if(txt){ txt.textContent='Hors ligne'; txt.classList.add('offline'); }
+    ind.style.background  = 'rgba(254,242,242,0.97)';
+    ind.style.borderColor = '#fca5a5';
+  }
+}
 function agvLaunchApp(shop){
   agvShow('agv-app');
   agvSetOnlineStatus(navigator.onLine);
@@ -3603,11 +3621,6 @@ window.addEventListener('DOMContentLoaded',function(){
   });
 })();
 
-// ==================== ROLES & AUTH ====================
-let currentRole = null; // 'fondateur' | 'gerant'
-let loginRoleSelected = 'fondateur';
-
-const FONDATEUR_CODE = '0000'; // code fondateur par défaut
 
 // Charger les gérants depuis Firebase ou localStorage pour la page de login
 function preloadGerantsForLogin(){
@@ -4021,24 +4034,7 @@ function fmtGNFShort(v){
 
 
 // ==================== EN LIGNE / HORS LIGNE ====================
-function agvSetOnlineStatus(online){
-  var ind  = document.getElementById('syncIndicator');
-  var dot  = document.getElementById('syncDot');
-  var txt  = document.getElementById('syncText');
-  if(!ind) return;
-  ind.style.display = 'flex';
-  if(online){
-    if(dot){ dot.classList.remove('offline'); }
-    if(txt){ txt.textContent='En ligne ✓'; txt.classList.remove('offline'); }
-    ind.style.background   = 'rgba(240,253,244,0.97)';
-    ind.style.borderColor  = '#86efac';
-  } else {
-    if(dot){ dot.classList.add('offline'); }
-    if(txt){ txt.textContent='Hors ligne'; txt.classList.add('offline'); }
-    ind.style.background  = 'rgba(254,242,242,0.97)';
-    ind.style.borderColor = '#fca5a5';
-  }
-}
+
 
 function agvHandleOffline(){
   // Quand hors ligne : sauvegarder ce qu'on a et notifier
@@ -4236,7 +4232,6 @@ db.ref('boutique').on('value', function(snapshot) {
     buildGerantLoginList();
   }
 });
-let currentView = 'dashboard';
 let catFilter = 'ALL';
 let stockFilter = 'all';
 let sortField = 'designation';
