@@ -163,12 +163,12 @@ body{font-family:'DM Sans',sans-serif;background:#060d24;color:#e2e8f0;min-heigh
   body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;font-size:14px}
 
   /* LOGIN */
-  .login-screen{display:flex;align-items:center;justify-content:center;min-height:100vh;background:linear-gradient(135deg,#1a1714 0%,#3d2e1e 100%)}
-  .login-box{background:var(--surface);border-radius:16px;padding:40px;width:380px;max-width:95vw;box-shadow:0 30px 80px rgba(0,0,0,.4)}
-  .login-brand{text-align:center;margin-bottom:28px}
-  .login-brand .icon{font-size:40px;margin-bottom:8px}
-  .login-brand h1{font-size:20px;font-weight:600;color:var(--text)}
-  .login-brand p{font-size:12px;color:var(--text3);margin-top:4px}
+  
+  
+  
+  
+  
+  
   .login-role-pick{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:20px}
   .role-card{border:2px solid var(--border);border-radius:var(--r);padding:14px;cursor:pointer;text-align:center;transition:.15s}
   .role-card:hover{border-color:var(--accent);background:var(--accent-light)}
@@ -176,7 +176,7 @@ body{font-family:'DM Sans',sans-serif;background:#060d24;color:#e2e8f0;min-heigh
   .role-card .r-icon{font-size:24px;margin-bottom:6px}
   .role-card .r-name{font-size:13px;font-weight:600;color:var(--text)}
   .role-card .r-desc{font-size:11px;color:var(--text3);margin-top:2px}
-  .login-err{background:var(--red-bg);border:1px solid var(--red-border);color:var(--red);border-radius:var(--r-sm);padding:8px 12px;font-size:12px;margin-bottom:12px;display:none}
+  
 
   /* LAYOUT */
   .app{display:none;grid-template-columns:240px 1fr;min-height:100vh}
@@ -928,7 +928,6 @@ function agvLaunchApp(shop){
     // Bulletin
     var bc=document.getElementById('bulletin-co-name'); if(bc)bc.textContent=n;
     var bs=document.getElementById('bulletin-co-sub'); if(bs)bs.textContent=n;
-    var ln=document.getElementById('login-brand-name'); if(ln)ln.textContent=n;
     // Logo sidebar
     var logo=document.getElementById('agv-sidebar-logo');
     if(logo&&shop.logo){logo.src=shop.logo;logo.style.display='block';}
@@ -954,8 +953,6 @@ function agvLaunchApp(shop){
     window._devShopsCache = devShops;
   }catch(e){}
 
-  // Cacher le login-screen du moteur
-  var ls=document.getElementById('login-screen'); if(ls)ls.style.display='none';
   var appEl=document.getElementById('app'); if(appEl)appEl.classList.add('visible');
 
   // Firebase sync pour cette boutique
@@ -2697,20 +2694,7 @@ window.addEventListener('DOMContentLoaded',function(){
 <!-- ==================== APP (moteur boutique) ==================== -->
 <div id="agv-app">
   <div id="toast" class="toast"></div>
-  <div id="login-screen" class="login-screen">
-  <div class="login-box">
-    <div class="login-brand" style="text-align:center;margin-bottom:24px">
-      <img id="agv-login-logo" src="" style="height:60px;object-fit:contain;border-radius:12px;display:none;margin-bottom:8px">
-      <h1 style="font-size:20px;font-weight:700;color:var(--text)" id="login-brand-name">AGV — Gestion Boutique</h1>
-    </div>
-    <div class="form-group" style="margin-bottom:14px">
-      <label class="form-label">Code d'accès</label>
-      <input class="form-input" id="login-code" type="password" placeholder="••••••" style="letter-spacing:.3em" onkeydown="if(event.key==='Enter')doLogin()">
-    </div>
-    <div class="login-err" id="login-err">Code incorrect ou compte bloqué.</div>
-    <button class="btn btn-primary" style="width:100%;justify-content:center;display:flex" onclick="doLogin()">Connexion</button>
-  </div>
-</div>
+
 
 <!-- ============ APP ============ -->
 <div class="app" id="app">
@@ -4458,7 +4442,6 @@ window.addEventListener('DOMContentLoaded',function(){
 // ==================== ROLES & AUTH ====================
 let currentRole = null; // 'fondateur' | 'gerant'
 let currentGerantId = null;
-let loginRoleSelected = 'fondateur';
 
 const FONDATEUR_CODE = '0000'; // code fondateur par défaut
 
@@ -4484,12 +4467,6 @@ function preloadGerantsForLogin(){
   console.log('👥 Aucun gérant trouvé');
 }
 
-function selectRole(r){
-  loginRoleSelected = r;
-  document.getElementById('rc-fondateur').classList.toggle('active', r==='fondateur');
-  document.getElementById('rc-gerant').classList.toggle('active', r==='gerant');
-  document.getElementById('gerant-select-wrap').style.display = r==='gerant' ? 'block' : 'none';
-  if(r==='gerant'){ preloadGerantsForLogin(); buildGerantLoginList(); }
 }
 
 function buildGerantLoginList(){
@@ -4501,65 +4478,9 @@ function buildGerantLoginList(){
     : '<option value="">Aucun gérant actif</option>';
 }
 
-function doLogin(){
-  var shopCodeEl = document.getElementById('login-shop-code');
-  var shopCode   = shopCodeEl ? shopCodeEl.value.trim().toUpperCase() : '';
-  var code       = document.getElementById('login-code').value.trim();
-  var err        = document.getElementById('login-err');
-  err.style.display = 'none';
-
-  // Si on a un code boutique saisi, chercher la boutique via ce code
-  if(shopCode){
-    // Chercher dans Firebase par code boutique
-    db.ref('gdv_codes/'+shopCode).once('value', function(snap){
-      var uid = snap.val();
-      if(!uid){ err.style.display='block'; err.textContent='Code boutique introuvable.'; return; }
-      // Charger les infos de la boutique pour vérifier le code d'accès
-      db.ref('gdv_shops/'+uid+'/info').once('value', function(snap2){
-        var info = snap2.val();
-        if(!info){ err.style.display='block'; return; }
-        if(info.blocked){ err.style.display='block'; err.textContent='Boutique bloquée.'; return; }
-        // Vérifier fondateur
-        if(code === info.codeFondateur){
-          window._pendingLogin = {uid:uid, info:info, role:'fondateur', gerantId:null};
-          currentRole='fondateur'; currentGerantId=null;
-          agvLaunchApp(uid, shopCode);
-          return;
-        }
-        // Vérifier gérants — charger la liste
-        db.ref('gdv_shops/'+uid+'/data/gerants').once('value', function(snap3){
-          var gerantsData = snap3.val();
-          if(!gerantsData){ err.style.display='block'; err.textContent='Code incorrect.'; return; }
-          var allG = Array.isArray(gerantsData) ? gerantsData : Object.values(gerantsData);
-          var g = allG.find(function(x){return x && x.code===code && !x.bloque;});
-          if(!g){ err.style.display='block'; err.textContent='Code incorrect ou compte bloqué.'; return; }
-          currentRole='gerant'; currentGerantId=g.id;
-          agvLaunchApp(uid, shopCode);
-        });
-      });
-    });
-    return;
-  }
-
-  // Ancienne logique (URL ?shop=) — garder compatibilité
-  if(loginRoleSelected==='fondateur'){
-    const savedCode = localStorage.getItem(window.AGV_KEY ? window.AGV_KEY('fondateur_code') : 'agv_fondateur_code') || FONDATEUR_CODE;
-    if(code !== savedCode){ err.style.display='block'; return; }
-    currentRole='fondateur'; currentGerantId=null;
-    startApp();
-  } else {
-    const gid = document.getElementById('gerant-login-select') ? document.getElementById('gerant-login-select').value : '';
-    const g = gerants.find(x=>x.id==gid);
-    if(!g||g.bloque||g.code!==code){ err.style.display='block'; return; }
-    currentRole='gerant'; currentGerantId=g.id;
-    startApp();
-  }
-}
 
 function startApp(){
-  document.getElementById('login-screen').style.display='none';
   document.getElementById('app').classList.add('visible');
-  document.getElementById('login-code').value='';
   const yr = new Date().getFullYear();
   const s2=document.getElementById('brand-year-sub');
   if(s2) s2.textContent='Gestion des stocks '+yr;
