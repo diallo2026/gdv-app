@@ -521,6 +521,11 @@ var currentRole = null;
 var currentGerantId = null;
 var currentView = 'dashboard';
 
+// Tableaux de données globaux
+var products=[], ventes=[], depenses=[], gerants=[], entrees=[], appros=[];
+var repConfig=[], dettes=[], clients=[], factureVentes=[];
+var fournisseurs=[], commandes=[];
+
 function agvInitFirebase(){
   if(typeof firebase === 'undefined'){
     // Firebase CDN pas encore chargé, réessayer dans 100ms
@@ -640,6 +645,12 @@ function landingGoShop(){
   });
 }
 
+
+window.addEventListener('unhandledrejection', function(e){
+  if(e.reason && e.reason.message && e.reason.message.indexOf('permission_denied')>=0){
+    e.preventDefault(); // silencer permission_denied non critique
+  }
+});
 function agvShow(id){
   ['agv-landing','agv-auth','agv-admin','agv-app','agv-shop-login'].forEach(function(x){
     var el=document.getElementById(x);
@@ -1796,6 +1807,7 @@ function agvPrintPDF(type, extraData){
 // ===== ADMIN =====
 function agvLoadAdmin(){
   agvShow('agv-admin');
+  if(!db || !db.ref){ console.warn('DB non prête'); return; }
   db.ref('gdv_shops').once('value',function(snap){
     var shops=[];
     snap.forEach(function(c){var info=c.val()&&c.val().info;if(info)shops.push(info);});
