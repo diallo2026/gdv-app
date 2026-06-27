@@ -6157,66 +6157,68 @@ function depFilterChanged(){
 function renderDepenses(){
   var isFondateur = currentRole==='fondateur';
   var g = getCurrentGerant();
+
   // Bouton ajouter : fondateur ET gérant
   var btnAdd = document.getElementById('btn-add-dep');
   if(btnAdd) btnAdd.style.display = 'block';
   var blocMsg = document.getElementById('depenses-blocked-msg');
   if(blocMsg) blocMsg.style.display = 'none';
 
-  // ── Init filtres année (2020→2040) la première fois seulement ──
+  // ── Filtres année/mois — toujours reconstruits ──
   var ysel = document.getElementById('dep-year-filter');
   var msel = document.getElementById('dep-month-filter');
   var now  = new Date();
   var curY = now.getFullYear();
   var curM = String(now.getMonth()+1).padStart(2,'0');
 
-  if(ysel && !ysel.options.length){
+  // Sauvegarder les valeurs avant de repeupler
+  var prevY = ysel ? (parseInt(ysel.value)||curY) : curY;
+  var prevM = msel ? msel.value : '';
+
+  if(ysel){
     var opY='';
-    for(var y=2040;y>=2020;y--) opY+='<option value="'+y+'"'+(y===curY?' selected':'')+'>'+y+'</option>';
+    for(var y=2040;y>=2020;y--) opY+='<option value="'+y+'"'+(y===prevY?' selected':'')+'>'+y+'</option>';
     ysel.innerHTML = opY;
-    ysel.value = String(curY);
+    ysel.value = String(prevY);
   }
 
-  // ── Remplir les mois selon l'année choisie ──
   if(ysel && msel){
     var selY = parseInt(ysel.value)||curY;
-    var prevM = msel.value;
-    var mNames = ['Janvier','Février','Mars','Avril','Mai','Juin',
-                  'Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
+    var mNames=['Janvier','Février','Mars','Avril','Mai','Juin',
+                'Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
     var opM='';
     for(var m=1;m<=12;m++){
-      var mv = selY+'-'+String(m).padStart(2,'0');
+      var mv=selY+'-'+String(m).padStart(2,'0');
       opM+='<option value="'+mv+'">'+mNames[m-1]+' '+selY+'</option>';
     }
     msel.innerHTML = opM;
-    // Remettre la valeur précédente ou le mois courant
     var targetM = selY+'-'+curM;
     if(prevM && msel.querySelector('option[value="'+prevM+'"]')) msel.value = prevM;
     else if(msel.querySelector('option[value="'+targetM+'"]')) msel.value = targetM;
     else msel.value = msel.options[0].value;
   }
 
-  // ── Filtre actif ──
   var mk = msel ? msel.value : '';
 
-  // ── Filtrer les dépenses ──
+  // ── Filtrer par mois ──
   var filtered = depenses.filter(function(d){
     if(!mk) return true;
     var dDate = d.date || d.ts || '';
     if(!dDate) return false;
-    // Comparer YYYY-MM
     var dd = new Date(dDate);
     if(isNaN(dd)) return false;
     var dMk = dd.getFullYear()+'-'+String(dd.getMonth()+1).padStart(2,'0');
     return dMk === mk;
   });
 
+  // Fondateur voit TOUTES les dépenses (gérant + fondateur)
   // Gérant voit uniquement ses propres dépenses
   if(currentRole==='gerant' && currentGerantId){
     filtered = filtered.filter(function(d){
-      return !d.gerantId || d.gerantId==currentGerantId;
+      return !d.gerantId || String(d.gerantId)===String(currentGerantId);
     });
   }
+  // Le fondateur ne filtre PAS par gerantId — il voit tout
 
   // ── Stats ──
   var total = filtered.reduce(function(s,d){return s+(d.montant||0);},0);
