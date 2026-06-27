@@ -959,62 +959,34 @@ function agvLaunchApp(shop){
   var appEl=document.getElementById('app'); if(appEl)appEl.classList.add('visible');
 
   // Firebase sync pour cette boutique
-  window.sauvegarderFirebase=function(){
-    if(!window._AGV_READY) return;
-    var payload = {
-      products:     products     || [],
-      ventes:       ventes       || [],
-      depenses:     depenses     || [],
-      gerants:      gerants      || [],
-      entrees:      entrees      || [],
-      appros:       appros       || [],
-      repConfig:    repConfig    || [],
-      dettes:       dettes       || [],
-      clients:      clients      || [],
-      factureVentes:factureVentes|| []
-    };
-    // Bloquer le listener pendant l'écriture
-    window._agvSaving = true;
-    db.ref('gdv_shops/'+shop.uid+'/data').set(payload)
-      .then(function(){
-        agvSetOnlineStatus(true);
-        // Remettre à jour le cache local
-        try{ localStorage.setItem('agv_cache_'+shop.uid, JSON.stringify(payload)); }catch(e){}
-        // Réactiver le listener après 1.5s (temps que Firebase propage)
-        setTimeout(function(){ window._agvSaving = false; }, 1500);
-      })
-      .catch(function(e){
-        console.warn('Save error:', e);
-        window._agvSaving = false;
-      });
-  };
+  // sauvegarderFirebase définie plus bas;
 
   // Cache localStorage pour affichage INSTANTANE
   var cacheKey = 'agv_cache_' + shop.uid;
   function toA(v){if(!v)return[];if(Array.isArray(v))return v;return Object.values(v);}
 
   function agvRenderAll(){
-    updateBrand();
-    if(typeof applyRoleUI==='function')        applyRoleUI();
-    if(typeof renderDashboard==='function')    renderDashboard();
-    if(typeof buildCatFilters==='function')    buildCatFilters();
-    if(typeof renderAlerts==='function')       renderAlerts();
-    if(typeof renderTable==='function')        renderTable();
-    if(typeof renderDepenses==='function')     renderDepenses();
-    if(typeof renderSorties==='function')      renderSorties();
-    if(typeof renderEntrees==='function')      renderEntrees();
-    if(typeof renderSalaires==='function')     renderSalaires();
-    if(typeof renderDettes==='function')       renderDettes();
-    if(typeof renderDettesFournisseurs==='function') renderDettesFournisseurs();
-    if(typeof renderAppro==='function')        renderAppro();
-    if(typeof renderJournalier==='function')   renderJournalier();
-    if(typeof renderManagerList==='function')  renderManagerList();
-    if(typeof buildMonthFilters==='function')  buildMonthFilters();
+    function safe(fn){ try{ if(typeof fn==='function') fn(); }catch(e){ console.warn('Render error:', e.message); } }
+    safe(updateBrand);
+    safe(applyRoleUI);
+    safe(renderDashboard);
+    safe(buildCatFilters);
+    safe(renderAlerts);
+    safe(renderTable);
+    safe(renderDepenses);
+    safe(renderSorties);
+    safe(renderEntrees);
+    safe(renderSalaires);
+    safe(renderDettes);
+    safe(renderDettesFournisseurs);
+    safe(renderAppro);
+    safe(renderJournalier);
+    safe(renderManagerList);
+    safe(buildMonthFilters);
     var _nb=document.getElementById('nb-produits');
     if(_nb) _nb.textContent=products.length;
     setTimeout(function(){
-      if(typeof renderVentesHistory==='function') renderVentesHistory();
-      else if(typeof refreshVentesHistory==='function') refreshVentesHistory();
+      try{ if(typeof renderVentesHistory==='function') renderVentesHistory(); }catch(e){}
     }, 150);
   }
 
@@ -5288,14 +5260,7 @@ window._boutique = {
   get gerants(){return gerants;},   set gerants(v){gerants=v;}
 };
 
-// ===== SAUVEGARDE FIREBASE =====
-// Note: cette fonction est remplacée par la version correcte dans agvLaunchApp
-// qui utilise db.ref('gdv_shops/'+shop.uid+'/data')
-// Cette version globale ne fait rien pour éviter les conflits
-window.sauvegarderFirebase = function() {
-  // Sera remplacée par agvLaunchApp avec la bonne référence Firebase
-  console.log('sauvegarderFirebase: en attente du lancement boutique...');
-};
+// sauvegarderFirebase: définie uniquement dans agvLaunchApp (gdv_shops/{uid}/data)
 
 // Convertit un objet Firebase en vrai Array
 function toArray(val) {
@@ -5314,23 +5279,7 @@ function appliquerDonneesFirebase(data) {
   window._firebaseData = data;
 }
 
-// ===== ECOUTE TEMPS REEL POUR LOGIN GÉRANT UNIQUEMENT =====
-// On n'écoute PAS 'boutique' en temps réel car c'est un chemin incorrect
-// La vraie écoute se fait dans agvLaunchApp sur gdv_shops/{uid}/data
-// Chargement unique pour pré-remplir la liste gérants à la connexion
-db.ref('boutique').once('value', function(snapshot) {
-  var data = snapshot.val();
-  if (!data) return;
-  window._firebaseData = data;
-  // Uniquement pour rafraîchir la liste gérants si on est sur la page login
-  var loginScreen = document.getElementById('login-screen');
-  var gerantWrap = document.getElementById('gerant-select-wrap');
-  if (loginScreen && loginScreen.style.display !== 'none' &&
-      gerantWrap && gerantWrap.style.display !== 'none') {
-    preloadGerantsForLogin();
-    buildGerantLoginList();
-  }
-});
+// db.ref(boutique) supprimé — chemin incorrect, inutile pour le login gérant
 let currentView = 'dashboard';
 let catFilter = 'ALL';
 let stockFilter = 'all';
@@ -7178,7 +7127,7 @@ function renderJournalier(){
   const allVM=ventes.filter(v=>getMonthKey(v.ts||v.date)===mk);
   const allEM=(typeof entrees!=='undefined'?entrees:[]).filter(e=>getMonthKey(e.date||e.ts)===mk);
   const allDM=depenses.filter(d=>getMonthKey(d.date||d.ts)===mk);
-  const daysSet=new Set([...allVM.map(v=>getDayKey(v.ts||v.date)),...allDM.map(d=>d.date||d.ts),...emMonth.map(e=>getDayKey(e.date||e.ts))]);
+  const daysSet=new Set([...allVM.map(v=>getDayKey(v.ts||v.date)),...allDM.map(d=>d.date||d.ts),...allEM.map(e=>getDayKey(e.date||e.ts))]);
   const jourSel=document.getElementById('jour-day-filter');
   if(jourSel){
     const prev=jourSel.value;
@@ -7202,7 +7151,7 @@ function renderJournalier(){
   const map={};
   vm.forEach(v=>{const k=getDayKey(v.ts||v.date);if(!map[k])map[k]={v:[],d:[],e:[]};map[k].v.push(v);});
   dm.forEach(d=>{const k=d.date||d.ts;if(!map[k])map[k]={v:[],d:[],e:[]};map[k].d.push(d);});
-  emMonth.forEach(e=>{const k=getDayKey(e.date||e.ts);if(!map[k])map[k]={v:[],d:[],e:[]};map[k].e.push(e);});
+  allEM.forEach(e=>{const k=getDayKey(e.date||e.ts);if(!map[k])map[k]={v:[],d:[],e:[]};map[k].e.push(e);});
   const jours=Object.keys(map).sort().reverse();
   const el=document.getElementById('jour-list');
   if(!el)return;
