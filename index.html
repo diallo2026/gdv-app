@@ -516,6 +516,11 @@ body{font-family:'DM Sans',sans-serif;background:#060d24;color:#e2e8f0;min-heigh
 <!-- ==================== AGV SCRIPT ==================== -->
 <script>
 // Firebase AGV — initialisation sécurisée
+// Variables globales d'état
+var currentRole = null;
+var currentGerantId = null;
+var currentView = 'dashboard';
+
 function agvInitFirebase(){
   if(typeof firebase === 'undefined'){
     // Firebase CDN pas encore chargé, réessayer dans 100ms
@@ -923,6 +928,67 @@ function agvSetOnlineStatus(online){
   }
 }
 
+function applyRoleUI(){
+  var isFond = currentRole === 'fondateur';
+  // Nav items visibles pour tous
+  var allNav = ['nav-dashboard','nav-inventaire','nav-produits','nav-dettes',
+                'nav-commandes','nav-clients-mgr','nav-salaires','nav-ventes',
+                'nav-depenses','nav-appro','nav-rapport'];
+  // Nav items fondateur uniquement
+  var fondOnly = ['nav-repartition','nav-parametres','nav-recap','nav-gerants'];
+
+  allNav.forEach(function(id){
+    var el=document.getElementById(id); if(el) el.style.display='';
+  });
+  fondOnly.forEach(function(id){
+    var el=document.getElementById(id);
+    if(el) el.style.display = isFond ? '' : 'none';
+  });
+
+  // Bouton "Ajouter dépense" modif fondateur
+  var btnModifDep = document.getElementById('btn-modif-dep');
+  if(btnModifDep) btnModifDep.style.display = isFond ? '' : 'none';
+
+  // Onglet salaires - gérant voit seulement sa fiche
+  // (géré dans renderSalaires)
+
+  // Vue de départ
+  var startView = isFond ? 'dashboard' : 'dashboard';
+  document.querySelectorAll('.view').forEach(function(el){ el.classList.remove('active'); });
+  var vel = document.getElementById('view-'+startView);
+  if(vel) vel.classList.add('active');
+  document.querySelectorAll('.nav-item').forEach(function(el){
+    var oc = el.getAttribute('onclick')||'';
+    if(oc.indexOf("'"+startView+"'")>=0 || oc.indexOf('"'+startView+'"')>=0)
+      el.classList.add('active');
+    else el.classList.remove('active');
+  });
+  currentView = startView;
+}
+
+
+function showView(v){
+  document.querySelectorAll('.view').forEach(function(el){ el.classList.remove('active'); });
+  var vel = document.getElementById('view-'+v);
+  if(vel) vel.classList.add('active');
+  document.querySelectorAll('.nav-item').forEach(function(el){
+    var oc = el.getAttribute('onclick')||'';
+    if(oc.indexOf("'"+v+"'")>=0 || oc.indexOf('"'+v+'"')>=0)
+      el.classList.add('active');
+    else el.classList.remove('active');
+  });
+  currentView = v;
+  // Initialiser certaines vues
+  if(v==='rapport'){ if(typeof initRapport==='function') initRapport(); }
+  if(v==='recap'){ if(typeof initRecapAnnuel==='function') initRecapAnnuel(); }
+  if(v==='commandes'){ if(typeof switchCmdTab==='function') switchCmdTab('fourn'); }
+  if(v==='clients-mgr'){ if(typeof switchCliTab==='function') switchCliTab('list'); }
+  if(v==='ventes'){ if(typeof renderVentesView==='function') renderVentesView(); }
+  if(v==='depenses'){ if(typeof renderDepenses==='function') renderDepenses(); }
+  if(v==='parametres'){ if(typeof renderParametresBoutique==='function') renderParametresBoutique(); }
+}
+
+
 // ===== LANCEMENT DE L'APP =====
 function agvLaunchApp(shop){
   if(!shop || !shop.uid){ console.error('agvLaunchApp: shop.uid manquant', shop); return; }
@@ -976,6 +1042,7 @@ function agvLaunchApp(shop){
   }catch(e){}
 
   var appEl=document.getElementById('app'); if(appEl)appEl.classList.add('visible');
+  window.applyRoleUI = applyRoleUI; // exposer globalement
 
   // Firebase sync pour cette boutique
   // sauvegarderFirebase définie plus bas;
@@ -2486,9 +2553,8 @@ function agvShopLogin(role){
       agvShopLoginMsg('Connexion réussie !', true);
       window._currentShop=shop;
       function _doLaunchFondateur(s){
-        agvLaunchApp(s);
         currentRole='fondateur'; currentGerantId=null;
-        if(typeof applyRoleUI==='function') applyRoleUI();
+        agvLaunchApp(s);
       }
       setTimeout(function(){
         if(shop.uid){ _doLaunchFondateur(shop); return; }
@@ -2516,9 +2582,8 @@ function agvShopLogin(role){
       agvShopLoginMsg('Connexion réussie !', true);
       window._currentShop=shop;
       function _doLaunchGerant(s){
-        agvLaunchApp(s);
         currentRole='gerant'; currentGerantId=gerantId;
-        if(typeof applyRoleUI==='function') applyRoleUI();
+        agvLaunchApp(s);
       }
       setTimeout(function(){
         if(shop.uid){ _doLaunchGerant(shop); return; }
@@ -4476,11 +4541,7 @@ window.addEventListener('DOMContentLoaded',function(){
   });
 })();
 
-// ==================== ROLES & AUTH ====================
-let currentRole = null; // 'fondateur' | 'gerant'
-let currentGerantId = null;
-
-const FONDATEUR_CODE = '0000'; // code fondateur par défaut
+const FONDATEUR_CODE = '0000';
 
 // Charger les gérants depuis Firebase ou localStorage pour la page de login
 function preloadGerantsForLogin(){
@@ -4516,12 +4577,13 @@ function buildGerantLoginList(){
 }
 
 
+
 function startApp(){
   document.getElementById('app').classList.add('visible');
   const yr = new Date().getFullYear();
   const s2=document.getElementById('brand-year-sub');
   if(s2) s2.textContent='Gestion des stocks '+yr;
-  applyRoleUI();
+  if(typeof applyRoleUI==='function') applyRoleUI(); else if(typeof window.applyRoleUI==='function') window.applyRoleUI();
   var _sv = currentRole==='fondateur' ? 'dashboard' : 'ventes';
   document.querySelectorAll('.view').forEach(function(el){el.classList.remove('active');});
   var _vel=document.getElementById('view-'+_sv); if(_vel) _vel.classList.add('active');
