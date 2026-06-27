@@ -4928,70 +4928,95 @@ function initVentesFilters(){
 }
 
 function renderVentesHistory(){
+  var isFondateur = currentRole==='fondateur';
   var ysel = document.getElementById('v-year-filter');
   var msel = document.getElementById('v-month-filter');
-  var yr   = parseInt((ysel||{}).value)||0;
-  var mo   = (msel||{}).value||'';
+  var now  = new Date();
+  var curY = now.getFullYear();
+  var curM = String(now.getMonth()+1).padStart(2,'0');
 
-  function matchV(ds){
-    var d = new Date(ds);
-    if(isNaN(d)) return false;
-    var y2=d.getFullYear(), m2=String(d.getMonth()+1).padStart(2,'0');
-    var d2=String(d.getDate()).padStart(2,'0');
-    var dk = y2+'-'+m2+'-'+d2;
-    if(_vFilterDay && dk!==_vFilterDay) return false;
-    if(yr && y2!==yr) return false;
-    if(mo && m2!==mo) return false;
+  // Init filtres si vides
+  if(ysel && !ysel.options.length){
+    var opY='';
+    for(var y=2040;y>=2020;y--) opY+='<option value="'+y+'"'+(y===curY?' selected':'')+'>'+y+'</option>';
+    ysel.innerHTML=opY; ysel.value=String(curY);
+  }
+  if(ysel && msel){
+    var selY=parseInt(ysel.value)||curY;
+    var prevM=msel.value;
+    var mNames2=['Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
+    var opM='';
+    for(var m=1;m<=12;m++){
+      var mv=selY+'-'+String(m).padStart(2,'0');
+      opM+='<option value="'+mv+'">'+mNames2[m-1]+' '+selY+'</option>';
+    }
+    msel.innerHTML=opM;
+    var targetM=selY+'-'+curM;
+    if(prevM && msel.querySelector('option[value="'+prevM+'"]')) msel.value=prevM;
+    else if(msel.querySelector('option[value="'+targetM+'"]')) msel.value=targetM;
+    else msel.value=msel.options[0].value;
+  }
+
+  var mk=msel?msel.value:'';
+  var filterDay=_vFilterDay||'';
+
+  function matchV2(ds){
+    var d=new Date(ds); if(isNaN(d)) return false;
+    var y=d.getFullYear(), mo=String(d.getMonth()+1).padStart(2,'0'), day=String(d.getDate()).padStart(2,'0');
+    if(filterDay && (y+'-'+mo+'-'+day)!==filterDay) return false;
+    if(mk && (y+'-'+mo)!==mk) return false;
     return true;
   }
 
-  var filtered = ventes.filter(function(v){ return v.type!=='entree' && matchV(v.ts||v.date); });
+  // Tout le monde voit toutes les ventes (fondateur + gérant)
+  var filtered = ventes.filter(function(v){
+    if(v.type==='entree') return false;
+    if(!matchV2(v.ts||v.date)) return false;
+    return true;
+  });
 
-  // Afficher le calendrier du mois sélectionné
-  renderVDayPicker(yr||new Date().getFullYear(), mo||String(new Date().getMonth()+1).padStart(2,'0'));
+  // Calendrier jours
+  if(ysel && msel){
+    var selYC=parseInt(ysel.value)||curY;
+    var selMC=parseInt((msel.value||'').split('-')[1])||parseInt(curM);
+    if(typeof renderVDayPicker==='function') renderVDayPicker(selYC, String(selMC).padStart(2,'0'));
+  }
 
-  // Stats du filtre
-  var tCA  = filtered.reduce(function(s,v){return s+(v.total||0);},0);
-  var tBen = filtered.reduce(function(s,v){return s+(v.benefice||0);},0);
-  var statsEl = document.getElementById('v-filter-stats');
+  var tCA=filtered.reduce(function(s,v){return s+(v.total||0);},0);
+  var tBen=filtered.reduce(function(s,v){return s+(v.benefice||0);},0);
+  var statsEl=document.getElementById('v-filter-stats');
   if(statsEl){
-    var label = _vFilterDay ? '📅 '+new Date(_vFilterDay+'T12:00:00').toLocaleDateString('fr-FR') : (mo?['','Jan','Fév','Mar','Avr','Mai','Jun','Jul','Aoû','Sep','Oct','Nov','Déc'][parseInt(mo)]+' '+(yr||''):yr||'Toutes périodes');
-    statsEl.innerHTML = '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:4px">'
+    statsEl.innerHTML='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:4px">'
       +'<div style="background:var(--green-bg);border:1px solid var(--green-border);border-radius:8px;padding:6px 12px;font-size:12px"><span style="color:var(--text3)">Ventes</span> <strong style="color:var(--green)">'+filtered.length+'</strong></div>'
       +'<div style="background:var(--green-bg);border:1px solid var(--green-border);border-radius:8px;padding:6px 12px;font-size:12px"><span style="color:var(--text3)">CA</span> <strong style="color:var(--green)">'+fmtGNF(tCA)+'</strong></div>'
       +'<div style="background:var(--accent-light);border:1px solid var(--accent);border-radius:8px;padding:6px 12px;font-size:12px"><span style="color:var(--text3)">Bénéfice</span> <strong style="color:var(--accent)">'+fmtGNF(tBen)+'</strong></div>'
-      +(_vFilterDay?'<button onclick="_vFilterDay=\'\';renderVentesHistory()" style="padding:4px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text3);font-size:11px;cursor:pointer;font-family:inherit">✕ Tout le mois</button>':'')
+      +(filterDay?'<button onclick="_vFilterDay=\'\';renderVentesHistory()" style="padding:4px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text3);font-size:11px;cursor:pointer;font-family:inherit">✕ Tout le mois</button>':'')
       +'</div>';
   }
 
-  // Bouton imprimer du jour
-  var printBtn = document.getElementById('v-print-day-btn');
-  if(printBtn) printBtn.style.display = _vFilterDay ? 'block' : 'none';
+  var printBtn=document.getElementById('v-print-day-btn');
+  if(printBtn) printBtn.style.display=filterDay?'block':'none';
 
-  // Historique
-  var hist = document.getElementById('ventes-history');
+  var hist=document.getElementById('ventes-history');
   if(!hist) return;
   if(!filtered.length){
-    hist.innerHTML='<div class="empty"><div class="empty-icon">📋</div><div class="empty-text">Aucune vente '+(label||'')+'</div></div>';
-    var tot=document.getElementById('ventes-total'); if(tot) tot.innerHTML='';
-    return;
+    hist.innerHTML='<div class="empty"><div class="empty-icon">📋</div><div class="empty-text">Aucune vente</div></div>';
+    var tot2=document.getElementById('ventes-total'); if(tot2) tot2.innerHTML=''; return;
   }
-  var sorted = filtered.slice().sort(function(a,b){ return new Date(b.ts||b.date)-new Date(a.ts||a.date); });
-  hist.innerHTML = sorted.map(function(v){
+  var sorted=filtered.slice().sort(function(a,b){return new Date(b.ts||b.date)-new Date(a.ts||a.date);});
+  hist.innerHTML=sorted.map(function(v){
     var p=products.find(function(x){return x.reference===v.ref;});
     var cat=v.categorie||(p?p.categorie:'')||'—';
-    var isSortie=v.type!=='entree';
     var dateStr=new Date(v.ts||v.date).toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit',year:'2-digit',hour:'2-digit',minute:'2-digit'});
     return '<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border)">'
-      +'<div style="font-size:18px">'+(isSortie?'📤':'📥')+'</div>'
+      +'<div style="font-size:18px">📤</div>'
       +'<div style="flex:1;min-width:0">'
       +'<div style="font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+(v.produit||v.name||v.ref||'—')+'</div>'
-      +'<div style="font-size:11px;color:var(--text3)">'+cat+' • '+(v.qty||v.qte||1)+' unité(s) • '+dateStr+'</div>'
+      +'<div style="font-size:11px;color:var(--text3)">'+cat+' • '+(v.qty||v.qte||1)+' unité(s) • '+dateStr+(isFondateur&&v.gerant?' • <b>'+v.gerant+'</b>':'')+'</div>'
       +'</div>'
       +'<div style="text-align:right;flex-shrink:0">'
-      +'<div style="font-weight:700;color:'+(isSortie?'var(--green)':'var(--blue)')+'">'+fmtGNF(v.total||0)+'</div>'
+      +'<div style="font-weight:700;color:var(--green)">'+fmtGNF(v.total||0)+'</div>'
       +(v.benefice?'<div style="font-size:11px;color:#7c3aed">+'+fmtGNF(v.benefice)+'</div>':'')
-      +'<div style="font-size:10px;color:var(--text3)">'+(v.gerant||'')+'</div>'
       +'</div></div>';
   }).join('');
   var tot=document.getElementById('ventes-total');
@@ -5188,50 +5213,36 @@ function applyRoleUI(){
   const isFondateur = currentRole==='fondateur';
   const g = currentGerantId ? gerants.find(x=>x.id===currentGerantId) : null;
 
-  document.getElementById('brand-role').textContent = isFondateur ? '👑 Fondateur' : `🧑‍💼 ${g?g.nom:'Gérant'}`;
+  document.getElementById('brand-role').textContent = isFondateur ? '👑 Fondateur' : '\uD83E\uDDD1\u200D💼 '+(g?g.nom:'Gérant');
 
-  // Fondateur: lecture seule pour produits (sauf ajout/modif si role = fondateur)
-  // Fondateur SUPERVISE uniquement → pas de saisie directe de ventes/dépenses
-  // Ajout produit accessible a tous
+  // ── Navigation : réservé Fondateur ──
+  document.getElementById('nav-gerants').style.display      = isFondateur ? 'flex' : 'none';
+  var _npar = document.getElementById('nav-parametres');
+  if(_npar) _npar.style.display = isFondateur ? 'flex' : 'none';
+  var _nrec = document.getElementById('nav-recap');
+  if(_nrec) _nrec.style.display = isFondateur ? 'flex' : 'none';
+
+  // ── Navigation : visible pour tous ──
+  document.getElementById('nav-salaires').style.display = 'flex';
+  var _nd  = document.getElementById('nav-dashboard');    if(_nd)  _nd.style.display  = 'flex';
+  var _nr  = document.getElementById('nav-repartition');  if(_nr)  _nr.style.display  = isFondateur ? 'flex' : 'none';
+  var _ni  = document.getElementById('nav-inventaire');   if(_ni)  _ni.style.display  = 'flex';
+  var _np2 = document.getElementById('nav-produits');     if(_np2) _np2.style.display = 'flex';
+  var _ndet= document.getElementById('nav-dettes');       if(_ndet)_ndet.style.display= 'flex';
+
+  // ── Boutons saisie ──
   document.getElementById('btn-nouveau-produit').style.display = 'flex';
   document.getElementById('btn-add-prod').style.display = 'block';
 
-  document.getElementById('nav-gerants').style.display = isFondateur ? 'flex' : 'none';
-  document.getElementById('nav-salaires').style.display = 'flex';
-  // Dashboard: fondateur uniquement
-  var _nd=document.getElementById('nav-dashboard');
-  if(_nd) _nd.style.display = isFondateur ? 'flex' : 'none';
-  // Répartition: fondateur uniquement
-  var _nr=document.getElementById('nav-repartition');
-  if(_nr) _nr.style.display = isFondateur ? 'flex' : 'none';
-  // Inventaire: fondateur uniquement
-  var _ni=document.getElementById('nav-inventaire');
-  if(_ni) _ni.style.display = isFondateur ? 'flex' : 'none';
-  // Produits: VISIBLE pour tous (gérant peut ajouter des produits)
-  var _np2=document.getElementById('nav-produits');
-  if(_np2) _np2.style.display = 'flex';
-  // Paramètres: fondateur uniquement
-  var _npar=document.getElementById('nav-parametres');
-  if(_npar) _npar.style.display = isFondateur ? 'flex' : 'none';
-  // Récap annuel: fondateur uniquement
-  var _nrec=document.getElementById('nav-recap');
-  if(_nrec) _nrec.style.display = isFondateur ? 'flex' : 'none';
-  // Dettes: visible pour tous (gérant ET fondateur)
-  var _ndet=document.getElementById('nav-dettes');
-  if(_ndet) _ndet.style.display = 'flex';
-  // Rediriger gérant si sur vue interdite
-  if(!isFondateur && (currentView==='dashboard'||currentView==='repartition'||currentView==='inventaire')){
-    if(typeof showView==='function') setTimeout(function(){showView('ventes');},0);
-  }
-
+  // ── Salaires : fondateur voit tout, gérant voit sa fiche ──
   if(isFondateur){
-    document.getElementById('sal-fondateur-only').style.display='block';
-    document.getElementById('sal-gerant-only').style.display='none';
-    document.getElementById('btn-reset-all').style.display='flex';
+    document.getElementById('sal-fondateur-only').style.display = 'block';
+    document.getElementById('sal-gerant-only').style.display    = 'none';
+    document.getElementById('btn-reset-all').style.display      = 'flex';
   } else {
-    document.getElementById('sal-fondateur-only').style.display='none';
-    document.getElementById('sal-gerant-only').style.display='block';
-    document.getElementById('btn-reset-all').style.display='none';
+    document.getElementById('sal-fondateur-only').style.display = 'none';
+    document.getElementById('sal-gerant-only').style.display    = 'block';
+    document.getElementById('btn-reset-all').style.display      = 'none';
   }
 }
 
@@ -5811,43 +5822,21 @@ function renderDashboard(){
 
 // ==================== VENTES VIEW ====================
 function renderVentesView(){
-  const g=getCurrentGerant();
-  const canVente = currentRole==='gerant' && g && g.permVentes;
+  const g = getCurrentGerant();
   const isFondateur = currentRole==='fondateur';
-  const container=document.getElementById('ventes-content');
-
-  if(isFondateur){
-    // Fondateur: voir historique uniquement
-    document.getElementById('ventes-blocked-msg').style.display='none';
-    if(container){
-      container.style.display='block';
-      container.style.gridTemplateColumns='1fr';
-      if(container.children[0]) container.children[0].style.display='none';
-      if(container.children[1]) container.children[1].style.display='block';
-    }
-    refreshVentesHistory();
-  } else if(canVente){
-    // Gerant avec permission ventes: acces complet
-    document.getElementById('ventes-blocked-msg').style.display='none';
-    if(container){
-      container.style.display='grid';
-      container.style.gridTemplateColumns='';
-      if(container.children[0]) container.children[0].style.display='';
-      if(container.children[1]) container.children[1].style.display='';
-    }
-    refreshVentesHistory();
-  } else {
-    document.getElementById('ventes-blocked-msg').style.display='none';
-    if(container){
-      container.style.display='grid'; container.style.gridTemplateColumns='';
-      if(container.children[0]) container.children[0].style.display='';
-      if(container.children[1]) container.children[1].style.display='';
-    }
-    refreshVentesHistory();
+  const canVente = isFondateur || (currentRole==='gerant' && g && g.permVentes!==false);
+  const container = document.getElementById('ventes-content');
+  if(container){
+    container.style.display = 'grid';
+    container.style.gridTemplateColumns = canVente ? '' : '1fr';
+    if(container.children[0]) container.children[0].style.display = canVente ? '' : 'none';
+    if(container.children[1]) container.children[1].style.display = '';
   }
+  var blocMsg = document.getElementById('ventes-blocked-msg');
+  if(blocMsg) blocMsg.style.display = canVente ? 'none' : 'block';
+  renderVentesHistory();
 }
 
-// ==================== TABLE ====================
 function getFiltered(){
   const q=(document.getElementById('search-input')||{}).value?.toLowerCase()||'';
   return products.filter(p=>{
@@ -6254,14 +6243,7 @@ function renderDepenses(){
     return dMk === mk;
   });
 
-  // Fondateur voit TOUTES les dépenses (gérant + fondateur)
-  // Gérant voit uniquement ses propres dépenses
-  if(currentRole==='gerant' && currentGerantId){
-    filtered = filtered.filter(function(d){
-      return !d.gerantId || String(d.gerantId)===String(currentGerantId);
-    });
-  }
-  // Le fondateur ne filtre PAS par gerantId — il voit tout
+  // Tout le monde voit toutes les dépenses
 
   // ── Stats ──
   var total = filtered.reduce(function(s,d){return s+(d.montant||0);},0);
