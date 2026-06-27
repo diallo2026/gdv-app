@@ -506,6 +506,9 @@ var currentRole=null;
 var currentGerantId=null;
 var currentView='dashboard';
 
+// Arrays globaux fournisseurs & commandes
+var fournisseurs=[], commandes=[];
+
 function agvInitFirebase(){
   if(typeof firebase === 'undefined'){
     // Firebase CDN pas encore chargé, réessayer dans 100ms
@@ -1009,7 +1012,8 @@ function agvLaunchApp(shop){
     db.ref('gdv_shops/'+shop.uid+'/data').set({
       products:products,ventes:ventes,depenses:depenses,gerants:gerants,
       entrees:entrees,appros:appros,repConfig:repConfig,
-      dettes:dettes,clients:clients,factureVentes:factureVentes
+      dettes:dettes,clients:clients,factureVentes:factureVentes,
+      fournisseurs:fournisseurs||[],commandes:commandes||[]
     }).then(function(){
       var ind=document.getElementById('syncIndicator');
       if(ind){ind.textContent='Sauvegarde ✓';ind.style.color='#22c55e';
@@ -1039,6 +1043,13 @@ function agvLaunchApp(shop){
       });
       if(data.clients) clients=toA(data.clients);
       if(data.factureVentes) factureVentes=toA(data.factureVentes);
+      if(data.fournisseurs) fournisseurs=toA(data.fournisseurs);
+      if(data.commandes) commandes=toA(data.commandes).map(function(cmd){
+        return Object.assign({lignes:[],paiements:[]},cmd,{
+          lignes:toA(cmd.lignes||[]),
+          paiements:toA(cmd.paiements||[])
+        });
+      });
     }
     updateBrand();
     if(typeof applyRoleUI==='function')applyRoleUI();
@@ -2188,9 +2199,9 @@ window.addEventListener('DOMContentLoaded',function(){
       </button>
       <hr class="nav-sep">
       <div class="nav-label">Alertes</div>
-      <button class="nav-item" onclick="showView('commandes')">
-        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" stroke-width="1.5" stroke-linecap="round"/></svg>
-        Liste de commande
+      <button class="nav-item" id="nav-commandes" onclick="showView('commandes')">
+        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" stroke-width="1.5" stroke-linecap="round"/></svg>
+        Fournisseurs & Commandes
       </button>
       <button class="nav-item" onclick="showView('alertes')">
         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" stroke-width="1.5"/></svg>
@@ -2472,24 +2483,189 @@ window.addEventListener('DOMContentLoaded',function(){
     </div>
 
     <!-- LISTE DE COMMANDE VIEW -->
+    <!-- ========== VUE FOURNISSEURS & COMMANDES ========== -->
     <div class="view" id="view-commandes">
       <div class="topbar">
-        <h1>📋 Liste de commande</h1>
-        <div style="display:flex;gap:8px;align-items:center">
-          <select class="filter-sel" id="cmd-periode" onchange="renderCommandes()" style="border-radius:6px;padding:5px 10px">
-            <option value="10">10 derniers jours</option>
-            <option value="7">7 derniers jours</option>
-            <option value="30">30 derniers jours</option>
-          </select>
-          <button class="btn btn-primary" onclick="printCommandes()">🖨 Imprimer / PDF</button>
+        <h1>📦 Fournisseurs & Commandes</h1>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <button onclick="openFournisseurModal()" class="btn btn-primary">+ Fournisseur</button>
+          <button onclick="openCommandeModal()" class="btn btn-success">+ Commande</button>
+          <button onclick="agvPrintPDF('bilan-fournisseur')" class="btn-print">🖨️ PDF Bilan</button>
         </div>
       </div>
-      <div id="cmd-info" style="background:var(--blue-bg);border:1px solid var(--blue-border);border-radius:var(--r);padding:14px 20px;margin-bottom:20px;font-size:13px;color:var(--blue)">
-        📊 Analyse des ventes sur la période sélectionnée. Les produits sont classés par quantité vendue (les plus vendus en premier). La quantité suggérée correspond à 1,5× la consommation observée.
+
+      <!-- Onglets -->
+      <div style="display:flex;gap:4px;margin-bottom:16px;background:var(--surface2);border-radius:10px;padding:4px">
+        <button id="tab-fourn-list"  onclick="switchFournTab('fourn')"   style="flex:1;padding:8px;border:none;border-radius:8px;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;background:var(--accent);color:#fff">🏭 Fournisseurs</button>
+        <button id="tab-fourn-cmds"  onclick="switchFournTab('cmds')"    style="flex:1;padding:8px;border:none;border-radius:8px;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;background:transparent;color:var(--text3)">📋 Commandes</button>
+        <button id="tab-fourn-bilan" onclick="switchFournTab('bilan')"   style="flex:1;padding:8px;border:none;border-radius:8px;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;background:transparent;color:var(--text3)">📊 Situation & Tri</button>
       </div>
-      <div id="cmd-content"></div>
+
+      <!-- Onglet Fournisseurs -->
+      <div id="panel-fourn-list">
+        <div id="fourn-list"></div>
+      </div>
+
+      <!-- Onglet Commandes -->
+      <div id="panel-fourn-cmds" style="display:none">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;align-items:flex-end">
+          <div>
+            <label class="form-label">Fournisseur</label>
+            <select id="cmd-filter-fourn" onchange="renderCommandesList()" style="padding:6px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text);font-family:inherit;font-size:13px">
+              <option value="">Tous</option>
+            </select>
+          </div>
+          <div>
+            <label class="form-label">Statut</label>
+            <select id="cmd-filter-statut" onchange="renderCommandesList()" style="padding:6px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text);font-family:inherit;font-size:13px">
+              <option value="">Tous</option>
+              <option value="attente">En attente</option>
+              <option value="partiel">Partielle</option>
+              <option value="recu">Reçue</option>
+            </select>
+          </div>
+          <button onclick="agvPrintPDF('commandes')" class="btn-print" style="margin-top:20px">🖨️ PDF Commandes</button>
+        </div>
+        <div id="commandes-list"></div>
+      </div>
+
+      <!-- Onglet Situation & Tri -->
+      <div id="panel-fourn-bilan" style="display:none">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;align-items:flex-end">
+          <div>
+            <label class="form-label">Fournisseur</label>
+            <select id="bilan-fourn-sel" onchange="renderBilanFournisseur()" style="padding:6px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text);font-family:inherit;font-size:13px">
+              <option value="">Tous les fournisseurs</option>
+            </select>
+          </div>
+          <div>
+            <label class="form-label">Du</label>
+            <input type="date" id="bilan-date-from" onchange="renderBilanFournisseur()" style="padding:6px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text);font-family:inherit;font-size:13px">
+          </div>
+          <div>
+            <label class="form-label">Au</label>
+            <input type="date" id="bilan-date-to" onchange="renderBilanFournisseur()" style="padding:6px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text);font-family:inherit;font-size:13px">
+          </div>
+          <button onclick="agvPrintPDF('bilan-fournisseur')" class="btn-print" style="margin-top:20px">🖨️ PDF Bilan</button>
+        </div>
+        <div id="bilan-fourn-content"></div>
+      </div>
     </div>
 
+    <!-- MODAL FOURNISSEUR -->
+    <div class="overlay" id="fourn-overlay" onclick="if(event.target===this)closeFournisseurModal()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:1000;align-items:center;justify-content:center">
+      <div class="modal" style="max-width:500px;width:95%;max-height:90vh;overflow-y:auto">
+        <div class="modal-head">
+          <h2 id="fourn-modal-title">🏭 Nouveau fournisseur</h2>
+          <button class="modal-close" onclick="closeFournisseurModal()">✕</button>
+        </div>
+        <!-- Logo -->
+        <div style="text-align:center;margin-bottom:16px">
+          <div id="fourn-logo-preview" onclick="document.getElementById('fourn-logo-file').click()" style="width:72px;height:72px;border-radius:12px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:28px;margin:0 auto 6px;cursor:pointer;overflow:hidden;border:2px dashed var(--border)">🏭</div>
+          <label style="font-size:11px;color:var(--accent);font-weight:600;cursor:pointer" onclick="document.getElementById('fourn-logo-file').click()">📷 Ajouter logo</label>
+          <input type="file" id="fourn-logo-file" accept="image/*" style="display:none" onchange="fournPreviewLogo(this)">
+        </div>
+        <div class="form-group"><label class="form-label">Nom de l'entreprise *</label><input class="form-input" id="fourn-nom" placeholder="Ex: SOBRAGUI, CFAO..."></div>
+        <div class="form-group"><label class="form-label">Adresse</label><input class="form-input" id="fourn-adresse" placeholder="Ex: Kaloum, Conakry"></div>
+        <div class="form-group"><label class="form-label">Téléphone</label><input class="form-input" id="fourn-tel" placeholder="+224 620 000 000" type="tel"></div>
+        <div class="form-group"><label class="form-label">WhatsApp (sans +)</label><input class="form-input" id="fourn-whatsapp" placeholder="224620000000" type="tel"></div>
+        <div class="form-group"><label class="form-label">Email</label><input class="form-input" id="fourn-email" placeholder="contact@fournisseur.com" type="email"></div>
+        <div class="form-group"><label class="form-label">Notes</label><textarea class="form-input" id="fourn-notes" rows="2" placeholder="Conditions, délais..."></textarea></div>
+        <input type="hidden" id="fourn-edit-id" value="">
+        <div style="display:flex;gap:8px;margin-top:16px">
+          <button onclick="saveFournisseur()" class="btn btn-primary" style="flex:1">💾 Enregistrer</button>
+          <button onclick="closeFournisseurModal()" class="btn" style="flex:1">Annuler</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- MODAL COMMANDE -->
+    <div class="overlay" id="cmd-overlay" onclick="if(event.target===this)closeCommandeModal()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:1000;align-items:center;justify-content:center">
+      <div class="modal" style="max-width:620px;width:95%;max-height:92vh;overflow-y:auto">
+        <div class="modal-head">
+          <h2 id="cmd-modal-title">📋 Nouvelle commande</h2>
+          <button class="modal-close" onclick="closeCommandeModal()">✕</button>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <div class="form-group">
+            <label class="form-label">Fournisseur *</label>
+            <select class="form-input" id="cmd-fourn-sel" onchange="onCmdFournChange()">
+              <option value="">-- Choisir --</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Date commande</label>
+            <input type="date" class="form-input" id="cmd-date">
+          </div>
+        </div>
+        <div id="cmd-fourn-info" style="display:none;padding:10px;background:var(--surface2);border-radius:8px;font-size:12px;margin-bottom:12px"></div>
+        <div id="cmd-dette-alerte" style="display:none;padding:10px;background:rgba(239,68,68,0.1);border:1px solid var(--red);border-radius:8px;font-size:12px;color:var(--red);margin-bottom:12px"></div>
+
+        <!-- Lignes produits -->
+        <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:8px">Articles commandés</div>
+        <div id="cmd-lignes" style="margin-bottom:8px"></div>
+        <button onclick="addCmdLigne()" style="width:100%;padding:8px;border:2px dashed var(--border);border-radius:8px;background:transparent;color:var(--text3);font-family:inherit;font-size:13px;cursor:pointer;margin-bottom:12px">+ Ajouter un article</button>
+
+        <div class="form-group"><label class="form-label">Note / Observations</label><textarea class="form-input" id="cmd-note" rows="2" placeholder="Livraison urgente, spécifications..."></textarea></div>
+        <div id="cmd-total-preview" style="padding:10px;background:var(--accent-light);border-radius:8px;font-size:14px;font-weight:700;color:var(--accent);margin-bottom:12px;text-align:right"></div>
+        <input type="hidden" id="cmd-edit-id" value="">
+        <div style="display:flex;gap:8px">
+          <button onclick="saveCommande()" class="btn btn-primary" style="flex:1">💾 Enregistrer</button>
+          <button onclick="envoyerCommandeWhatsApp()" class="btn btn-success" style="flex:1">📱 WhatsApp</button>
+          <button onclick="closeCommandeModal()" class="btn">Annuler</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- MODAL RÉCEPTION COMMANDE -->
+    <div class="overlay" id="reception-overlay" onclick="if(event.target===this)closeReceptionModal()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:1000;align-items:center;justify-content:center">
+      <div class="modal" style="max-width:600px;width:95%;max-height:92vh;overflow-y:auto">
+        <div class="modal-head">
+          <h2>📥 Réception commande</h2>
+          <button class="modal-close" onclick="closeReceptionModal()">✕</button>
+        </div>
+        <div id="reception-fourn-info" style="padding:10px;background:var(--surface2);border-radius:8px;font-size:13px;margin-bottom:14px"></div>
+        <div id="reception-lignes" style="margin-bottom:14px"></div>
+        <!-- Montant & Paiement -->
+        <div style="background:var(--surface2);border-radius:10px;padding:14px;margin-bottom:14px">
+          <div style="font-size:13px;font-weight:700;margin-bottom:10px;color:var(--text)">💰 Montant & Paiement</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+            <div class="form-group">
+              <label class="form-label">Montant total commande (GNF)</label>
+              <input type="number" class="form-input" id="rec-montant-total" placeholder="0" oninput="updateReceptionSolde()">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Versement maintenant (GNF)</label>
+              <input type="number" class="form-input" id="rec-versement" placeholder="0" oninput="updateReceptionSolde()">
+            </div>
+          </div>
+          <div id="rec-solde-preview" style="padding:8px 12px;background:var(--accent-light);border-radius:8px;font-size:13px;font-weight:700;color:var(--accent)"></div>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button onclick="validerReception()" class="btn btn-primary" style="flex:1">✅ Valider réception</button>
+          <button onclick="closeReceptionModal()" class="btn">Annuler</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- MODAL PAIEMENT FOURNISSEUR -->
+    <div class="overlay" id="paiement-fourn-overlay" onclick="if(event.target===this)closePaiementFournModal()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:1000;align-items:center;justify-content:center">
+      <div class="modal" style="max-width:460px;width:95%">
+        <div class="modal-head">
+          <h2>💳 Versement fournisseur</h2>
+          <button class="modal-close" onclick="closePaiementFournModal()">✕</button>
+        </div>
+        <div id="paiement-fourn-info" style="padding:10px;background:var(--surface2);border-radius:8px;font-size:13px;margin-bottom:14px"></div>
+        <div class="form-group"><label class="form-label">Montant versé (GNF) *</label><input type="number" class="form-input" id="paiement-fourn-montant" placeholder="0" min="0"></div>
+        <div class="form-group"><label class="form-label">Date</label><input type="date" class="form-input" id="paiement-fourn-date"></div>
+        <div class="form-group"><label class="form-label">Note</label><input class="form-input" id="paiement-fourn-note" placeholder="Virement, espèces..."></div>
+        <input type="hidden" id="paiement-fourn-cmd-id" value="">
+        <div style="display:flex;gap:8px;margin-top:16px">
+          <button onclick="savePaiementFournisseur()" class="btn btn-primary" style="flex:1">💾 Enregistrer versement</button>
+          <button onclick="closePaiementFournModal()" class="btn">Annuler</button>
+        </div>
+      </div>
+    </div>
     <!-- SALAIRES & BÉNÉFICES VIEW -->
     <div class="view" id="view-salaires">
       <div class="topbar">
@@ -9035,6 +9211,730 @@ function gotoMoisRpt(el){
   if(mEl) mEl.value=yr+'-'+mo;
   if(typeof switchRapportTab==='function') switchRapportTab('mois');
 }
+
+
+// ==================== FOURNISSEURS & COMMANDES ====================
+var _fournLogoData = null;
+var _cmdEditId = null;
+var _receptionCmdId = null;
+var _paiementCmdId = null;
+
+// ── Onglets ──
+function switchFournTab(tab){
+  ['fourn','cmds','bilan'].forEach(function(t){
+    var panel = document.getElementById('panel-fourn-'+t);
+    var btn   = document.getElementById('tab-fourn-'+t);
+    if(panel) panel.style.display = t===tab ? '' : 'none';
+    if(btn){
+      btn.style.background = t===tab ? 'var(--accent)' : 'transparent';
+      btn.style.color      = t===tab ? '#fff' : 'var(--text3)';
+    }
+  });
+  if(tab==='fourn')  renderFournisseurs();
+  if(tab==='cmds')   { peupleFiltreCommandes(); renderCommandesList(); }
+  if(tab==='bilan')  { peupleSelFourn(); renderBilanFournisseur(); }
+}
+
+// ── Fournisseurs ──
+function openFournisseurModal(id){
+  _fournLogoData = null;
+  var ov = document.getElementById('fourn-overlay'); if(!ov) return;
+  ov.style.display = 'flex';
+  var f = id ? fournisseurs.find(function(x){ return String(x.id)===String(id); }) : null;
+  document.getElementById('fourn-edit-id').value = id||'';
+  document.getElementById('fourn-modal-title').textContent = id ? '✏️ Modifier fournisseur' : '🏭 Nouveau fournisseur';
+  document.getElementById('fourn-nom').value     = f ? (f.nom||'')     : '';
+  document.getElementById('fourn-adresse').value = f ? (f.adresse||'') : '';
+  document.getElementById('fourn-tel').value     = f ? (f.tel||'')     : '';
+  document.getElementById('fourn-whatsapp').value= f ? (f.whatsapp||''): '';
+  document.getElementById('fourn-email').value   = f ? (f.email||'')   : '';
+  document.getElementById('fourn-notes').value   = f ? (f.notes||'')   : '';
+  var prev = document.getElementById('fourn-logo-preview');
+  if(prev){
+    if(f && f.logo){ prev.innerHTML='<img src="'+f.logo+'" style="width:100%;height:100%;object-fit:contain">'; _fournLogoData=f.logo; }
+    else prev.innerHTML='🏭';
+  }
+}
+function closeFournisseurModal(){ var ov=document.getElementById('fourn-overlay'); if(ov) ov.style.display='none'; }
+
+function fournPreviewLogo(input){
+  var file=input.files[0]; if(!file) return;
+  var r=new FileReader();
+  r.onload=function(e){
+    _fournLogoData=e.target.result;
+    var p=document.getElementById('fourn-logo-preview');
+    if(p) p.innerHTML='<img src="'+e.target.result+'" style="width:100%;height:100%;object-fit:contain">';
+  };
+  r.readAsDataURL(file);
+}
+
+function saveFournisseur(){
+  var nom=(document.getElementById('fourn-nom').value||'').trim();
+  if(!nom){ showToast('Nom du fournisseur requis'); return; }
+  var id=document.getElementById('fourn-edit-id').value;
+  var obj={
+    id: id||String(Date.now()),
+    nom: nom,
+    adresse: (document.getElementById('fourn-adresse').value||'').trim(),
+    tel:     (document.getElementById('fourn-tel').value||'').trim(),
+    whatsapp:(document.getElementById('fourn-whatsapp').value||'').trim(),
+    email:   (document.getElementById('fourn-email').value||'').trim(),
+    notes:   (document.getElementById('fourn-notes').value||'').trim(),
+    logo:    _fournLogoData||'',
+    createdAt: new Date().toISOString()
+  };
+  if(id){
+    var idx=fournisseurs.findIndex(function(f){ return String(f.id)===String(id); });
+    if(idx>=0) fournisseurs[idx]=obj; else fournisseurs.push(obj);
+  } else {
+    fournisseurs.unshift(obj);
+  }
+  if(typeof sauvegarderFirebase==='function') sauvegarderFirebase();
+  closeFournisseurModal();
+  renderFournisseurs();
+  showToast('✅ Fournisseur enregistré');
+}
+
+function deleteFournisseur(id){
+  if(!confirm('Supprimer ce fournisseur ?')) return;
+  fournisseurs = fournisseurs.filter(function(f){ return String(f.id)!==String(id); });
+  if(typeof sauvegarderFirebase==='function') sauvegarderFirebase();
+  renderFournisseurs();
+}
+
+function renderFournisseurs(){
+  var el=document.getElementById('fourn-list'); if(!el) return;
+  if(!fournisseurs.length){
+    el.innerHTML='<div class="empty"><div class="empty-icon">🏭</div><div class="empty-text">Aucun fournisseur.<br>Cliquez "+ Fournisseur" pour commencer.</div></div>';
+    return;
+  }
+  el.innerHTML = fournisseurs.map(function(f){
+    // Stats de ce fournisseur
+    var cmdsF  = commandes.filter(function(c){ return String(c.fournisseurId)===String(f.id); });
+    var solde  = cmdsF.reduce(function(s,c){ return s + (c.soldeRestant||0); }, 0);
+    var nbEnCours = cmdsF.filter(function(c){ return c.statut!=='recu'; }).length;
+    var logoHtml = f.logo
+      ? '<img src="'+f.logo+'" style="width:100%;height:100%;object-fit:contain">'
+      : '<span style="font-size:24px">🏭</span>';
+    return '<div class="card" style="margin-bottom:14px">'
+      + '<div style="display:flex;gap:14px;align-items:flex-start">'
+      + '<div style="width:60px;height:60px;border-radius:10px;background:var(--surface2);border:2px solid var(--border);display:flex;align-items:center;justify-content:center;flex-shrink:0;overflow:hidden">'+logoHtml+'</div>'
+      + '<div style="flex:1">'
+      + '<div style="font-weight:800;font-size:16px;margin-bottom:4px">'+f.nom+'</div>'
+      + (f.adresse?'<div style="font-size:12px;color:var(--text3)">📍 '+f.adresse+'</div>':'')
+      + (f.tel?'<div style="font-size:12px;color:var(--text3)">📞 '+f.tel+'</div>':'')
+      + (f.email?'<div style="font-size:12px;color:var(--text3)">✉️ '+f.email+'</div>':'')
+      + (f.notes?'<div style="font-size:12px;color:var(--text3);margin-top:4px;font-style:italic">'+f.notes+'</div>':'')
+      + '</div>'
+      + '<div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0">'
+      + (f.whatsapp?'<a href="https://wa.me/'+f.whatsapp.replace(/\D/g,'')+'" target="_blank" style="padding:5px 12px;border-radius:20px;background:#25d366;color:#fff;font-size:12px;font-weight:700;text-decoration:none;text-align:center">📱 WA</a>':'')
+      + '<button onclick="openFournisseurModal(\''+f.id+'\')" style="padding:5px 12px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text);font-family:inherit;font-size:12px;cursor:pointer">✏️ Modifier</button>'
+      + '<button onclick="openCommandeModal(\''+f.id+'\')" style="padding:5px 12px;border:none;border-radius:8px;background:var(--accent);color:#fff;font-family:inherit;font-size:12px;cursor:pointer;font-weight:700">+ Commande</button>'
+      + '<button onclick="deleteFournisseur(\''+f.id+'\')" style="padding:5px 12px;border:none;border-radius:8px;background:var(--red-bg);color:var(--red);font-family:inherit;font-size:12px;cursor:pointer">🗑️</button>'
+      + '</div></div>'
+      // Stats
+      + '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">'
+      + '<div style="text-align:center"><div style="font-size:10px;color:var(--text3);text-transform:uppercase">Commandes</div><div style="font-weight:700;font-size:18px">'+cmdsF.length+'</div></div>'
+      + '<div style="text-align:center"><div style="font-size:10px;color:var(--text3);text-transform:uppercase">En cours</div><div style="font-weight:700;font-size:18px;color:var(--accent)">'+nbEnCours+'</div></div>'
+      + '<div style="text-align:center"><div style="font-size:10px;color:var(--text3);text-transform:uppercase">Solde dû</div><div style="font-weight:700;font-size:16px;color:'+(solde>0?'var(--red)':'var(--green)')+'">'+fmtGNF(solde)+'</div></div>'
+      + '</div>'
+      + '</div>';
+  }).join('');
+}
+
+// ── Commandes ──
+function openCommandeModal(fournisseurId){
+  _cmdEditId = null;
+  var ov=document.getElementById('cmd-overlay'); if(!ov) return;
+  ov.style.display='flex';
+  document.getElementById('cmd-modal-title').textContent = '📋 Nouvelle commande';
+  document.getElementById('cmd-edit-id').value = '';
+  document.getElementById('cmd-note').value = '';
+  document.getElementById('cmd-date').value = new Date().toISOString().slice(0,10);
+  // Peupler fournisseurs
+  var sel=document.getElementById('cmd-fourn-sel');
+  sel.innerHTML='<option value="">-- Choisir --</option>'+fournisseurs.map(function(f){
+    return '<option value="'+f.id+'"'+(String(f.id)===String(fournisseurId)?' selected':'')+'>'+f.nom+'</option>';
+  }).join('');
+  if(fournisseurId){ sel.value=String(fournisseurId); onCmdFournChange(); }
+  // Lignes vides
+  var container=document.getElementById('cmd-lignes');
+  container.innerHTML='';
+  addCmdLigne();
+  updateCmdTotal();
+}
+
+function closeCommandeModal(){ var ov=document.getElementById('cmd-overlay'); if(ov) ov.style.display='none'; }
+
+function onCmdFournChange(){
+  var fid=document.getElementById('cmd-fourn-sel').value;
+  var fourn=fournisseurs.find(function(f){ return String(f.id)===String(fid); });
+  var infoEl=document.getElementById('cmd-fourn-info');
+  var alertEl=document.getElementById('cmd-dette-alerte');
+  if(fourn && infoEl){
+    infoEl.style.display='block';
+    infoEl.innerHTML=(fourn.logo?'<img src="'+fourn.logo+'" style="width:32px;height:32px;object-fit:contain;border-radius:6px;float:left;margin-right:8px">':'')
+      +'<strong>'+fourn.nom+'</strong>'
+      +(fourn.adresse?'<br><span style="color:var(--text3)">📍 '+fourn.adresse+'</span>':'')
+      +(fourn.tel?'<br><span style="color:var(--text3)">📞 '+fourn.tel+'</span>':'')
+      +'<div style="clear:both"></div>';
+    var solde=commandes.filter(function(c){ return String(c.fournisseurId)===String(fid); })
+      .reduce(function(s,c){ return s+(c.soldeRestant||0); }, 0);
+    if(alertEl){
+      alertEl.style.display = solde>0 ? 'block' : 'none';
+      alertEl.innerHTML = solde>0 ? '⚠️ Solde restant dû à ce fournisseur : <strong>'+fmtGNF(solde)+'</strong>' : '';
+    }
+  } else {
+    if(infoEl) infoEl.style.display='none';
+    if(alertEl) alertEl.style.display='none';
+  }
+}
+
+function addCmdLigne(produitNom, qte, prixU, unite){
+  var container=document.getElementById('cmd-lignes');
+  var lineId='cl_'+Date.now()+'_'+Math.random().toString(36).slice(2,6);
+  var prodOpts='<option value="">-- Produit --</option>'+products.map(function(p){
+    return '<option value="'+p.designation+'" data-prix="'+(p.prix_achat||0)+'"'
+      +(produitNom&&p.designation===produitNom?' selected':'')+'>'+p.designation+'</option>';
+  }).join('');
+  var div=document.createElement('div');
+  div.id=lineId;
+  div.style.cssText='display:grid;grid-template-columns:2.5fr 1fr 0.8fr 1.2fr auto;gap:6px;margin-bottom:8px;align-items:center;padding:8px;background:var(--surface2);border-radius:8px';
+  div.innerHTML='<select class="form-input cmd-prod-sel" onchange="onCmdProdChange(this,\''+lineId+'\')" style="font-size:12px;padding:5px">'+prodOpts+'</select>'
+    +'<input type="number" class="form-input cmd-qte" placeholder="Qté" value="'+(qte||1)+'" min="1" oninput="updateCmdTotal()" style="font-size:12px;padding:5px">'
+    +'<input class="form-input cmd-unite" placeholder="Unité" value="'+(unite||'pcs')+'" style="font-size:12px;padding:5px">'
+    +'<input type="number" class="form-input cmd-prix" placeholder="Prix U. (GNF)" value="'+(prixU||'')+'" min="0" oninput="updateCmdTotal()" style="font-size:12px;padding:5px">'
+    +'<button onclick="document.getElementById(\''+lineId+'\').remove();updateCmdTotal()" style="padding:6px 10px;border:none;border-radius:6px;background:var(--red-bg);color:var(--red);cursor:pointer;font-size:14px">✕</button>';
+  container.appendChild(div);
+  updateCmdTotal();
+}
+
+function onCmdProdChange(sel, lineId){
+  var opt=sel.options[sel.selectedIndex];
+  var prix=opt?parseFloat(opt.getAttribute('data-prix')||0):0;
+  var line=document.getElementById(lineId);
+  if(line && prix>0){
+    var pEl=line.querySelector('.cmd-prix');
+    if(pEl && !pEl.value) pEl.value=prix;
+  }
+  updateCmdTotal();
+}
+
+function updateCmdTotal(){
+  var total=0;
+  document.querySelectorAll('#cmd-lignes > div').forEach(function(line){
+    var q=parseFloat(line.querySelector('.cmd-qte').value)||0;
+    var p=parseFloat(line.querySelector('.cmd-prix').value)||0;
+    total+=q*p;
+  });
+  var el=document.getElementById('cmd-total-preview');
+  if(el) el.textContent='Total estimé : '+fmtGNF(total);
+  return total;
+}
+
+function getCmdLignes(){
+  var lignes=[];
+  document.querySelectorAll('#cmd-lignes > div').forEach(function(line){
+    var prodSel=line.querySelector('.cmd-prod-sel');
+    var qte=parseFloat(line.querySelector('.cmd-qte').value)||0;
+    var unite=(line.querySelector('.cmd-unite').value||'pcs').trim();
+    var prixU=parseFloat(line.querySelector('.cmd-prix').value)||0;
+    var prodNom=prodSel?prodSel.value:'';
+    if(prodNom && qte>0) lignes.push({
+      produit:prodNom, qte:qte, unite:unite, prixU:prixU,
+      total:qte*prixU, qteRecue:0, statut:'attente'
+    });
+  });
+  return lignes;
+}
+
+function saveCommande(){
+  var fid=document.getElementById('cmd-fourn-sel').value;
+  if(!fid){ showToast('Choisissez un fournisseur'); return; }
+  var lignes=getCmdLignes();
+  if(!lignes.length){ showToast('Ajoutez au moins un article'); return; }
+  var fourn=fournisseurs.find(function(f){ return String(f.id)===String(fid); });
+  var total=lignes.reduce(function(s,l){ return s+(l.total||0); },0);
+  var shop=window._currentShop||{};
+  var editId=document.getElementById('cmd-edit-id').value;
+  var cmd={
+    id: editId||String(Date.now()),
+    fournisseurId: fid,
+    fournisseurNom: fourn?fourn.nom:'',
+    date: document.getElementById('cmd-date').value||new Date().toISOString().slice(0,10),
+    note: document.getElementById('cmd-note').value||'',
+    lignes: lignes,
+    totalEstime: total,
+    montantTotal: 0,
+    montantPaye: 0,
+    soldeRestant: 0,
+    statut: 'attente',
+    paiements: [],
+    boutiqueNom: shop.entreprise||'',
+    boutiqueAdresse: shop.adresse||'',
+    boutiqueTel: shop.tel||'',
+    createdAt: new Date().toISOString()
+  };
+  if(editId){
+    var idx=commandes.findIndex(function(c){ return String(c.id)===String(editId); });
+    if(idx>=0){ cmd.paiements=commandes[idx].paiements||[]; cmd.montantTotal=commandes[idx].montantTotal||0; cmd.montantPaye=commandes[idx].montantPaye||0; cmd.soldeRestant=commandes[idx].soldeRestant||0; cmd.statut=commandes[idx].statut||'attente'; commandes[idx]=cmd; }
+    else commandes.unshift(cmd);
+  } else {
+    commandes.unshift(cmd);
+  }
+  if(typeof sauvegarderFirebase==='function') sauvegarderFirebase();
+  closeCommandeModal();
+  switchFournTab('cmds');
+  showToast('✅ Commande enregistrée');
+}
+
+function envoyerCommandeWhatsApp(){
+  var fid=document.getElementById('cmd-fourn-sel').value;
+  var fourn=fournisseurs.find(function(f){ return String(f.id)===String(fid); });
+  if(!fourn||!fourn.whatsapp){ showToast('WhatsApp du fournisseur non renseigné'); return; }
+  var lignes=getCmdLignes();
+  if(!lignes.length){ showToast('Ajoutez des articles'); return; }
+  var shop=window._currentShop||{};
+  var date=document.getElementById('cmd-date').value||new Date().toISOString().slice(0,10);
+  var total=lignes.reduce(function(s,l){ return s+(l.total||0); },0);
+  var NL='\n';
+  var msg='📦 *COMMANDE — '+new Date(date).toLocaleDateString('fr-FR')+'*'+NL+NL;
+  msg+='🏪 *'+(shop.entreprise||'Boutique')+'*'+NL;
+  if(shop.adresse) msg+='📍 '+shop.adresse+NL;
+  if(shop.tel) msg+='📞 '+shop.tel+NL+NL;
+  msg+='━━━━━━━━━━━━━━━━━'+NL+'*ARTICLES COMMANDÉS*'+NL;
+  lignes.forEach(function(l,i){
+    msg+=(i+1)+'. *'+l.produit+'* — '+l.qte+' '+l.unite+(l.prixU?' | '+fmtGNF(l.prixU)+'/u | Total: '+fmtGNF(l.total):'')+''+NL;
+  });
+  msg+='━━━━━━━━━━━━━━━━━'+NL;
+  if(total>0) msg+='💰 *TOTAL ESTIMÉ : '+fmtGNF(total)+'*'+NL;
+  if(document.getElementById('cmd-note').value) msg+=NL+'📝 '+document.getElementById('cmd-note').value+NL;
+  msg+=NL+'_Merci de confirmer disponibilité et délai de livraison._';
+  saveCommande();
+  window.open('https://wa.me/'+fourn.whatsapp.replace(/\D/g,'')+'?text='+encodeURIComponent(msg),'_blank');
+}
+
+// ── Liste des commandes ──
+function peupleFiltreCommandes(){
+  var sel=document.getElementById('cmd-filter-fourn'); if(!sel) return;
+  sel.innerHTML='<option value="">Tous</option>'+fournisseurs.map(function(f){
+    return '<option value="'+f.id+'">'+f.nom+'</option>';
+  }).join('');
+}
+
+function renderCommandesList(){
+  var el=document.getElementById('commandes-list'); if(!el) return;
+  var fid=(document.getElementById('cmd-filter-fourn')||{}).value||'';
+  var statut=(document.getElementById('cmd-filter-statut')||{}).value||'';
+  var list=commandes.filter(function(c){
+    if(fid && String(c.fournisseurId)!==String(fid)) return false;
+    if(statut && c.statut!==statut) return false;
+    return true;
+  }).slice().sort(function(a,b){ return new Date(b.createdAt||b.date)-new Date(a.createdAt||a.date); });
+
+  if(!list.length){
+    el.innerHTML='<div class="empty"><div class="empty-icon">📋</div><div class="empty-text">Aucune commande</div></div>';
+    return;
+  }
+
+  el.innerHTML=list.map(function(cmd){
+    var fourn=fournisseurs.find(function(f){ return String(f.id)===String(cmd.fournisseurId); });
+    var statutBadge=cmd.statut==='recu'
+      ?'<span style="background:#dcfce7;color:#16a34a;padding:2px 10px;border-radius:20px;font-size:11px;font-weight:700">✅ Reçue</span>'
+      :cmd.statut==='partiel'
+      ?'<span style="background:#fef9c3;color:#ca8a04;padding:2px 10px;border-radius:20px;font-size:11px;font-weight:700">⏳ Partielle</span>'
+      :'<span style="background:var(--surface2);color:var(--text3);padding:2px 10px;border-radius:20px;font-size:11px;font-weight:700">🕐 En attente</span>';
+
+    var lignesHtml=cmd.lignes.map(function(l){
+      var pct=l.qte>0?Math.round((l.qteRecue||0)/l.qte*100):0;
+      var statL=l.statut==='recu'?'✅':l.statut==='non-recu'?'❌':'⏳';
+      return '<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);font-size:12px">'
+        +'<div style="flex:1"><strong>'+l.produit+'</strong> <span style="color:var(--text3)">'+l.qte+' '+l.unite+'</span></div>'
+        +'<div style="text-align:center;min-width:80px">'
+        +'<div style="font-size:11px;color:var(--text3)">Reçu: '+(l.qteRecue||0)+'/'+l.qte+'</div>'
+        +'<div style="height:4px;background:var(--border);border-radius:2px;margin-top:2px"><div style="height:100%;width:'+pct+'%;background:var(--green);border-radius:2px"></div></div>'
+        +'</div>'
+        +(l.prixU?'<div style="color:var(--text3)">'+fmtGNF(l.total||0)+'</div>':'')
+        +'<div>'+statL+'</div>'
+        +'</div>';
+    }).join('');
+
+    return '<div class="card" style="margin-bottom:14px">'
+      +'<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px">'
+      +'<div>'
+      +'<div style="font-weight:700;font-size:15px">'+(fourn?fourn.nom:cmd.fournisseurNom||'?')+'</div>'
+      +'<div style="font-size:12px;color:var(--text3)">📅 '+new Date(cmd.date).toLocaleDateString('fr-FR')+'</div>'
+      +(cmd.note?'<div style="font-size:12px;color:var(--text3);font-style:italic">'+cmd.note+'</div>':'')
+      +'</div>'
+      +'<div style="text-align:right">'
+      +statutBadge
+      +(cmd.montantTotal>0?'<div style="margin-top:6px;font-size:12px"><span style="color:var(--text3)">Montant: </span><strong>'+fmtGNF(cmd.montantTotal)+'</strong></div>':'')
+      +(cmd.soldeRestant>0?'<div style="font-size:12px;color:var(--red)">Solde dû: <strong>'+fmtGNF(cmd.soldeRestant)+'</strong></div>':'')
+      +(cmd.montantTotal>0&&cmd.soldeRestant===0?'<div style="font-size:12px;color:var(--green)">✅ Soldée</div>':'')
+      +'</div>'
+      +'</div>'
+      // Lignes produits
+      +'<div style="margin-bottom:12px">'+lignesHtml+'</div>'
+      // Actions
+      +'<div style="display:flex;gap:6px;flex-wrap:wrap">'
+      +(cmd.statut!=='recu'?'<button onclick="openReceptionModal(\''+cmd.id+'\')" style="padding:5px 12px;border:1px solid var(--accent);border-radius:8px;background:var(--accent-light);color:var(--accent);font-family:inherit;font-size:12px;cursor:pointer;font-weight:600">📥 Réception</button>':'')
+      +'<button onclick="openPaiementFournModal(\''+cmd.id+'\')" style="padding:5px 12px;border:1px solid var(--green-border);border-radius:8px;background:var(--green-bg);color:var(--green);font-family:inherit;font-size:12px;cursor:pointer;font-weight:600">💳 Paiement</button>'
+      +(fourn&&fourn.whatsapp?'<button onclick="renvoyerCommandeWA(\''+cmd.id+'\')" style="padding:5px 12px;border:none;border-radius:8px;background:#25d366;color:#fff;font-family:inherit;font-size:12px;cursor:pointer">📱 WA</button>':'')
+      +'<button onclick="imprimerCommande(\''+cmd.id+'\')" style="padding:5px 12px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text);font-family:inherit;font-size:12px;cursor:pointer">🖨️ PDF</button>'
+      +(cmd.statut!=='recu'?'<button onclick="editCommande(\''+cmd.id+'\')" style="padding:5px 12px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text);font-family:inherit;font-size:12px;cursor:pointer">✏️</button>':'')
+      +'<button onclick="deleteCommande(\''+cmd.id+'\')" style="padding:5px 10px;border:none;border-radius:8px;background:var(--red-bg);color:var(--red);font-family:inherit;font-size:12px;cursor:pointer">🗑️</button>'
+      +'</div>'
+      // Historique paiements
+      +(cmd.paiements&&cmd.paiements.length?
+        '<div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border)">'
+        +'<div style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;margin-bottom:6px">Historique paiements</div>'
+        +cmd.paiements.map(function(p){
+          return '<div style="display:flex;justify-content:space-between;font-size:12px;padding:3px 0;border-bottom:1px solid var(--border)">'
+            +'<span>'+new Date(p.date).toLocaleDateString('fr-FR')+'</span>'
+            +(p.note?'<span style="color:var(--text3)">'+p.note+'</span>':'')
+            +'<span style="font-weight:700;color:var(--green)">'+fmtGNF(p.montant)+'</span>'
+            +'</div>';
+        }).join('')
+        +'</div>':''
+      )
+      +'</div>';
+  }).join('');
+}
+
+function editCommande(id){
+  var cmd=commandes.find(function(c){ return String(c.id)===String(id); }); if(!cmd) return;
+  openCommandeModal(cmd.fournisseurId);
+  _cmdEditId=id;
+  document.getElementById('cmd-edit-id').value=id;
+  document.getElementById('cmd-modal-title').textContent='✏️ Modifier commande';
+  document.getElementById('cmd-date').value=cmd.date||'';
+  document.getElementById('cmd-note').value=cmd.note||'';
+  var sel=document.getElementById('cmd-fourn-sel');
+  if(sel) sel.value=String(cmd.fournisseurId);
+  onCmdFournChange();
+  var container=document.getElementById('cmd-lignes'); container.innerHTML='';
+  (cmd.lignes||[]).forEach(function(l){ addCmdLigne(l.produit, l.qte, l.prixU, l.unite); });
+  updateCmdTotal();
+}
+
+function deleteCommande(id){
+  if(!confirm('Supprimer cette commande ?')) return;
+  commandes=commandes.filter(function(c){ return String(c.id)!==String(id); });
+  if(typeof sauvegarderFirebase==='function') sauvegarderFirebase();
+  renderCommandesList();
+  showToast('Commande supprimée');
+}
+
+// ── Réception ──
+function openReceptionModal(cmdId){
+  var cmd=commandes.find(function(c){ return String(c.id)===String(cmdId); }); if(!cmd) return;
+  _receptionCmdId=cmdId;
+  var ov=document.getElementById('reception-overlay'); if(!ov) return;
+  ov.style.display='flex';
+  var fourn=fournisseurs.find(function(f){ return String(f.id)===String(cmd.fournisseurId); });
+  document.getElementById('reception-fourn-info').innerHTML=
+    '<strong>'+(fourn?fourn.nom:cmd.fournisseurNom)+'</strong>'
+    +' — Commande du '+new Date(cmd.date).toLocaleDateString('fr-FR')
+    +(cmd.note?' <span style="color:var(--text3);font-style:italic">'+cmd.note+'</span>':'');
+
+  var montantEl=document.getElementById('rec-montant-total');
+  if(montantEl) montantEl.value=cmd.montantTotal||cmd.totalEstime||'';
+  var versEl=document.getElementById('rec-versement');
+  if(versEl) versEl.value='';
+  updateReceptionSolde();
+
+  // Lignes
+  var cont=document.getElementById('reception-lignes');
+  cont.innerHTML='<div style="font-size:12px;font-weight:700;color:var(--text3);text-transform:uppercase;margin-bottom:8px">Articles</div>'
+    +(cmd.lignes||[]).map(function(l,i){
+      var statutOpts='<option value="attente"'+(l.statut==='attente'?' selected':'')+'>⏳ En attente</option>'
+        +'<option value="recu"'+(l.statut==='recu'?' selected':'')+'>✅ Reçu</option>'
+        +'<option value="non-recu"'+(l.statut==='non-recu'?' selected':'')+'>❌ Non reçu</option>';
+      return '<div style="display:grid;grid-template-columns:2fr 1fr 1fr 1.2fr;gap:8px;align-items:center;padding:8px;background:var(--surface2);border-radius:8px;margin-bottom:6px" id="rec-line-'+i+'">'
+        +'<div><div style="font-weight:600;font-size:13px">'+l.produit+'</div><div style="font-size:11px;color:var(--text3)">Commandé: '+l.qte+' '+l.unite+'</div></div>'
+        +'<div><label style="font-size:11px;color:var(--text3)">Qté reçue</label><input type="number" id="rec-qte-'+i+'" value="'+(l.qteRecue||0)+'" min="0" max="'+l.qte+'" class="form-input" style="font-size:12px;padding:5px" oninput="onRecQteChange('+i+','+l.qte+')"></div>'
+        +'<div><label style="font-size:11px;color:var(--text3)">Statut</label><select id="rec-statut-'+i+'" class="form-input" style="font-size:12px;padding:5px">'+statutOpts+'</select></div>'
+        +'<div style="font-size:12px;color:var(--text3)">Prix: '+(l.prixU?fmtGNF(l.prixU)+'/u':'—')+'</div>'
+        +'</div>';
+    }).join('');
+}
+
+function onRecQteChange(i, qteMax){
+  var qteEl=document.getElementById('rec-qte-'+i);
+  var statutEl=document.getElementById('rec-statut-'+i);
+  if(!qteEl||!statutEl) return;
+  var v=parseInt(qteEl.value)||0;
+  if(v>=qteMax) statutEl.value='recu';
+  else if(v>0) statutEl.value='attente';
+}
+
+function updateReceptionSolde(){
+  var montant=parseFloat(document.getElementById('rec-montant-total').value)||0;
+  var versement=parseFloat(document.getElementById('rec-versement').value)||0;
+  var solde=montant-versement;
+  var el=document.getElementById('rec-solde-preview');
+  if(el) el.textContent='Solde restant : '+fmtGNF(solde>0?solde:0)+(solde<=0&&montant>0?' ✅ Soldé':'');
+}
+
+function closeReceptionModal(){ var ov=document.getElementById('reception-overlay'); if(ov) ov.style.display='none'; }
+
+function validerReception(){
+  var cmd=commandes.find(function(c){ return String(c.id)===String(_receptionCmdId); }); if(!cmd) return;
+  var montant=parseFloat(document.getElementById('rec-montant-total').value)||0;
+  var versement=parseFloat(document.getElementById('rec-versement').value)||0;
+
+  // Mettre à jour les lignes
+  (cmd.lignes||[]).forEach(function(l,i){
+    var qteEl=document.getElementById('rec-qte-'+i);
+    var statutEl=document.getElementById('rec-statut-'+i);
+    var qteRecue=qteEl?parseInt(qteEl.value)||0:l.qteRecue||0;
+    var statut=statutEl?statutEl.value:l.statut||'attente';
+    // Mise à jour stock si reçu
+    if(qteRecue>(l.qteRecue||0) && statut!=='non-recu'){
+      var diff=qteRecue-(l.qteRecue||0);
+      var prod=products.find(function(p){ return p.designation===l.produit; });
+      if(prod){ prod.stock_initial=(prod.stock_initial||0)+diff; prod.total=(prod.stock_initial||0)*(prod.prix_achat||0); }
+      // Entrée stock
+      if(typeof entrees!=='undefined') entrees.unshift({
+        id:String(Date.now()), date:new Date().toISOString().slice(0,10),
+        produit:l.produit, categorie:'', qte:diff,
+        nouveauPrix:l.prixU||0, total:diff*(l.prixU||0),
+        note:'Réception commande #'+_receptionCmdId
+      });
+    }
+    l.qteRecue=qteRecue; l.statut=statut;
+  });
+
+  // Montant & paiement
+  if(montant>0){ cmd.montantTotal=montant; }
+  if(versement>0){
+    cmd.paiements=cmd.paiements||[];
+    cmd.paiements.push({ date:new Date().toISOString().slice(0,10), montant:versement, note:'Versement réception' });
+    cmd.montantPaye=(cmd.montantPaye||0)+versement;
+  }
+  var totalPaye=cmd.montantPaye||0;
+  cmd.soldeRestant=Math.max(0,(cmd.montantTotal||0)-totalPaye);
+
+  // Statut global commande
+  var toutRecu=cmd.lignes.every(function(l){ return l.statut==='recu'||l.statut==='non-recu'; });
+  var auMoinsUn=cmd.lignes.some(function(l){ return l.statut==='recu'; });
+  cmd.statut = toutRecu&&auMoinsUn ? 'recu' : auMoinsUn ? 'partiel' : 'attente';
+
+  if(typeof sauvegarderFirebase==='function') sauvegarderFirebase();
+  closeReceptionModal();
+  renderCommandesList();
+  if(typeof renderTable==='function') renderTable();
+  showToast('✅ Réception validée — stock mis à jour');
+}
+
+// ── Paiement fournisseur ──
+function openPaiementFournModal(cmdId){
+  var cmd=commandes.find(function(c){ return String(c.id)===String(cmdId); }); if(!cmd) return;
+  _paiementCmdId=cmdId;
+  var ov=document.getElementById('paiement-fourn-overlay'); if(!ov) return;
+  ov.style.display='flex';
+  var fourn=fournisseurs.find(function(f){ return String(f.id)===String(cmd.fournisseurId); });
+  var info=document.getElementById('paiement-fourn-info');
+  if(info) info.innerHTML=
+    '<strong>'+(fourn?fourn.nom:cmd.fournisseurNom)+'</strong> — Commande du '+new Date(cmd.date).toLocaleDateString('fr-FR')
+    +'<br>Montant total: <strong>'+fmtGNF(cmd.montantTotal||0)+'</strong>'
+    +' | Payé: <strong style="color:var(--green)">'+fmtGNF(cmd.montantPaye||0)+'</strong>'
+    +' | <strong style="color:var(--red)">Solde: '+fmtGNF(cmd.soldeRestant||0)+'</strong>';
+  document.getElementById('paiement-fourn-montant').value='';
+  document.getElementById('paiement-fourn-date').value=new Date().toISOString().slice(0,10);
+  document.getElementById('paiement-fourn-note').value='';
+  document.getElementById('paiement-fourn-cmd-id').value=cmdId;
+}
+
+function closePaiementFournModal(){ var ov=document.getElementById('paiement-fourn-overlay'); if(ov) ov.style.display='none'; }
+
+function savePaiementFournisseur(){
+  var cmdId=document.getElementById('paiement-fourn-cmd-id').value;
+  var cmd=commandes.find(function(c){ return String(c.id)===String(cmdId); }); if(!cmd) return;
+  var montant=parseFloat(document.getElementById('paiement-fourn-montant').value)||0;
+  if(!montant){ showToast('Montant requis'); return; }
+  var date=document.getElementById('paiement-fourn-date').value||new Date().toISOString().slice(0,10);
+  var note=document.getElementById('paiement-fourn-note').value||'';
+  cmd.paiements=cmd.paiements||[];
+  cmd.paiements.push({ date:date, montant:montant, note:note });
+  cmd.montantPaye=(cmd.montantPaye||0)+montant;
+  cmd.soldeRestant=Math.max(0,(cmd.montantTotal||0)-cmd.montantPaye);
+  if(typeof sauvegarderFirebase==='function') sauvegarderFirebase();
+  closePaiementFournModal();
+  renderCommandesList();
+  showToast('✅ Paiement enregistré — Solde restant: '+fmtGNF(cmd.soldeRestant));
+}
+
+// ── Bilan fournisseur ──
+function peupleSelFourn(){
+  var sel=document.getElementById('bilan-fourn-sel'); if(!sel) return;
+  sel.innerHTML='<option value="">Tous les fournisseurs</option>'+fournisseurs.map(function(f){
+    return '<option value="'+f.id+'">'+f.nom+'</option>';
+  }).join('');
+}
+
+function renderBilanFournisseur(){
+  var el=document.getElementById('bilan-fourn-content'); if(!el) return;
+  var fid=(document.getElementById('bilan-fourn-sel')||{}).value||'';
+  var from=(document.getElementById('bilan-date-from')||{}).value||'';
+  var to=(document.getElementById('bilan-date-to')||{}).value||'';
+
+  var cmdsF=commandes.filter(function(c){
+    if(fid && String(c.fournisseurId)!==String(fid)) return false;
+    if(from && c.date<from) return false;
+    if(to && c.date>to) return false;
+    return true;
+  });
+
+  if(!cmdsF.length){
+    el.innerHTML='<div class="empty"><div class="empty-text">Aucune donnée pour cette période.</div></div>';
+    return;
+  }
+
+  // Grouper par fournisseur
+  var grouped={};
+  cmdsF.forEach(function(c){
+    var fId=String(c.fournisseurId);
+    if(!grouped[fId]) grouped[fId]={ fourn:fournisseurs.find(function(f){ return String(f.id)===fId; }), cmds:[], totalCmde:0, totalPaye:0, solde:0 };
+    grouped[fId].cmds.push(c);
+    grouped[fId].totalCmde+=(c.montantTotal||c.totalEstime||0);
+    grouped[fId].totalPaye+=(c.montantPaye||0);
+    grouped[fId].solde+=(c.soldeRestant||0);
+  });
+
+  var html='';
+  Object.values(grouped).forEach(function(g){
+    var f=g.fourn||{nom:g.cmds[0].fournisseurNom||'?'};
+    html+='<div class="card" style="margin-bottom:16px">'
+      +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">'
+      +'<div style="display:flex;gap:12px;align-items:center">'
+      +(f.logo?'<img src="'+f.logo+'" style="width:40px;height:40px;object-fit:contain;border-radius:8px">':'<div style="width:40px;height:40px;background:var(--accent);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:20px">🏭</div>')
+      +'<div><div style="font-weight:700;font-size:15px">'+f.nom+'</div>'
+      +(f.adresse?'<div style="font-size:11px;color:var(--text3)">📍 '+f.adresse+'</div>':'')
+      +(f.tel?'<div style="font-size:11px;color:var(--text3)">📞 '+f.tel+'</div>':'')
+      +'</div></div>'
+      +'<div style="text-align:right">'
+      +'<div style="font-size:12px;color:var(--text3)">Total commandé</div><div style="font-weight:700;font-size:16px;color:var(--accent)">'+fmtGNF(g.totalCmde)+'</div>'
+      +'<div style="font-size:12px;color:var(--green)">Payé: '+fmtGNF(g.totalPaye)+'</div>'
+      +'<div style="font-size:12px;font-weight:700;color:'+(g.solde>0?'var(--red)':'var(--green)')+'">Solde: '+fmtGNF(g.solde)+(g.solde===0?' ✅':'')+'</div>'
+      +'</div></div>'
+      // Tableau commandes
+      +'<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">'
+      +'<thead><tr style="background:var(--surface2)"><th style="padding:7px;text-align:left">Date</th><th style="padding:7px;text-align:left">Articles</th><th style="padding:7px;text-align:right">Montant</th><th style="padding:7px;text-align:right">Payé</th><th style="padding:7px;text-align:right">Solde</th><th style="padding:7px">Statut</th></tr></thead>'
+      +'<tbody>'+g.cmds.map(function(cmd){
+        return '<tr style="border-bottom:1px solid var(--border)">'
+          +'<td style="padding:6px">'+new Date(cmd.date).toLocaleDateString('fr-FR')+'</td>'
+          +'<td style="padding:6px;font-size:11px">'+(cmd.lignes||[]).map(function(l){ return l.produit+' ×'+l.qte; }).join(', ')+'</td>'
+          +'<td style="padding:6px;text-align:right;font-weight:700">'+fmtGNF(cmd.montantTotal||cmd.totalEstime||0)+'</td>'
+          +'<td style="padding:6px;text-align:right;color:var(--green)">'+fmtGNF(cmd.montantPaye||0)+'</td>'
+          +'<td style="padding:6px;text-align:right;color:'+(cmd.soldeRestant>0?'var(--red)':'var(--green)')+'">'+fmtGNF(cmd.soldeRestant||0)+'</td>'
+          +'<td style="padding:6px;text-align:center">'+(cmd.statut==='recu'?'✅':cmd.statut==='partiel'?'⏳':'🕐')+'</td>'
+          +'</tr>';
+      }).join('')
+      +'<tr style="background:var(--accent-light);font-weight:700"><td colspan="2" style="padding:7px">TOTAL '+f.nom+'</td>'
+      +'<td style="padding:7px;text-align:right">'+fmtGNF(g.totalCmde)+'</td>'
+      +'<td style="padding:7px;text-align:right;color:var(--green)">'+fmtGNF(g.totalPaye)+'</td>'
+      +'<td style="padding:7px;text-align:right;color:'+(g.solde>0?'var(--red)':'var(--green)')+'">'+fmtGNF(g.solde)+'</td>'
+      +'<td></td></tr>'
+      +'</tbody></table></div>'
+      +'<div style="margin-top:10px;display:flex;gap:8px">'
+      +'<button onclick="agvPrintPDF(\'bilan-fournisseur-detail\',\''+f.id+'\')" class="btn-print">🖨️ Imprimer bilan</button>'
+      +(f.whatsapp?'<button onclick="envoyerBilanWA(\''+f.id+'\')" style="padding:5px 12px;border:none;border-radius:8px;background:#25d366;color:#fff;font-family:inherit;font-size:12px;cursor:pointer">📱 Envoyer WA</button>':'')
+      +'</div>'
+      +'</div>';
+  });
+  el.innerHTML=html;
+}
+
+// ── Impression commande ──
+function imprimerCommande(cmdId){
+  var cmd=commandes.find(function(c){ return String(c.id)===String(cmdId); }); if(!cmd) return;
+  var fourn=fournisseurs.find(function(f){ return String(f.id)===String(cmd.fournisseurId); })||{nom:cmd.fournisseurNom||'?'};
+  var shop=window._currentShop||{};
+  var now=new Date(); var dateStr=now.toLocaleDateString('fr-FR'); var timeStr=now.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});
+  var total=cmd.montantTotal||cmd.totalEstime||cmd.lignes.reduce(function(s,l){return s+(l.total||0);},0);
+  var css='@page{size:A4 portrait;margin:15mm 12mm}*{margin:0;padding:0;box-sizing:border-box}body{font-family:Arial,sans-serif;font-size:11px;color:#111;line-height:1.4}.header{display:flex;justify-content:space-between;padding-bottom:10px;border-bottom:2px solid #1e3a5f;margin-bottom:14px}.shop-name{font-size:16px;font-weight:700;color:#1e3a5f}.title{font-size:14px;font-weight:700;color:#1e3a5f;margin:12px 0 10px;text-transform:uppercase;border-bottom:1px solid #e0e0e0;padding-bottom:6px}table{width:100%;border-collapse:collapse;margin-bottom:14px}thead th{background:#1e3a5f;color:#fff;padding:6px 8px;font-size:9px;text-transform:uppercase;text-align:left}tbody td{padding:6px 8px;border-bottom:1px solid #ececec}tbody tr:nth-child(even){background:#f9f9f9}.total-row{background:#1e3a5f;color:#fff;font-weight:700}.footer{margin-top:20px;padding-top:8px;border-top:1px solid #e0e0e0;font-size:9px;color:#999;text-align:center}.no-print{display:none}@media screen{.no-print{display:block;position:fixed;top:10px;right:10px}}';
+  var body='<div class="header"><div>'
+    +(shop.logo?'<img src="'+shop.logo+'" style="width:48px;height:48px;object-fit:contain;border-radius:6px;margin-right:10px;float:left">':'')
+    +'<div class="shop-name">'+(shop.entreprise||'Boutique')+'</div>'
+    +(shop.adresse?'<div style="font-size:10px;color:#666">📍 '+shop.adresse+'</div>':'')
+    +(shop.tel?'<div style="font-size:10px;color:#666">📞 '+shop.tel+'</div>':'')
+    +'</div><div style="text-align:right"><div style="font-weight:700;font-size:12px;color:#1e3a5f">COMMANDE</div><div style="font-size:10px;color:#666">'+dateStr+' à '+timeStr+'</div>'
+    +'<div style="margin-top:8px;font-size:11px"><strong>Fournisseur:</strong><br>'+fourn.nom+'</div>'
+    +(fourn.adresse?'<div style="font-size:10px;color:#666">'+fourn.adresse+'</div>':'')
+    +(fourn.tel?'<div style="font-size:10px;color:#666">'+fourn.tel+'</div>':'')
+    +'</div></div>'
+    +'<div class="title">📋 Commande du '+new Date(cmd.date).toLocaleDateString('fr-FR')+(cmd.note?' — '+cmd.note:'')+'</div>'
+    +'<table><thead><tr><th>Produit</th><th>Qté</th><th>Unité</th><th style="text-align:right">Prix U.</th><th style="text-align:right">Total</th><th>Statut réception</th></tr></thead><tbody>'
+    +cmd.lignes.map(function(l){
+      var statut=l.statut==='recu'?'✅ Reçu ('+l.qteRecue+'/'+l.qte+')':l.statut==='non-recu'?'❌ Non reçu':'⏳ En attente';
+      return '<tr><td style="font-weight:600">'+l.produit+'</td><td style="text-align:center">'+l.qte+'</td><td>'+l.unite+'</td><td style="text-align:right">'+(l.prixU?fmtGNF(l.prixU):'—')+'</td><td style="text-align:right;font-weight:700">'+(l.total?fmtGNF(l.total):'—')+'</td><td>'+statut+'</td></tr>';
+    }).join('')
+    +'<tr class="total-row"><td colspan="4">TOTAL</td><td style="text-align:right">'+fmtGNF(total)+'</td><td></td></tr>'
+    +'</tbody></table>'
+    +(cmd.montantTotal>0?
+      '<table style="width:50%;float:right"><thead><tr><th colspan="2">Situation paiement</th></tr></thead><tbody>'
+      +'<tr><td>Montant total</td><td style="text-align:right;font-weight:700">'+fmtGNF(cmd.montantTotal)+'</td></tr>'
+      +'<tr><td>Montant payé</td><td style="text-align:right;color:#16a34a;font-weight:700">'+fmtGNF(cmd.montantPaye||0)+'</td></tr>'
+      +'<tr style="background:#fee2e2"><td style="font-weight:700">Solde restant</td><td style="text-align:right;font-weight:700;color:#dc2626">'+fmtGNF(cmd.soldeRestant||0)+'</td></tr>'
+      +(cmd.paiements&&cmd.paiements.length?'<tr><td colspan="2" style="padding-top:8px;font-size:10px;color:#666">Paiements: '+cmd.paiements.map(function(p){return new Date(p.date).toLocaleDateString('fr-FR')+': '+fmtGNF(p.montant)+(p.note?' ('+p.note+')':'');}).join(' | ')+'</td></tr>':'')
+      +'</tbody></table><div style="clear:both"></div>':'')
+    +'<div class="footer">Document généré par App AGV — '+(shop.entreprise||'Boutique')+' — '+dateStr+'</div>';
+
+  var win=window.open('','_blank','width=900,height=700'); if(!win){ alert('Autorisez les popups'); return; }
+  win.document.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Commande</title><style>'+css+'</style></head><body>');
+  win.document.write(body);
+  win.document.write('<div class="no-print" style="display:flex;gap:8px"><button onclick="window.print()" style="padding:8px 18px;background:#1e3a5f;color:#fff;border:none;border-radius:6px;font-size:13px;font-weight:700;cursor:pointer">🖨️ Imprimer / PDF</button><button onclick="window.close()" style="padding:8px 14px;background:#eee;color:#333;border:none;border-radius:6px;font-size:13px;cursor:pointer">✕ Fermer</button></div>');
+  win.document.write('</body></html>');
+  win.document.close();
+  setTimeout(function(){ win.focus(); win.print(); }, 500);
+}
+
+// ── WhatsApp bilan ──
+function envoyerBilanWA(fournId){
+  var fourn=fournisseurs.find(function(f){ return String(f.id)===String(fournId); }); if(!fourn||!fourn.whatsapp){ showToast('WhatsApp non renseigné'); return; }
+  var cmdsF=commandes.filter(function(c){ return String(c.fournisseurId)===String(fournId); });
+  var totalCmde=cmdsF.reduce(function(s,c){return s+(c.montantTotal||c.totalEstime||0);},0);
+  var totalPaye=cmdsF.reduce(function(s,c){return s+(c.montantPaye||0);},0);
+  var solde=cmdsF.reduce(function(s,c){return s+(c.soldeRestant||0);},0);
+  var shop=window._currentShop||{};
+  var NL='\n';
+  var msg='📊 *SITUATION COMPTE — '+(shop.entreprise||'Boutique')+'*'+NL;
+  msg+='Fournisseur: *'+fourn.nom+'*'+NL+'Date: '+new Date().toLocaleDateString('fr-FR')+NL+NL;
+  msg+='━━━━━━━━━━━━━━━━━'+NL;
+  msg+='📦 Commandes: '+cmdsF.length+NL;
+  msg+='💰 Total commandé: *'+fmtGNF(totalCmde)+'*'+NL;
+  msg+='✅ Total payé: *'+fmtGNF(totalPaye)+'*'+NL;
+  msg+=(solde>0?'🔴':'✅')+' Solde restant: *'+fmtGNF(solde)+'*'+NL+NL;
+  cmdsF.slice(0,5).forEach(function(c,i){
+    msg+=(i+1)+'. '+new Date(c.date).toLocaleDateString('fr-FR')+' — '+fmtGNF(c.montantTotal||c.totalEstime||0)+' ('+fmtGNF(c.soldeRestant||0)+' restant)'+NL;
+  });
+  if(cmdsF.length>5) msg+='...et '+(cmdsF.length-5)+' autres commandes'+NL;
+  window.open('https://wa.me/'+fourn.whatsapp.replace(/\D/g,'')+'?text='+encodeURIComponent(msg),'_blank');
+}
+
+// ── WhatsApp renvoi commande ──
+function renvoyerCommandeWA(cmdId){
+  var cmd=commandes.find(function(c){ return String(c.id)===String(cmdId); }); if(!cmd) return;
+  var fourn=fournisseurs.find(function(f){ return String(f.id)===String(cmd.fournisseurId); });
+  if(!fourn||!fourn.whatsapp){ showToast('WhatsApp non renseigné'); return; }
+  var shop=window._currentShop||{};
+  var NL='\n';
+  var msg='📦 *COMMANDE N°'+cmd.id+' — '+new Date(cmd.date).toLocaleDateString('fr-FR')+'*'+NL;
+  msg+='🏪 '+(shop.entreprise||'Boutique')+(shop.tel?' — 📞 '+shop.tel:'')+NL+NL;
+  msg+='━━━━━━━━━━━━━━━━━'+NL;
+  (cmd.lignes||[]).forEach(function(l,i){
+    msg+=(i+1)+'. *'+l.produit+'* — '+l.qte+' '+l.unite+(l.prixU?' | '+fmtGNF(l.prixU)+'/u':'')+''+NL;
+  });
+  msg+='━━━━━━━━━━━━━━━━━'+NL;
+  if(cmd.montantTotal>0) msg+='💰 Total: *'+fmtGNF(cmd.montantTotal)+'*'+NL;
+  if(cmd.soldeRestant>0) msg+='🔴 Solde dû: *'+fmtGNF(cmd.soldeRestant)+'*'+NL;
+  window.open('https://wa.me/'+fourn.whatsapp.replace(/\D/g,'')+'?text='+encodeURIComponent(msg),'_blank');
+}
+
+// ── showView étendu pour commandes ──
+var _origShowView = typeof showView === 'function' ? showView : null;
+
 </script>
 <!-- ========== MODAL VENTE RAPIDE ========== -->
 <div class="overlay" id="vrapide-overlay" onclick="closeVenteRapide(event)">
