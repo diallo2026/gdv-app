@@ -2892,17 +2892,18 @@ window.addEventListener('DOMContentLoaded',function(){
     <div class="view" id="view-depenses">
       <div class="topbar">
         <h1>Dépenses</h1>
-        <button class="btn btn-primary" id="btn-add-dep" onclick="openDepenseModal()">+ Nouvelle dépense</button>
+        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+          <select id="dep-year-filter" onchange="depFilterChanged()" style="padding:5px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text);font-family:inherit;font-size:13px;font-weight:600"></select>
+          <select id="dep-month-filter" onchange="depFilterChanged()" style="padding:5px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text);font-family:inherit;font-size:13px;font-weight:600"></select>
+          <button onclick="renderDepenses()" style="padding:5px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text);font-family:inherit;font-size:12px;cursor:pointer">🔄</button>
+          <button class="btn btn-primary" id="btn-add-dep" onclick="openDepenseModal()">+ Nouvelle dépense</button>
+        </div>
       </div>
-      <div id="depenses-blocked-msg" class="warn-box" style="display:none">⚠ Le fondateur n'a pas autorisé la saisie des dépenses pour votre compte.</div>
+      <div id="depenses-blocked-msg" class="warn-box" style="display:none">⚠ Dépenses non autorisées.</div>
       <div class="stats" id="dep-stats"></div>
       <div class="table-wrap">
         <div class="table-header">
           <span class="table-count" id="dep-count">0 dépense</span>
-          <div style="display:flex;gap:6px;align-items:center">
-            <select class="filter-sel" id="dep-year-filter" onchange="onDepYearChange()" style="border-radius:6px;padding:5px 10px"></select>
-            <select class="filter-sel" id="dep-month-filter" onchange="renderDepenses()" style="border-radius:6px;padding:5px 28px 5px 10px"></select>
-          </div>
         </div>
         <div id="dep-list" style="max-height:500px;overflow-y:auto">
           <div class="empty"><div class="empty-icon">💸</div><div class="empty-text">Aucune dépense enregistrée</div></div>
@@ -5365,7 +5366,8 @@ function getMonthLabel(mk){ const [y,m]=mk.split('-'); const d=new Date(y,m-1,1)
 function buildMonthFilters(){
   const currentMk   = getMonthKey(new Date());
   const currentYear = new Date().getFullYear();
-  ['sal-year-filter','dep-year-filter','jour-year-filter'].forEach(function(id){
+  // Peupler uniquement sal et jour (dep est géré directement dans renderDepenses)
+  ['sal-year-filter','jour-year-filter'].forEach(function(id){
     var sel = document.getElementById(id);
     if(!sel) return;
     var prev = parseInt(sel.value) || currentYear;
@@ -5375,7 +5377,6 @@ function buildMonthFilters(){
     sel.value = (prev>=2020&&prev<=2040) ? prev : currentYear;
   });
   _syncMonthFilter('sal-year-filter','sal-month-filter', currentMk);
-  _syncMonthFilter('dep-year-filter','dep-month-filter', currentMk);
   _syncMonthFilter('jour-year-filter','jour-month-filter', currentMk);
 }
 
@@ -5397,10 +5398,6 @@ function onSalYearChange(){
   renderSalaires();
 }
 
-function onDepYearChange(){
-  _syncMonthFilter('dep-year-filter','dep-month-filter', getMonthKey(new Date()));
-  renderDepenses();
-}
 function onJourYearChange(){
   _syncMonthFilter('jour-year-filter','jour-month-filter', getMonthKey(new Date()));
   const js=document.getElementById('jour-day-filter'); if(js)js.value='';
@@ -6154,49 +6151,111 @@ function saveDepense(){
   showToast('Dépense enregistrée');
 }
 
-function renderDepenses(){
-  const g=getCurrentGerant();
-  const canDep=currentRole==='gerant'&&g&&g.permDep;
-  const isFondateur=currentRole==='fondateur';
-  document.getElementById('depenses-blocked-msg').style.display=(!isFondateur&&!canDep)?'block':'none';
-  document.getElementById('btn-add-dep').style.display=(isFondateur||canDep)?'block':'none';
-
-  // Filtre année+mois — format YYYY-MM
-  const mk=document.getElementById('dep-month-filter')?document.getElementById('dep-month-filter').value:'';
-  // Filtrer par gérant si gérant connecté
-  let filtered = depenses.filter(d=>{
-    if(!mk) return true;
-    const dDate = d.date || d.ts || '';
-    return getMonthKey(dDate)===mk;
-  });
-  // Gérant ne voit que ses propres dépenses
-  if(currentRole==='gerant' && currentGerantId){
-    filtered = filtered.filter(d=>d.gerantId==currentGerantId || !d.gerantId);
-  }
-  const total=filtered.reduce((s,d)=>s+d.montant,0);
-  const cats=[...new Set(filtered.map(d=>d.cat))];
-
-  document.getElementById('dep-stats').innerHTML=`
-    <div class="stat"><div class="stat-label"><div class="dot red"></div> Total dépenses</div><div class="stat-val red" style="font-size:18px">${fmtGNF(total)}</div><div class="stat-sub">mois sélectionné</div></div>
-    <div class="stat"><div class="stat-label"><div class="dot amber"></div> Nombre</div><div class="stat-val amber">${filtered.length}</div><div class="stat-sub">dépenses enregistrées</div></div>
-    <div class="stat"><div class="stat-label"><div class="dot blue"></div> Catégories</div><div class="stat-val blue">${cats.length}</div></div>
-    <div class="stat"><div class="stat-label"><div class="dot green"></div> Moyenne</div><div class="stat-val" style="font-size:18px">${filtered.length?fmtGNF(Math.round(total/filtered.length)):'0 GNF'}</div><div class="stat-sub">par dépense</div></div>`;
-
-  document.getElementById('dep-count').textContent=`${filtered.length} dépense${filtered.length>1?'s':''}`;
-  document.getElementById('dep-list').innerHTML=filtered.length?filtered.map(d=>`
-    <div class="dep-item">
-      <span class="dep-cat-badge">${d.cat}</span>
-      <span class="dep-desc">${d.desc}</span>
-      <span class="dep-date">${new Date(d.date).toLocaleDateString('fr-FR')}</span>
-      <span class="dep-amount">-${fmtGNF(d.montant)}</span>
-      ${(()=>{
-        const gDep=getCurrentGerant();
-        const canDelDep=isFondateur||(gDep&&gDep.permDel);
-        return `${isFondateur?`<button class='row-btn' onclick='openEditDep(${d.id})' title='Modifier' style='opacity:1;color:var(--accent)'>✏</button>`:''} ${canDelDep?`<button class='row-btn del' onclick='deleteDepense(${d.id})' title='Supprimer' style='opacity:1'>🗑</button>`:''}`.trim();
-      })()}
-    </div>`).join(''):'<div class="empty"><div class="empty-icon">💸</div><div class="empty-text">Aucune dépense sur cette période</div></div>';
+function depFilterChanged(){
+  renderDepenses();
 }
 
+function renderDepenses(){
+  var isFondateur = currentRole==='fondateur';
+  var g = getCurrentGerant();
+  var canDep = isFondateur || (currentRole==='gerant' && g && g.permDep!==false);
+
+  // Bouton ajouter : libre pour tous (fondateur ET gérant autorisé)
+  var btnAdd = document.getElementById('btn-add-dep');
+  if(btnAdd) btnAdd.style.display = canDep ? 'block' : 'none';
+  var blocMsg = document.getElementById('depenses-blocked-msg');
+  if(blocMsg) blocMsg.style.display = (!canDep && currentRole==='gerant') ? 'block' : 'none';
+
+  // ── Init filtres année (2020→2040) la première fois seulement ──
+  var ysel = document.getElementById('dep-year-filter');
+  var msel = document.getElementById('dep-month-filter');
+  var now  = new Date();
+  var curY = now.getFullYear();
+  var curM = String(now.getMonth()+1).padStart(2,'0');
+
+  if(ysel && !ysel.options.length){
+    var opY='';
+    for(var y=2040;y>=2020;y--) opY+='<option value="'+y+'"'+(y===curY?' selected':'')+'>'+y+'</option>';
+    ysel.innerHTML = opY;
+    ysel.value = String(curY);
+  }
+
+  // ── Remplir les mois selon l'année choisie ──
+  if(ysel && msel){
+    var selY = parseInt(ysel.value)||curY;
+    var prevM = msel.value;
+    var mNames = ['Janvier','Février','Mars','Avril','Mai','Juin',
+                  'Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
+    var opM='';
+    for(var m=1;m<=12;m++){
+      var mv = selY+'-'+String(m).padStart(2,'0');
+      opM+='<option value="'+mv+'">'+mNames[m-1]+' '+selY+'</option>';
+    }
+    msel.innerHTML = opM;
+    // Remettre la valeur précédente ou le mois courant
+    var targetM = selY+'-'+curM;
+    if(prevM && msel.querySelector('option[value="'+prevM+'"]')) msel.value = prevM;
+    else if(msel.querySelector('option[value="'+targetM+'"]')) msel.value = targetM;
+    else msel.value = msel.options[0].value;
+  }
+
+  // ── Filtre actif ──
+  var mk = msel ? msel.value : '';
+
+  // ── Filtrer les dépenses ──
+  var filtered = depenses.filter(function(d){
+    if(!mk) return true;
+    var dDate = d.date || d.ts || '';
+    if(!dDate) return false;
+    // Comparer YYYY-MM
+    var dd = new Date(dDate);
+    if(isNaN(dd)) return false;
+    var dMk = dd.getFullYear()+'-'+String(dd.getMonth()+1).padStart(2,'0');
+    return dMk === mk;
+  });
+
+  // Gérant voit uniquement ses propres dépenses
+  if(currentRole==='gerant' && currentGerantId){
+    filtered = filtered.filter(function(d){
+      return !d.gerantId || d.gerantId==currentGerantId;
+    });
+  }
+
+  // ── Stats ──
+  var total = filtered.reduce(function(s,d){return s+(d.montant||0);},0);
+  var cats  = [...new Set(filtered.map(function(d){return d.cat||'—';}))];
+  var sEl = document.getElementById('dep-stats');
+  if(sEl) sEl.innerHTML =
+    '<div class="stat"><div class="stat-label"><div class="dot red"></div> Total dépenses</div><div class="stat-val red" style="font-size:18px">'+fmtGNF(total)+'</div><div class="stat-sub">mois sélectionné</div></div>'+
+    '<div class="stat"><div class="stat-label"><div class="dot amber"></div> Nombre</div><div class="stat-val amber">'+filtered.length+'</div><div class="stat-sub">dépenses enregistrées</div></div>'+
+    '<div class="stat"><div class="stat-label"><div class="dot blue"></div> Catégories</div><div class="stat-val blue">'+cats.length+'</div></div>'+
+    '<div class="stat"><div class="stat-label"><div class="dot green"></div> Moyenne</div><div class="stat-val" style="font-size:18px">'+(filtered.length?fmtGNF(Math.round(total/filtered.length)):'0 GNF')+'</div><div class="stat-sub">par dépense</div></div>';
+
+  var cntEl = document.getElementById('dep-count');
+  if(cntEl) cntEl.textContent = filtered.length+' dépense'+(filtered.length>1?'s':'');
+
+  // ── Liste ──
+  var listEl = document.getElementById('dep-list');
+  if(!listEl) return;
+  if(!filtered.length){
+    listEl.innerHTML='<div class="empty"><div class="empty-icon">💸</div><div class="empty-text">Aucune dépense ce mois</div></div>';
+    return;
+  }
+  listEl.innerHTML = filtered.map(function(d){
+    var canDel = isFondateur || (g && g.permDel);
+    var canEdit = isFondateur;
+    var dateStr = '';
+    try{ dateStr = new Date(d.date||d.ts).toLocaleDateString('fr-FR'); }catch(e){}
+    return '<div class="dep-item">'
+      +'<span class="dep-cat-badge">'+(d.cat||'Divers')+'</span>'
+      +'<span class="dep-desc">'+(d.desc||'—')+'</span>'
+      +'<span class="dep-date">'+dateStr+'</span>'
+      +'<span class="dep-amount">-'+fmtGNF(d.montant||0)+'</span>'
+      +(canEdit?'<button class="row-btn" onclick="openEditDep('+d.id+')" title="Modifier" style="opacity:1;color:var(--accent)">✏</button>':'')
+      +(canDel?'<button class="row-btn del" onclick="deleteDepense('+d.id+')" title="Supprimer" style="opacity:1">🗑</button>':'')
+      +'</div>';
+  }).join('');
+}
 function deleteDepense(id){
   if(!confirm('Supprimer cette dépense ?'))return;
   depenses=depenses.filter(d=>d.id!=id);
