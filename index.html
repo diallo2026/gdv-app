@@ -961,7 +961,7 @@ function agvLaunchApp(shop){
   // Firebase sync pour cette boutique
   window.sauvegarderFirebase=function(){
     if(!window._AGV_READY) return;
-    db.ref('gdv_shops/'+shop.uid+'/data').set({
+    var payload = {
       products:     products     || [],
       ventes:       ventes       || [],
       depenses:     depenses     || [],
@@ -972,11 +972,21 @@ function agvLaunchApp(shop){
       dettes:       dettes       || [],
       clients:      clients      || [],
       factureVentes:factureVentes|| []
-    }).then(function(){
-      agvSetOnlineStatus(true);
-    }).catch(function(e){
-      console.warn('Save error:', e);
-    });
+    };
+    // Bloquer le listener pendant l'écriture
+    window._agvSaving = true;
+    db.ref('gdv_shops/'+shop.uid+'/data').set(payload)
+      .then(function(){
+        agvSetOnlineStatus(true);
+        // Remettre à jour le cache local
+        try{ localStorage.setItem('agv_cache_'+shop.uid, JSON.stringify(payload)); }catch(e){}
+        // Réactiver le listener après 1.5s (temps que Firebase propage)
+        setTimeout(function(){ window._agvSaving = false; }, 1500);
+      })
+      .catch(function(e){
+        console.warn('Save error:', e);
+        window._agvSaving = false;
+      });
   };
 
   // Cache localStorage pour affichage INSTANTANE
@@ -1033,55 +1043,102 @@ function agvLaunchApp(shop){
     }
     agvRenderAll();
   }
-  window._AGV_READY = false;
+  window._AGV_READY  = false;
+  window._agvSaving  = false;
+  window._agvSaveId  = 0;
+
+  function agvBackupLocal(payload){
+    try{
+      localStorage.setItem(cacheKey, JSON.stringify(payload));
+      localStorage.setItem(cacheKey+'_ts', Date.now());
+    }catch(e){}
+  }
+
+  function agvBuildPayload(){
+    return {
+      products:     products      || [],
+      ventes:       ventes        || [],
+      depenses:     depenses      || [],
+      gerants:      gerants       || [],
+      entrees:      entrees       || [],
+      appros:       appros        || [],
+      repConfig:    repConfig     || [],
+      dettes:       dettes        || [],
+      clients:      clients       || [],
+      factureVentes:factureVentes || []
+    };
+  }
+
+  window.sauvegarderFirebase = function(){
+    if(!window._AGV_READY) return;
+    var payload = agvBuildPayload();
+    // Backup local IMMÉDIAT
+    agvBackupLocal(payload);
+    // Bloquer le listener
+    window._agvSaving = true;
+    var saveId = ++window._agvSaveId;
+    db.ref('gdv_shops/'+shop.uid+'/data').set(payload)
+      .then(function(){
+        agvSetOnlineStatus(true);
+        setTimeout(function(){
+          if(window._agvSaveId === saveId) window._agvSaving = false;
+        }, 2000);
+      })
+      .catch(function(e){
+        console.warn('Save error:', e);
+        window._agvSaving = false;
+        agvSetOnlineStatus(false);
+        showToast('\u26a0\ufe0f Erreur sync. Donn\u00e9es sauvegard\u00e9es localement.');
+      });
+  };
+
+  var ref = db.ref('gdv_shops/'+shop.uid+'/data');
+  window._agvDbListener = ref;
+
+  ref.on('value', function(snap){
+    if(window._agvSaving) return;
+    var data = snap.val();
+    if(!data){
+      window._AGV_READY = true;
+      agvSetOnlineStatus(true);
+      agvRenderAll();
+      return;
+    }
+    // Si Firebase a moins de données que la mémoire → mémoire plus récente → resauvegarder
+    var fbDep = data.depenses ? (Array.isArray(data.depenses)?data.depenses.length:Object.keys(data.depenses).length) : 0;
+    var fbVte = data.ventes   ? (Array.isArray(data.ventes)?data.ventes.length:Object.keys(data.ventes).length) : 0;
+    var memDep = depenses.length, memVte = ventes.length;
+    if(window._AGV_READY && (memDep+memVte) > 0 && (fbDep+fbVte) < (memDep+memVte)){
+      var cur = agvBuildPayload();
+      agvBackupLocal(cur);
+      db.ref('gdv_shops/'+shop.uid+'/data').set(cur).catch(function(){});
+      return;
+    }
+    agvBackupLocal(data);
+    products=[]; ventes=[]; depenses=[]; gerants=[];
+    entrees=[]; appros=[]; repConfig=[]; dettes=[]; clients=[]; factureVentes=[];
+    applyData(data);
+    window._AGV_READY = true;
+    agvSetOnlineStatus(true);
+  }, function(err){
+    console.warn('Firebase listener error:', err);
+    agvSetOnlineStatus(false);
+    window._AGV_READY = true;
+    agvRenderAll();
+  });
+
+  // Chargement depuis cache local (instantané)
   try {
     var cached = localStorage.getItem(cacheKey);
-    if(cached){
-      var cachedData = JSON.parse(cached);
-      applyData(cachedData);
+    if(cached && !window._AGV_READY){
+      applyData(JSON.parse(cached));
       window._AGV_READY = true;
       agvSetOnlineStatus(true);
     }
   } catch(e){ console.warn('Cache load error:', e); }
 
-  var ref = db.ref('gdv_shops/'+shop.uid+'/data');
-  window._agvDbListener = ref;
-  ref.on('value', function(snap){
-    var data = snap.val();
-
-    // SEULE protection valide : Firebase renvoie strictement null (boutique vide ou erreur)
-    if(data === null || data === undefined){
-      window._AGV_READY = true;
-      agvSetOnlineStatus(true);
-      // Rafraîchir quand même l'interface avec ce qu'on a en mémoire
-      agvRenderAll();
-      return;
-    }
-
-    // Mettre à jour le cache local
-    try{ localStorage.setItem(cacheKey, JSON.stringify(data)); }catch(e){}
-
-    // Reset total avant rechargement (Firebase EST la source de vérité)
-    products=[]; ventes=[]; depenses=[]; gerants=[];
-    entrees=[]; appros=[]; repConfig=[]; dettes=[]; clients=[]; factureVentes=[];
-
-    // Charger toutes les données
-    applyData(data);
-    window._AGV_READY = true;
-    agvSetOnlineStatus(true);
-
-  }, function(err){
-    console.warn('Firebase listener error:', err);
-    agvSetOnlineStatus(false);
-    // Garder les données en mémoire, juste signaler hors ligne
-    window._AGV_READY = true;
-    agvRenderAll();
-  });
-
-  // Détecter les changements de connexion réseau
-  window.addEventListener('online',  function(){ agvSetOnlineStatus(true);  });
+  window.addEventListener('online',  function(){ agvSetOnlineStatus(true); });
   window.addEventListener('offline', function(){ agvSetOnlineStatus(false); agvHandleOffline(); });
-
   // Afficher le chronomètre de licence
   setTimeout(function(){
     var _sh=window._currentShop||shop;
