@@ -6134,8 +6134,7 @@ function closeDepenseModal(e){
 function saveDepense(){
   // Vérifier permission
   const _gDep=getCurrentGerant();
-  const _canDepSave=currentRole==='fondateur'||(_gDep&&_gDep.permDep!==false);
-  if(!_canDepSave){showToast('⛔ Permission dépenses non accordée');return;}
+  // Fondateur ET gérant peuvent ajouter des dépenses
   const desc=document.getElementById('d-desc').value.trim();
   const montant=parseInt(document.getElementById('d-montant').value)||0;
   if(!desc||!montant){showToast('Description et montant obligatoires');return}
@@ -6158,13 +6157,11 @@ function depFilterChanged(){
 function renderDepenses(){
   var isFondateur = currentRole==='fondateur';
   var g = getCurrentGerant();
-  var canDep = isFondateur || (currentRole==='gerant' && g && g.permDep!==false);
-
-  // Bouton ajouter : libre pour tous (fondateur ET gérant autorisé)
+  // Bouton ajouter : fondateur ET gérant
   var btnAdd = document.getElementById('btn-add-dep');
-  if(btnAdd) btnAdd.style.display = canDep ? 'block' : 'none';
+  if(btnAdd) btnAdd.style.display = 'block';
   var blocMsg = document.getElementById('depenses-blocked-msg');
-  if(blocMsg) blocMsg.style.display = (!canDep && currentRole==='gerant') ? 'block' : 'none';
+  if(blocMsg) blocMsg.style.display = 'none';
 
   // ── Init filtres année (2020→2040) la première fois seulement ──
   var ysel = document.getElementById('dep-year-filter');
@@ -6251,7 +6248,7 @@ function renderDepenses(){
       +'<span class="dep-desc">'+(d.desc||'—')+'</span>'
       +'<span class="dep-date">'+dateStr+'</span>'
       +'<span class="dep-amount">-'+fmtGNF(d.montant||0)+'</span>'
-      +(canEdit?'<button class="row-btn" onclick="openEditDep('+d.id+')" title="Modifier" style="opacity:1;color:var(--accent)">✏</button>':'')
+      +(isFondateur?'<button class="row-btn" onclick="openEditDep('+d.id+')" title="Modifier" style="opacity:1;color:var(--accent)">✏</button>':'')
       +(canDel?'<button class="row-btn del" onclick="deleteDepense('+d.id+')" title="Supprimer" style="opacity:1">🗑</button>':'')
       +'</div>';
   }).join('');
