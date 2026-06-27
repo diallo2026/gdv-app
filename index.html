@@ -5042,57 +5042,46 @@ function updateVentePreview(){
 }
 
 function recordVente(){
-  const val=document.getElementById('vente-product').value;
-  const qty=parseInt(document.getElementById('vente-qty').value)||1;
-  const prixU=parseInt(document.getElementById('vente-prix').value)||0;
-  const isSortie=document.getElementById('type-sortie').checked;
-  const p=getProductFromInput(val);
-  if(!p){showToast('Produit introuvable');return}
-  if(!prixU){showToast(isSortie?'Entrez le prix de vente':'Entrez le prix d\'achat');return}
-  const idx=products.findIndex(x=>x.id===p.id);
-  const _gerantNomV = currentRole==='fondateur'?'Fondateur':(gerants.find(g=>g.id===currentGerantId)||{}).nom||'—';
+  var val=document.getElementById('vente-product').value;
+  var qty=parseInt(document.getElementById('vente-qty').value)||1;
+  var prixU=parseInt(document.getElementById('vente-prix').value)||0;
+  var isSortie=document.getElementById('type-sortie').checked;
+  var p=getProductFromInput(val);
+  if(!p){showToast('Produit introuvable');return;}
+  if(!prixU){showToast(isSortie?'Entrez le prix de vente':'Entrez le prix d\'achat');return;}
+  var idx=products.findIndex(function(x){return x.id===p.id;});
+  var gerantNomV = currentRole==='fondateur'?'Fondateur':((gerants.find(function(g){return g.id===currentGerantId;})||{}).nom||'—');
   if(isSortie){
-    if(p.stock_initial<qty){showToast('Stock insuffisant');return}
+    if(p.stock_initial<qty){showToast('Stock insuffisant');return;}
     products[idx].stock_initial-=qty;
     products[idx].total=products[idx].stock_initial*products[idx].prix_achat;
-    const venteObj={id:Date.now(),name:p.designation,ref:p.reference,qty,prixU,prixAchat:p.prix_achat||0,total:qty*prixU,benefice:qty*(prixU-(p.prix_achat||0)),type:'sortie',ts:new Date().toISOString(),date:new Date().toISOString(),produit:p.designation,categorie:p.categorie||'',prix_unitaire:prixU,qte:qty,gerant:_gerantNomV,gerantId:currentGerantId};
+    var venteObj={id:Date.now(),name:p.designation,ref:p.reference,qty:qty,prixU:prixU,
+      prixAchat:p.prix_achat||0,total:qty*prixU,
+      benefice:qty*(prixU-(p.prix_achat||0)),
+      ts:new Date().toISOString(),
+      gerantId:currentGerantId,gerant:gerantNomV,
+      categorie:p.categorie||'',produit:p.designation};
     ventes.unshift(venteObj);
   } else {
     products[idx].stock_initial+=qty;
     products[idx].prix_achat=prixU;
     products[idx].total=products[idx].stock_initial*prixU;
-    const venteObj={id:Date.now(),name:p.designation,ref:p.reference,qty,prixU,total:qty*prixU,type:'entree',ts:new Date().toISOString(),date:new Date().toISOString(),produit:p.designation,categorie:p.categorie||'',qte:qty,gerant:_gerantNomV,gerantId:currentGerantId};
-    ventes.unshift(venteObj);
+    var venteObj2={id:Date.now(),name:p.designation,ref:p.reference,qty:qty,prixU:prixU,
+      total:qty*prixU,type:'entree',
+      ts:new Date().toISOString(),
+      gerantId:currentGerantId,gerant:gerantNomV,
+      categorie:p.categorie||'',produit:p.designation};
+    ventes.unshift(venteObj2);
   }
   saveAll();renderDashboard();
   document.getElementById('vente-product').value='';
   document.getElementById('vente-qty').value=1;
   document.getElementById('vente-prix').value='';
   document.getElementById('vente-preview').textContent='';
-  const totalV=ventes.filter(v=>v.type!=='entree').reduce((s,v)=>s+v.total,0);
-  const totalBenV=ventes.filter(v=>v.type!=='entree').reduce((s,v)=>s+(v.benefice!=null?v.benefice:v.total),0);
-  document.getElementById('ventes-history').innerHTML=ventes.map(v=>`
-    <div class="sale-log-item">
-      <div style="font-size:10px;padding:1px 5px;border-radius:3px;background:${v.type==='entree'?'var(--green-bg)':'var(--red-bg)'};color:${v.type==='entree'?'var(--green)':'var(--red)'};font-weight:700;white-space:nowrap">${v.type==='entree'?'📥 ENT':'📤 SOR'}</div>
-      <div style="font-size:11px;font-family:DM Mono,monospace;color:var(--text3);width:52px">${v.ref||''}</div>
-      <div class="sale-log-name">${v.name}</div>
-      <div class="sale-log-qty">${v.type==='entree'?'+':'×'}${v.qty}</div>
-      <div class="sale-log-amount">${fmtGNF(v.total)}</div>
-    </div>`).join('');
-  const depMk=getMonthKey(new Date());
-  const depsMois=depenses.filter(d=>getMonthKey(d.date)===depMk);
-  const totalDep=depsMois.reduce((s,d)=>s+d.montant,0);
-  const benNet2=totalBenV-totalDep;
-  document.getElementById('ventes-total').innerHTML=`<div style="display:flex;gap:16px;justify-content:flex-end;flex-wrap:wrap"><div style="text-align:right"><div style="font-size:11px;color:var(--text3);text-transform:uppercase;font-weight:600">💰 Chiffre d'affaires</div><div style="font-size:16px;font-weight:700;color:var(--green)">${fmtGNF(totalV)}</div></div><div style="text-align:right"><div style="font-size:11px;color:var(--text3);text-transform:uppercase;font-weight:600">📈 Bénéfice net</div><div style="font-size:16px;font-weight:700;color:${benNet2>=0?'var(--blue)':'var(--red)'}">${fmtGNF(benNet2)}</div><div style="font-size:10px;color:var(--text3)">CA−achat−dépenses</div></div></div>`;
-  refreshVentesHistory();
-  showToast(isSortie?`📤 Sortie — ${p.designation} ×${qty} = ${fmtGNF(qty*prixU)}`:`📥 Entrée — ${p.designation} +${qty} à ${fmtGNF(prixU)}/u`);
-  setTimeout(function(){
-    if(typeof refreshVentesHistory==='function') refreshVentesHistory();
-    if(typeof renderJournalier==='function') renderJournalier();
-  },100);
+  if(typeof renderVentesHistory==='function') renderVentesHistory();
+  if(typeof renderJournalier==='function') setTimeout(function(){renderJournalier();},100);
+  showToast(isSortie?'Sortie enregistree':'Entree stock enregistree');
 }
-
-// ==================== DÉPENSES ====================
 function openDepenseModal(){
   const g=getCurrentGerant();
   const isFondateur=currentRole==='fondateur';
@@ -8416,7 +8405,6 @@ function renderBilanClient(){
   el.innerHTML=html||'<div class="empty"><div class="empty-text">Aucune donnée.</div></div>';
 }
 
-function doLogout(){
 
 // ==================== RAPPORTS ====================
 var _rptTab = 'jour';
@@ -8548,7 +8536,8 @@ function renderRapportMois(){
 function renderRapportAnnuel(){
   var yr = parseInt((document.getElementById('rpt-annuel-year')||{}).value) || new Date().getFullYear();
   function inYear(ds){ var d=new Date(ds); return !isNaN(d)&&d.getFullYear()===yr; }
-  var mNames=['Jan','Fév','Mar','Avr','Mai','Jun','Jul','Aoû','Sep','Oct','Nov','Déc'];
+  var mNamesShort=['Jan','Fév','Mar','Avr','Mai','Jun','Jul','Aoû','Sep','Oct','Nov','Déc'];
+  var mNamesFull=['Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
   var byMonth = Array.from({length:12},function(_,i){return {m:i+1,ca:0,ben:0,dep:0,nv:0,nd:0};});
   ventes.filter(function(v){return v.type!=='entree'&&inYear(v.ts||v.date);}).forEach(function(v){
     var mi=new Date(v.ts||v.date).getMonth();
@@ -8564,20 +8553,20 @@ function renderRapportAnnuel(){
   var net=tBen-tDep;
   var sEl=document.getElementById('rpt-annuel-stats');
   if(sEl) sEl.innerHTML=
-    '<div class="stat"><div class="stat-label"><div class="dot green"></div>CA Annuel '+yr+'</div><div class="stat-val green">'+fmtGNF(tCA)+'</div></div>'+
-    '<div class="stat"><div class="stat-label"><div class="dot red"></div>Dépenses</div><div class="stat-val red">'+fmtGNF(tDep)+'</div></div>'+
-    '<div class="stat"><div class="stat-label"><div class="dot purple"></div>Bénéfice brut</div><div class="stat-val purple">'+fmtGNF(tBen)+'</div></div>'+
-    '<div class="stat"><div class="stat-label"><div class="dot '+(net>=0?'green':'red')+'"></div>Bénéfice net</div><div class="stat-val '+(net>=0?'green':'red')+'">'+fmtGNF(net)+'</div></div>';
-  // Graphique barres SVG + tableau
+    '<div class="stat"><div class="stat-label"><div class="dot green"></div>CA Annuel '+yr+'</div><div class="stat-val green">'+fmtGNF(tCA)+'</div></div>'
+    +'<div class="stat"><div class="stat-label"><div class="dot red"></div>Dépenses</div><div class="stat-val red">'+fmtGNF(tDep)+'</div></div>'
+    +'<div class="stat"><div class="stat-label"><div class="dot purple"></div>Bénéfice brut</div><div class="stat-val purple">'+fmtGNF(tBen)+'</div></div>'
+    +'<div class="stat"><div class="stat-label"><div class="dot '+(net>=0?'green':'red')+'"></div>Bénéfice net</div><div class="stat-val '+(net>=0?'green':'red')+'">'+fmtGNF(net)+'</div></div>';
+  // SVG barres
   var maxCA=Math.max.apply(null,byMonth.map(function(m){return m.ca;}))||1;
-  var barW=32, gap=8, svgW=(barW+gap)*12+gap, svgH=140;
+  var bW=32,gap=8,svgW=(bW+gap)*12+gap,svgH=140;
   var bars=byMonth.map(function(m,i){
     var bh=Math.round(m.ca/maxCA*(svgH-30));
-    var x=gap+i*(barW+gap), y=svgH-30-bh;
+    var x=gap+i*(bW+gap), y=svgH-30-bh;
     var col=m.ca>0?'var(--accent)':'var(--border)';
-    return '<rect x="'+x+'" y="'+y+'" width="'+barW+'" height="'+bh+'" rx="4" fill="'+col+'" opacity=".85"/>'
-      +(m.ca>0?'<text x="'+(x+barW/2)+'" y="'+(y-4)+'" text-anchor="middle" font-size="9" fill="var(--text3)" font-family="sans-serif">'+fmtGNFShort(m.ca)+'</text>':'')
-      +'<text x="'+(x+barW/2)+'" y="'+(svgH-8)+'" text-anchor="middle" font-size="10" fill="var(--text3)" font-family="sans-serif">'+mNames[i]+'</text>';
+    return '<rect x="'+x+'" y="'+y+'" width="'+bW+'" height="'+bh+'" rx="4" fill="'+col+'" opacity=".85"/>'
+      +(m.ca>0?'<text x="'+(x+bW/2)+'" y="'+(y-4)+'" text-anchor="middle" font-size="9" fill="var(--text3)" font-family="sans-serif">'+fmtGNFShort(m.ca)+'</text>':'')
+      +'<text x="'+(x+bW/2)+'" y="'+(svgH-8)+'" text-anchor="middle" font-size="10" fill="var(--text3)" font-family="sans-serif">'+mNamesShort[i]+'</text>';
   }).join('');
   var svg='<svg viewBox="0 0 '+svgW+' '+svgH+'" style="width:100%;max-height:160px">'+bars+'</svg>';
   var cEl=document.getElementById('rpt-annuel-content');
@@ -8587,19 +8576,18 @@ function renderRapportAnnuel(){
   html+='<table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr style="background:var(--surface2)"><th style="padding:8px;text-align:left">Mois</th><th style="padding:8px;text-align:right">Ventes</th><th style="padding:8px;text-align:right">CA</th><th style="padding:8px;text-align:right">Dépenses</th><th style="padding:8px;text-align:right">Bénéfice net</th></tr></thead><tbody>';
   byMonth.forEach(function(m){
     var netM=m.ben-m.dep;
-    html+='<tr style="border-bottom:1px solid var(--border);cursor:pointer" onclick="document.getElementById(\'rpt-mois-year\').value=\''+yr+'\';document.getElementById(\'rpt-mois-month\').value=\''+String(m.m).padStart(2,\'0\')+'\';switchRapportTab(\'mois\')">'
-      +'<td style="padding:7px;font-weight:600">'+['Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'][m.m-1]+'</td>'
+    var mo2=String(m.m).padStart(2,'0');
+    html+='<tr style="border-bottom:1px solid var(--border);cursor:pointer" onclick="gotoMoisRpt(this)" data-yr="'+yr+'" data-mo="'+mo2+'">'
+      +'<td style="padding:7px;font-weight:600">'+mNamesFull[m.m-1]+'</td>'
       +'<td style="padding:7px;text-align:right;color:var(--text3)">'+m.nv+'</td>'
       +'<td style="padding:7px;text-align:right;font-weight:700;color:var(--green)">'+fmtGNF(m.ca)+'</td>'
       +'<td style="padding:7px;text-align:right;color:var(--red)">'+fmtGNF(m.dep)+'</td>'
       +'<td style="padding:7px;text-align:right;font-weight:700;color:'+(netM>=0?'var(--green)':'var(--red)')+'">'+fmtGNF(netM)+'</td></tr>';
   });
-  html+='<tr style="background:var(--surface2);font-weight:700"><td style="padding:8px">TOTAL '+yr+'</td><td></td><td style="padding:8px;text-align:right;color:var(--green)">'+fmtGNF(tCA)+'</td><td style="padding:8px;text-align:right;color:var(--red)">'+fmtGNF(tDep)+'</td><td style="padding:8px;text-align:right;color:'+(net>=0?'var(--green)':'var(--red)')+'">'+fmtGNF(net)+'</td></tr>';
+  html+='<tr style="background:var(--accent-light);font-weight:700"><td style="padding:8px">TOTAL '+yr+'</td><td></td><td style="padding:8px;text-align:right;color:var(--green)">'+fmtGNF(tCA)+'</td><td style="padding:8px;text-align:right;color:var(--red)">'+fmtGNF(tDep)+'</td><td style="padding:8px;text-align:right;color:'+(net>=0?'var(--green)':'var(--red)')+'">'+fmtGNF(net)+'</td></tr>';
   html+='</tbody></table></div>';
   cEl.innerHTML=html;
 }
-
-function doLogout(){
 function printView(){
   // Déterminer la vue active
   var activeView = document.querySelector('.view.active');
@@ -8896,7 +8884,7 @@ function renderVDayPicker(yr, mo){
   if(!el || !mo) return;
   var moInt = parseInt(mo), yrInt = parseInt(yr)||new Date().getFullYear();
   var daysInMonth = new Date(yrInt, moInt, 0).getDate();
-  var mNames=['','Jan','Fév','Mar','Avr','Mai','Jun','Jul','Août','Sep','Oct','Nov','Déc'];
+  var mNames=['','Jan','Fev','Mar','Avr','Mai','Jun','Jul','Aou','Sep','Oct','Nov','Dec'];
   var byDay={};
   ventes.filter(function(v){return v.type!=='entree';}).forEach(function(v){
     var d=new Date(v.ts||v.date);
@@ -8904,16 +8892,16 @@ function renderVDayPicker(yr, mo){
     var dk=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
     byDay[dk]=(byDay[dk]||0)+1;
   });
-  var html='<div style="margin-bottom:6px;font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase">'+mNames[moInt]+' '+yrInt+' — Cliquez un jour pour filtrer</div>';
-  html+='<div style="display:flex;flex-wrap:wrap;gap:4px">';
+  var html='<div style="margin-bottom:6px;font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase">'+mNames[moInt]+' '+yrInt+' - Cliquez un jour pour filtrer</div>';
+  html+='<div id="v-day-picker-grid" style="display:flex;flex-wrap:wrap;gap:4px">';
   for(var d=1;d<=daysInMonth;d++){
     var dk=yrInt+'-'+String(moInt).padStart(2,'0')+'-'+String(d).padStart(2,'0');
     var cnt=byDay[dk]||0;
     var isSelected=_vFilterDay===dk;
     var bg=isSelected?'var(--accent)':cnt>0?'var(--green-bg)':'var(--surface2)';
-    var color=isSelected?'#fff':cnt>0?'var(--green)':'var(--text3)';
-    var border=isSelected?'var(--accent)':cnt>0?'var(--green-border)':'var(--border)';
-    html+='<button onclick="vFilterDay(''+dk+'')" style="width:36px;height:36px;border:1.5px solid '+border+';border-radius:6px;background:'+bg+';color:'+color+';font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;position:relative">'
+    var col=isSelected?'#fff':cnt>0?'var(--green)':'var(--text3)';
+    var bord=isSelected?'var(--accent)':cnt>0?'var(--green-border)':'var(--border)';
+    html+='<button onclick="agvDayClick(this)" data-dk="'+dk+'" style="width:36px;height:36px;border:1.5px solid '+bord+';border-radius:6px;background:'+bg+';color:'+col+';font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;position:relative">'
       +d+(cnt>0?'<span style="position:absolute;top:1px;right:2px;font-size:8px">'+cnt+'</span>':'')
       +'</button>';
   }
@@ -8921,6 +8909,10 @@ function renderVDayPicker(yr, mo){
   el.innerHTML=html;
 }
 
+function agvDayClick(btn){
+  var dk = btn.getAttribute('data-dk');
+  vFilterDay(dk);
+}
 function vFilterDay(dk){
   _vFilterDay = (_vFilterDay===dk)?'':dk;
   renderVentesHistory();
@@ -9038,6 +9030,16 @@ function renderRecapAnnuel(){
   el.innerHTML=html;
 }
 
+
+function gotoMoisRpt(el){
+  var yr=el.getAttribute('data-yr');
+  var mo=el.getAttribute('data-mo');
+  var yEl=document.getElementById('rpt-mois-year');
+  var mEl=document.getElementById('rpt-mois-month');
+  if(yEl) yEl.value=yr;
+  if(mEl) mEl.value=yr+'-'+mo;
+  if(typeof switchRapportTab==='function') switchRapportTab('mois');
+}
 </script>
 <!-- ========== MODAL VENTE RAPIDE ========== -->
 <div class="overlay" id="vrapide-overlay" onclick="closeVenteRapide(event)">
