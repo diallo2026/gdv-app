@@ -5008,10 +5008,24 @@ function initRecapAnnuel(){
 }
 
 function renderRecapAnnuel(){
+  var el = document.getElementById('recap-content');
+  if(!el) return;
+
+  // BLOQUÉ pour les gérants
+  if(currentRole !== 'fondateur'){
+    el.innerHTML = '<div class="empty" style="padding:60px 20px;text-align:center">'
+      +'<div style="font-size:48px;margin-bottom:16px">🔒</div>'
+      +'<div style="font-size:16px;font-weight:700;color:var(--text);margin-bottom:8px">Accès réservé au Fondateur</div>'
+      +'<div style="font-size:13px;color:var(--text3)">Le récapitulatif annuel contient des informations confidentielles de la boutique.</div>'
+      +'</div>';
+    return;
+  }
+
   var yr=parseInt((document.getElementById('recap-year')||{}).value)||new Date().getFullYear();
   function inY(ds){var d=new Date(ds);return !isNaN(d)&&d.getFullYear()===yr;}
 
-  // Calculs annuels
+  // Fondateur uniquement à partir d'ici
+  var isFondateur = true;
   var yVentes   = ventes.filter(function(v){return v.type!=='entree'&&inY(v.ts||v.date);});
   var yDep      = depenses.filter(function(d){return inY(d.date||d.ts);});
   var yAppros   = appros.filter(function(a){return inY(a.date||a.ts);});
@@ -5020,26 +5034,15 @@ function renderRecapAnnuel(){
   var tDep      = yDep.reduce(function(s,d){return s+(d.montant||0);},0);
   var tAppro    = yAppros.reduce(function(s,a){return s+(a.montant||0);},0);
   var stockVal  = products.reduce(function(s,p){return s+(p.total||0);},0);
-  var caNet     = tCA-tAppro; // CA après approvisionnement
-  var benNet    = tBen-tDep;  // Bénéfice net
-
-  // Salaires gérants et fondateur
-  var mNames=['','Jan','Fév','Mar','Avr','Mai','Jun','Jul','Aoû','Sep','Oct','Nov','Déc'];
-  var totalSalGerants = 0, totalSalFondateur = 0;
+  var caNet     = tCA-tAppro;
+  var benNet    = tBen-tDep;
+  var totalSalGerants=0, totalSalFondateur=0;
   gerants.forEach(function(g){
-    var isFond = g.role==='fondateur'||g.id===1;
-    // Salaires du mois * 12 ou montant réel payé
-    var salAnnuel = 0;
-    if(g.salaireMois){
-      Object.keys(g.salaireMois).forEach(function(mk){
-        var parts=mk.split('-'); if(parseInt(parts[0])===yr) salAnnuel+=(g.salaireMois[mk]||0);
-      });
-    }
-    if(salAnnuel===0) salAnnuel = (g.salaire||0)*12; // estimation
-    if(isFond) totalSalFondateur+=salAnnuel;
-    else totalSalGerants+=salAnnuel;
+    var sal=(g.salaire||0)*12;
+    if(g.id===1) totalSalFondateur+=sal; else totalSalGerants+=sal;
   });
 
+  var mNames=['','Jan','Fév','Mar','Avr','Mai','Jun','Jul','Aoû','Sep','Oct','Nov','Déc'];
   var mNamesLong=['Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
 
   // Graphique CA mensuel SVG
@@ -5074,7 +5077,6 @@ function renderRecapAnnuel(){
   }).join('');
 
   var html='';
-  // Grandes stats
   html+='<div class="stats" style="margin-bottom:20px">'
     +'<div class="stat"><div class="stat-label"><div class="dot green"></div>Ventes totales</div><div class="stat-val green" style="font-size:18px">'+fmtGNF(tCA)+'</div><div class="stat-sub">'+yVentes.length+' ventes</div></div>'
     +'<div class="stat"><div class="stat-label"><div class="dot red"></div>Dépenses totales</div><div class="stat-val red" style="font-size:18px">'+fmtGNF(tDep)+'</div><div class="stat-sub">'+yDep.length+' dépenses</div></div>'
@@ -5083,10 +5085,8 @@ function renderRecapAnnuel(){
     +'<div class="stat"><div class="stat-label"><div class="dot '+(benNet>=0?'green':'red')+'"></div>Bénéfice net</div><div class="stat-val '+(benNet>=0?'green':'red')+'" style="font-size:18px">'+fmtGNF(benNet)+'</div><div class="stat-sub">CA − achats − dépenses</div></div>'
     +'<div class="stat"><div class="stat-label"><div class="dot blue"></div>Valeur stock</div><div class="stat-val blue" style="font-size:18px">'+fmtGNF(stockVal)+'</div><div class="stat-sub">prix achat actuel</div></div>'
     +'</div>';
-
-  // Salaires
   html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px">'
-    +'<div class="card"><div class="card-title">👑 Salaires Fondateur '+yr+'</div>'
+    +'<div class="card"><div class="card-title">👑 Salaire Fondateur '+yr+'</div>'
     +'<div style="font-size:24px;font-weight:800;color:var(--accent);margin:12px 0">'+fmtGNF(totalSalFondateur)+'</div>'
     +'<div style="font-size:12px;color:var(--text3)">Estimation annuelle (12 mois)</div></div>'
     +'<div class="card"><div class="card-title">👥 Salaires Gérants '+yr+'</div>'
@@ -5169,6 +5169,9 @@ function applyRoleUI(){
   // Paramètres: fondateur uniquement
   var _npar=document.getElementById('nav-parametres');
   if(_npar) _npar.style.display = isFondateur ? 'flex' : 'none';
+  // Récap annuel: fondateur uniquement
+  var _nrec=document.getElementById('nav-recap');
+  if(_nrec) _nrec.style.display = isFondateur ? 'flex' : 'none';
   // Dettes: visible pour tous (gérant ET fondateur)
   var _ndet=document.getElementById('nav-dettes');
   if(_ndet) _ndet.style.display = 'flex';
@@ -5213,28 +5216,12 @@ window._boutique = {
 };
 
 // ===== SAUVEGARDE FIREBASE =====
+// Note: cette fonction est remplacée par la version correcte dans agvLaunchApp
+// qui utilise db.ref('gdv_shops/'+shop.uid+'/data')
+// Cette version globale ne fait rien pour éviter les conflits
 window.sauvegarderFirebase = function() {
-  if(!window._AGV_READY) return; // Protection contre l'écrasement avant chargement
-  try {
-    var data = {
-      products: products,
-      ventes:   ventes,
-      depenses: depenses,
-      gerants:  gerants,
-      entrees:  entrees,
-      appros:   appros,
-      repConfig:     repConfig,
-      dettes:        dettes,
-      clients:       clients,
-      factureVentes: factureVentes
-    };
-    db.ref('boutique').set(data).then(function(){
-      console.log('✅ Firebase boutique OK');
-      var ind = document.getElementById('syncIndicator');
-      if(ind){ ind.textContent='🟢 Synchronisé'; ind.style.color='#1a7a4a';
-        setTimeout(function(){ ind.textContent='☁️ Cloud actif'; ind.style.color='#2563eb'; },2000); }
-    }).catch(function(e){ console.error('❌ Firebase erreur:', e); });
-  } catch(e){ console.error('Firebase save error:', e); }
+  // Sera remplacée par agvLaunchApp avec la bonne référence Firebase
+  console.log('sauvegarderFirebase: en attente du lancement boutique...');
 };
 
 // Convertit un objet Firebase en vrai Array
@@ -5244,56 +5231,25 @@ function toArray(val) {
   return Object.values(val);
 }
 
-// Dernières données Firebase reçues
+// Dernières données Firebase reçues (pour la page de login gérant)
 window._firebaseData = null;
 
-// Applique les données Firebase aux variables globales et rafraîchit l'UI
 function appliquerDonneesFirebase(data) {
+  // Cette fonction n'est utilisée QUE pour la page de login gérant
+  // Le chargement réel des données se fait dans agvLaunchApp via gdv_shops/{uid}/data
   if (!data) return;
-  if (data.products) products = toArray(data.products);
-  if (data.ventes)   ventes   = toArray(data.ventes);
-  if (data.depenses) depenses = toArray(data.depenses);
-  if (data.gerants)  gerants  = toArray(data.gerants);
-  if (data.entrees)  entrees  = toArray(data.entrees);
-  if (data.appros)   appros   = toArray(data.appros);
-  if (data.repConfig)     repConfig     = toArray(data.repConfig);
-  if (data.dettes){
-    dettes = toArray(data.dettes).map(d=>({
-      ...d,
-      paiements: d.paiements ? toArray(d.paiements) : [],
-      lignes:    d.lignes    ? toArray(d.lignes)    : []
-    }));
-  }
-  if (data.clients)       clients       = toArray(data.clients);
-  if (data.factureVentes) factureVentes = toArray(data.factureVentes);
-
-  var appEl = document.getElementById('app');
-  if (appEl && appEl.classList.contains('visible') && !window._boutiqueLoggedOut) {
-    if (typeof renderDashboard==='function')   renderDashboard();
-    if (typeof renderAlerts==='function')      renderAlerts();
-    if (typeof buildMonthFilters==='function') buildMonthFilters();
-    if (typeof buildCatFilters==='function')   buildCatFilters();
-    if (typeof buildDatalist==='function')     buildDatalist();
-    if (typeof renderDepenses==='function')    renderDepenses();
-    if (typeof renderVentes==='function')      renderVentes();
-    if (typeof renderDettes==='function')      renderDettes();
-    if (typeof renderGerants==='function')     renderGerants();
-    var ind = document.getElementById('syncIndicator');
-    if(ind){ ind.textContent='🟢 Synchronisé'; ind.style.color='#1a7a4a';
-      setTimeout(function(){ ind.textContent='☁️ Cloud actif'; ind.style.color='#2563eb'; },2000); }
-  }
+  window._firebaseData = data;
 }
 
-// ===== ECOUTE TEMPS REEL =====
-db.ref('boutique').on('value', function(snapshot) {
+// ===== ECOUTE TEMPS REEL POUR LOGIN GÉRANT UNIQUEMENT =====
+// On n'écoute PAS 'boutique' en temps réel car c'est un chemin incorrect
+// La vraie écoute se fait dans agvLaunchApp sur gdv_shops/{uid}/data
+// Chargement unique pour pré-remplir la liste gérants à la connexion
+db.ref('boutique').once('value', function(snapshot) {
   var data = snapshot.val();
-  console.log('🔥 Firebase boutique reçu:', data ? 'OUI' : 'VIDE');
-  if (!data) { return; }
-  // Toujours stocker les dernières données
+  if (!data) return;
   window._firebaseData = data;
-  // Appliquer si l'app est ouverte
-  appliquerDonneesFirebase(data);
-  // Si on est sur la page de login et que le rôle gérant est sélectionné, rafraîchir la liste
+  // Uniquement pour rafraîchir la liste gérants si on est sur la page login
   var loginScreen = document.getElementById('login-screen');
   var gerantWrap = document.getElementById('gerant-select-wrap');
   if (loginScreen && loginScreen.style.display !== 'none' &&
@@ -5407,62 +5363,35 @@ function getMonthLabel(mk){ const [y,m]=mk.split('-'); const d=new Date(y,m-1,1)
 
 // ==================== MONTH FILTERS ====================
 function buildMonthFilters(){
-  const currentMk = getMonthKey(new Date());
+  const currentMk   = getMonthKey(new Date());
   const currentYear = new Date().getFullYear();
-
-  // Collecter toutes les années présentes dans les données + années courante ± 2
-  const dataYears = new Set();
-  [...ventes.map(v=>v.ts), ...depenses.map(d=>d.date)].forEach(d=>{
-    dataYears.add(new Date(d).getFullYear());
-  });
-  for(let y = currentYear - 2; y <= currentYear + 1; y++) dataYears.add(y);
-  const years = [...dataYears].sort().reverse();
-
-  // Peupler les filtres année
-  ['sal-year-filter','dep-year-filter','jour-year-filter'].forEach(id=>{
-    const sel = document.getElementById(id);
+  ['sal-year-filter','dep-year-filter','jour-year-filter'].forEach(function(id){
+    var sel = document.getElementById(id);
     if(!sel) return;
-    const prev = parseInt(sel.value);
-    sel.innerHTML = years.map(y=>`<option value="${y}">${y}</option>`).join('');
-    if(years.includes(prev)) sel.value = prev;
-    else sel.value = currentYear;
+    var prev = parseInt(sel.value) || currentYear;
+    var opts = '';
+    for(var y=2040;y>=2020;y--) opts+='<option value="'+y+'"'+(y===prev?' selected':'')+'>'+y+'</option>';
+    sel.innerHTML = opts;
+    sel.value = (prev>=2020&&prev<=2040) ? prev : currentYear;
   });
-
-  // Peupler les filtres mois selon l'année sélectionnée dans chaque filtre
   _syncMonthFilter('sal-year-filter','sal-month-filter', currentMk);
   _syncMonthFilter('dep-year-filter','dep-month-filter', currentMk);
   _syncMonthFilter('jour-year-filter','jour-month-filter', currentMk);
 }
 
 function _syncMonthFilter(yearSelId, monthSelId, currentMk){
-  const yearSel = document.getElementById(yearSelId);
-  const monthSel = document.getElementById(monthSelId);
+  var yearSel  = document.getElementById(yearSelId);
+  var monthSel = document.getElementById(monthSelId);
   if(!yearSel || !monthSel) return;
-  const selectedYear = parseInt(yearSel.value);
-
-  // Mois de l'année sélectionnée
-  const months = [];
-  for(let m = 12; m >= 1; m--){
-    months.push(`${selectedYear}-${String(m).padStart(2,'0')}`);
-  }
-  // Ajouter aussi les mois des données pour cette année si absents
-  [...ventes.map(v=>v.ts), ...depenses.map(d=>d.date)].forEach(d=>{
-    const dt = new Date(d);
-    if(dt.getFullYear()===selectedYear){
-      const mk2=getMonthKey(d);
-      if(!months.includes(mk2)) months.push(mk2);
-    }
-  });
-  months.sort().reverse();
-
-  const prev = monthSel.value;
-  monthSel.innerHTML = months.map(m=>`<option value="${m}">${getMonthLabel(m)}</option>`).join('');
-  // Remettre la valeur précédente si elle est dans ce filtre, sinon mois courant ou premier mois
-  if(months.includes(prev)) monthSel.value = prev;
-  else if(months.includes(currentMk)) monthSel.value = currentMk;
-  else monthSel.value = months[0];
+  var selectedYear = parseInt(yearSel.value) || new Date().getFullYear();
+  var months = [];
+  for(var m=12;m>=1;m--) months.push(selectedYear+'-'+String(m).padStart(2,'0'));
+  var prev = monthSel.value;
+  monthSel.innerHTML = months.map(function(mk){ return '<option value="'+mk+'">'+getMonthLabel(mk)+'</option>'; }).join('');
+  if(months.indexOf(prev)>=0)         monthSel.value = prev;
+  else if(months.indexOf(currentMk)>=0) monthSel.value = currentMk;
+  else                                  monthSel.value = months[0];
 }
-
 function onSalYearChange(){
   _syncMonthFilter('sal-year-filter','sal-month-filter', getMonthKey(new Date()));
   renderSalaires();
@@ -6232,8 +6161,18 @@ function renderDepenses(){
   document.getElementById('depenses-blocked-msg').style.display=(!isFondateur&&!canDep)?'block':'none';
   document.getElementById('btn-add-dep').style.display=(isFondateur||canDep)?'block':'none';
 
+  // Filtre année+mois — format YYYY-MM
   const mk=document.getElementById('dep-month-filter')?document.getElementById('dep-month-filter').value:'';
-  const filtered=mk?depenses.filter(d=>getMonthKey(d.date)===mk):depenses;
+  // Filtrer par gérant si gérant connecté
+  let filtered = depenses.filter(d=>{
+    if(!mk) return true;
+    const dDate = d.date || d.ts || '';
+    return getMonthKey(dDate)===mk;
+  });
+  // Gérant ne voit que ses propres dépenses
+  if(currentRole==='gerant' && currentGerantId){
+    filtered = filtered.filter(d=>d.gerantId==currentGerantId || !d.gerantId);
+  }
   const total=filtered.reduce((s,d)=>s+d.montant,0);
   const cats=[...new Set(filtered.map(d=>d.cat))];
 
