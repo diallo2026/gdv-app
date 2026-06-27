@@ -1072,9 +1072,9 @@ function agvLaunchApp(shop){
   window.sauvegarderFirebase = function(){
     if(!window._AGV_READY) return;
     var payload = agvBuildPayload();
-    // Backup local IMMÉDIAT
+    // Backup local IMMÉDIAT — données sûres même si Firebase échoue
     agvBackupLocal(payload);
-    // Bloquer le listener
+    // Bloquer le listener 3s pour éviter tout écrasement
     window._agvSaving = true;
     var saveId = ++window._agvSaveId;
     db.ref('gdv_shops/'+shop.uid+'/data').set(payload)
@@ -1082,13 +1082,13 @@ function agvLaunchApp(shop){
         agvSetOnlineStatus(true);
         setTimeout(function(){
           if(window._agvSaveId === saveId) window._agvSaving = false;
-        }, 2000);
+        }, 3000);
       })
       .catch(function(e){
         console.warn('Save error:', e);
         window._agvSaving = false;
         agvSetOnlineStatus(false);
-        showToast('\u26a0\ufe0f Erreur sync. Donn\u00e9es sauvegard\u00e9es localement.');
+        showToast('⚠️ Erreur sync — données sauvegardées localement');
       });
   };
 
@@ -1096,7 +1096,9 @@ function agvLaunchApp(shop){
   window._agvDbListener = ref;
 
   ref.on('value', function(snap){
+    // BLOQUÉ pendant une sauvegarde
     if(window._agvSaving) return;
+
     var data = snap.val();
     if(!data){
       window._AGV_READY = true;
@@ -1104,16 +1106,29 @@ function agvLaunchApp(shop){
       agvRenderAll();
       return;
     }
-    // Si Firebase a moins de données que la mémoire → mémoire plus récente → resauvegarder
-    var fbDep = data.depenses ? (Array.isArray(data.depenses)?data.depenses.length:Object.keys(data.depenses).length) : 0;
-    var fbVte = data.ventes   ? (Array.isArray(data.ventes)?data.ventes.length:Object.keys(data.ventes).length) : 0;
-    var memDep = depenses.length, memVte = ventes.length;
-    if(window._AGV_READY && (memDep+memVte) > 0 && (fbDep+fbVte) < (memDep+memVte)){
+
+    // Compter les dépenses dans Firebase
+    var fbDep = 0;
+    if(data.depenses){
+      fbDep = Array.isArray(data.depenses) ? data.depenses.length : Object.keys(data.depenses).length;
+    }
+    // Si les données mémoire ont PLUS de dépenses que Firebase
+    // → Firebase n'est pas encore à jour → NE PAS ÉCRASER → resauvegarder
+    if(window._AGV_READY && depenses.length > 0 && fbDep < depenses.length){
+      console.warn('AGV: Firebase a moins de dépenses ('+fbDep+') que la mémoire ('+depenses.length+') → resauvegarde');
       var cur = agvBuildPayload();
       agvBackupLocal(cur);
-      db.ref('gdv_shops/'+shop.uid+'/data').set(cur).catch(function(){});
+      window._agvSaving = true;
+      var sid = ++window._agvSaveId;
+      db.ref('gdv_shops/'+shop.uid+'/data').set(cur)
+        .then(function(){
+          setTimeout(function(){ if(window._agvSaveId===sid) window._agvSaving=false; }, 3000);
+        })
+        .catch(function(){ window._agvSaving=false; });
       return;
     }
+
+    // Firebase a les données correctes → charger
     agvBackupLocal(data);
     products=[]; ventes=[]; depenses=[]; gerants=[];
     entrees=[]; appros=[]; repConfig=[]; dettes=[]; clients=[]; factureVentes=[];
@@ -6189,22 +6204,35 @@ function closeDepenseModal(e){
   document.getElementById('dep-overlay').classList.remove('open');
 }
 function saveDepense(){
-  // Vérifier permission
   const _gDep=getCurrentGerant();
-  // Fondateur ET gérant peuvent ajouter des dépenses
   const desc=document.getElementById('d-desc').value.trim();
   const montant=parseInt(document.getElementById('d-montant').value)||0;
-  if(!desc||!montant){showToast('Description et montant obligatoires');return}
+  if(!desc||!montant){showToast('Description et montant obligatoires');return;}
   const _gerantNomDep=currentRole==='fondateur'?'Fondateur':(_gDep||{}).nom||'—';
-  depenses.unshift({
+  const newDep={
     id:Date.now(),
-    desc,cat:document.getElementById('d-cat').value.trim()||'Divers',
-    montant,date:document.getElementById('d-date').value||new Date().toISOString().slice(0,10),
-    gerantId:currentGerantId, gerant:_gerantNomDep
-  });
-  saveAll();buildMonthFilters();renderDepenses();
+    desc,
+    cat:document.getElementById('d-cat').value.trim()||'Divers',
+    montant,
+    date:document.getElementById('d-date').value||new Date().toISOString().slice(0,10),
+    gerantId:currentGerantId,
+    gerant:_gerantNomDep
+  };
+
+  // Ajouter en mémoire
+  depenses.unshift(newDep);
+
+  // Fermer le modal et afficher immédiatement
   document.getElementById('dep-overlay').classList.remove('open');
+  renderDepenses();
   showToast('Dépense enregistrée');
+
+  // Sauvegarder vers Firebase avec protection _agvSaving
+  if(window._currentShop && window.sauvegarderFirebase){
+    window.sauvegarderFirebase();
+  } else {
+    saveAll();
+  }
 }
 
 function depFilterChanged(){
