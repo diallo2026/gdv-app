@@ -2389,14 +2389,11 @@ window.addEventListener('DOMContentLoaded',function(){
           <!-- Filtres date -->
           <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;align-items:center">
             <select id="v-year-filter" onchange="renderVentesHistory()" style="padding:5px 8px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text);font-family:inherit;font-size:12px;font-weight:600"></select>
-            <select id="v-month-filter" onchange="renderVentesHistory()" style="padding:5px 8px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text);font-family:inherit;font-size:12px;font-weight:600">
-              <option value="">Tous les mois</option>
-              <option value="01">Janvier</option><option value="02">Février</option><option value="03">Mars</option>
-              <option value="04">Avril</option><option value="05">Mai</option><option value="06">Juin</option>
-              <option value="07">Juillet</option><option value="08">Août</option><option value="09">Septembre</option>
-              <option value="10">Octobre</option><option value="11">Novembre</option><option value="12">Décembre</option>
-            </select>
-            <button id="v-print-day-btn" onclick="printVentesJourPDF()" style="display:none;padding:5px 10px;border:none;border-radius:8px;background:var(--accent);color:#fff;font-family:inherit;font-size:12px;font-weight:700;cursor:pointer">🖨️ Imprimer ce jour</button>
+            <select id="v-month-filter" onchange="renderVentesHistory()" style="padding:5px 8px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text);font-family:inherit;font-size:12px;font-weight:600"></select>
+            <button onclick="printVentesJourPDF()" class="btn-print" style="font-size:11px;padding:5px 8px">🖨️ Jour</button>
+            <button onclick="printVentesMoisPDF()" class="btn-print" style="font-size:11px;padding:5px 8px">🖨️ Mois</button>
+            <button onclick="printVentesAnneePDF()" class="btn-print" style="font-size:11px;padding:5px 8px">🖨️ Année</button>
+            <button id="v-print-day-btn" onclick="printVentesJourPDF()" style="display:none;padding:5px 10px;border:none;border-radius:8px;background:var(--accent);color:#fff;font-family:inherit;font-size:12px;font-weight:700;cursor:pointer">📅 Ce jour PDF</button>
           </div>
           <!-- Stats filtre actif -->
           <div id="v-filter-stats" style="margin-bottom:8px"></div>
@@ -3095,6 +3092,7 @@ window.addEventListener('DOMContentLoaded',function(){
     <div class="view" id="view-alertes">
       <div class="topbar">
         <h1>Alertes de stock</h1>
+        <button onclick="agvPrintPDF('alertes')" class="btn-print">🖨️ Imprimer alertes PDF</button>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px" id="alert-stats"></div>
       <div class="table-wrap">
@@ -3122,7 +3120,7 @@ window.addEventListener('DOMContentLoaded',function(){
         <select class="filter-sel" id="ent-year-filter" onchange="onEntYearChange()" style="border-radius:6px;padding:5px 10px"></select>
         <select class="filter-sel" id="ent-month-filter" onchange="renderEntrees()" style="border-radius:6px;padding:5px 28px 5px 10px"></select>
         <button onclick="openCompMois()" style="padding:6px 12px;border:1px solid var(--accent);border-radius:8px;background:var(--accent-light);color:var(--accent);font-size:12px;font-weight:700;cursor:pointer;font-family:inherit">📊 Comparer</button>
-        <button class="btn-print" onclick="printView()">🖨️ Imprimer</button>
+        <button class="btn-print" onclick="agvPrintPDF('entrees')">🖨️ Imprimer PDF</button>
         <button class="btn btn-primary btn-sm" onclick="openEntreeModal()">+ Nouvelle entrée</button>
       </div>
     </div>
@@ -3208,7 +3206,7 @@ window.addEventListener('DOMContentLoaded',function(){
       <div style="display:flex;gap:8px;align-items:center">
         <select class="filter-sel" id="appro-year-filter" onchange="onApproYearChange()" style="border-radius:6px;padding:5px 10px"></select>
         <select class="filter-sel" id="appro-month-filter" onchange="renderAppro()" style="border-radius:6px;padding:5px 28px 5px 10px"></select>
-        <button class="btn-print" onclick="agvPrintPDF('inventaire')">🖨️ PDF A4</button>
+        <button class="btn-print" onclick="agvPrintPDF('appro')">🖨️ PDF A4</button>
         <button class="btn btn-primary btn-sm" id="btn-add-appro" onclick="openApproModal()">+ Nouvel approvisionnement</button>
       </div>
     </div>
@@ -9314,6 +9312,147 @@ function agvPrintPDF(type, extraData){
     openPrint(bodyD);
     return;
   }
+
+  // ── ENTRÉES MENSUELLES ──
+  if(type==='entrees'){
+    var eYsel=document.getElementById('ent-year-filter');
+    var eMsel=document.getElementById('ent-month-filter');
+    var eYr=parseInt((eYsel||{}).value)||now.getFullYear();
+    var eMo=parseInt((eMsel||{}).value)||(now.getMonth()+1);
+    var mNE=['','Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
+    function inME(ds){ var d=new Date(ds); return !isNaN(d)&&d.getFullYear()===eYr&&(d.getMonth()+1)===eMo; }
+    // Entrées normales
+    var entsN=(typeof entrees!=='undefined'?entrees:[]).filter(function(e){ return inME(e.date||e.ts); });
+    // Ventes de type entrée
+    var entsV=ventes.filter(function(v){ return v.type==='entree'&&inME(v.ts||v.date); });
+    var allE=entsN.concat(entsV).sort(function(a,b){ return new Date(b.date||b.ts)-new Date(a.date||a.ts); });
+    var tQte=allE.reduce(function(s,e){return s+(e.qte||e.qty||0);},0);
+    var tMont=allE.reduce(function(s,e){return s+(e.total||0);},0);
+    var bodyE=makeHeader('ENTRÉES MENSUELLES');
+    bodyE+='<div class="pdf-title">📥 Entrées — '+mNE[eMo]+' '+eYr+'</div>';
+    bodyE+='<div class="pdf-stats">'
+      +'<div class="pdf-stat"><div class="pdf-stat-label">Entrées</div><div class="pdf-stat-val">'+allE.length+'</div></div>'
+      +'<div class="pdf-stat"><div class="pdf-stat-label">Quantité totale</div><div class="pdf-stat-val blue">'+tQte+'</div></div>'
+      +'<div class="pdf-stat"><div class="pdf-stat-label">Valeur</div><div class="pdf-stat-val green">'+fmtGNF(tMont)+'</div></div>'
+      +'</div>';
+    if(allE.length){
+      bodyE+='<table><thead><tr><th>Date</th><th>Produit</th><th>Catégorie</th><th style="text-align:center">Qté</th><th class="right">Prix achat</th><th class="right">Valeur</th><th>Note</th></tr></thead><tbody>';
+      allE.forEach(function(e){
+        bodyE+='<tr><td>'+new Date(e.date||e.ts).toLocaleDateString('fr-FR')+'</td>'
+          +'<td style="font-weight:600">'+(e.produit||e.designation||e.name||'—')+'</td>'
+          +'<td>'+(e.categorie||'—')+'</td>'
+          +'<td style="text-align:center;font-weight:700;color:#2563eb">+'+(e.qte||e.qty||0)+'</td>'
+          +'<td class="right">'+fmtGNF(e.nouveauPrix||e.prixU||e.prix_achat||0)+'</td>'
+          +'<td class="right" style="font-weight:700;color:#16a34a">'+fmtGNF(e.total||0)+'</td>'
+          +'<td style="font-size:9px;color:#999">'+(e.note||'')+'</td></tr>';
+      });
+      bodyE+='<tr class="total"><td colspan="3">TOTAL</td><td style="text-align:center">+'+tQte+'</td><td></td><td class="right">'+fmtGNF(tMont)+'</td><td></td></tr></tbody></table>';
+    } else {
+      bodyE+='<div style="text-align:center;padding:30px;color:#999;font-style:italic">Aucune entrée ce mois</div>';
+    }
+    bodyE+=makeFooter();
+    openPrint(bodyE);
+    return;
+  }
+
+  // ── APPROVISIONNEMENT ──
+  if(type==='appro'){
+    var aYsel=document.getElementById('appro-year-filter');
+    var aMsel=document.getElementById('appro-month-filter');
+    var aYr=parseInt((aYsel||{}).value)||now.getFullYear();
+    var aMo=parseInt((aMsel||{}).value)||(now.getMonth()+1);
+    var mNA=['','Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
+    function inMA(ds){ var d=new Date(ds); return !isNaN(d)&&d.getFullYear()===aYr&&(d.getMonth()+1)===aMo; }
+    var approsF=appros.filter(function(a){ return inMA(a.date||a.ts); });
+    var tA=approsF.reduce(function(s,a){return s+(a.montant||0);},0);
+    var bodyA=makeHeader('APPROVISIONNEMENT');
+    bodyA+='<div class="pdf-title">🔄 Appros — '+mNA[aMo]+' '+aYr+'</div>';
+    bodyA+='<div class="pdf-stats">'
+      +'<div class="pdf-stat"><div class="pdf-stat-label">Opérations</div><div class="pdf-stat-val">'+approsF.length+'</div></div>'
+      +'<div class="pdf-stat"><div class="pdf-stat-label">Total investi</div><div class="pdf-stat-val red">'+fmtGNF(tA)+'</div></div>'
+      +'</div>';
+    if(approsF.length){
+      bodyA+='<table><thead><tr><th>Date</th><th>Produit</th><th>Catégorie</th><th style="text-align:center">Qté</th><th class="right">Prix achat</th><th class="right">Prix vente</th><th class="right">Montant</th><th>Gérant</th></tr></thead><tbody>';
+      approsF.forEach(function(a){
+        bodyA+='<tr><td>'+new Date(a.date||a.ts).toLocaleDateString('fr-FR')+'</td>'
+          +'<td style="font-weight:600">'+(a.produit||a.designation||'—')+'</td>'
+          +'<td>'+(a.categorie||'—')+'</td>'
+          +'<td style="text-align:center;font-weight:700">'+((a.qte||a.qty||0))+'</td>'
+          +'<td class="right">'+fmtGNF(a.prixAchat||a.nouveauPrix||a.prix_achat||0)+'</td>'
+          +'<td class="right">'+fmtGNF(a.prixVente||a.prix_vente||0)+'</td>'
+          +'<td class="right" style="font-weight:700;color:#dc2626">'+fmtGNF(a.montant||0)+'</td>'
+          +'<td style="font-size:9px">'+(a.gerant||'—')+'</td></tr>';
+      });
+      bodyA+='<tr class="total"><td colspan="6">TOTAL</td><td class="right">'+fmtGNF(tA)+'</td><td></td></tr></tbody></table>';
+    } else {
+      bodyA+='<div style="text-align:center;padding:30px;color:#999;font-style:italic">Aucun approvisionnement ce mois</div>';
+    }
+    bodyA+=makeFooter();
+    openPrint(bodyA);
+    return;
+  }
+
+  // ── ALERTES STOCK ──
+  if(type==='alertes'){
+    var rupture=products.filter(function(p){return p.stock_initial===0;});
+    var alerte=products.filter(function(p){return p.stock_initial>0&&p.stock_initial<=p.seuil_alerte;});
+    var bodyAL=makeHeader('ALERTES STOCK');
+    bodyAL+='<div class="pdf-title">🚨 Alertes stock — '+dateStr+'</div>';
+    bodyAL+='<div class="pdf-stats">'
+      +'<div class="pdf-stat"><div class="pdf-stat-label">Ruptures</div><div class="pdf-stat-val red">'+rupture.length+'</div></div>'
+      +'<div class="pdf-stat"><div class="pdf-stat-label">En alerte</div><div class="pdf-stat-val" style="color:#d97706">'+alerte.length+'</div></div>'
+      +'<div class="pdf-stat"><div class="pdf-stat-label">Total produits</div><div class="pdf-stat-val">'+products.length+'</div></div>'
+      +'</div>';
+    if(rupture.length){
+      bodyAL+='<div class="section-title" style="color:#dc2626">🔴 RUPTURES ('+rupture.length+')</div>';
+      bodyAL+='<table><thead><tr><th>Produit</th><th>Catégorie</th><th class="right">Stock</th><th class="right">Seuil</th><th class="right">Prix vente</th></tr></thead><tbody>';
+      rupture.forEach(function(p){
+        bodyAL+='<tr style="background:#fff5f5"><td style="font-weight:600">'+p.designation+'</td><td>'+(p.categorie||'—')+'</td><td class="right" style="color:#dc2626;font-weight:700">0</td><td class="right">'+p.seuil_alerte+'</td><td class="right">'+fmtGNF(p.prix_vente||0)+'</td></tr>';
+      });
+      bodyAL+='</tbody></table>';
+    }
+    if(alerte.length){
+      bodyAL+='<div class="section-title" style="color:#d97706">⚠️ EN ALERTE ('+alerte.length+')</div>';
+      bodyAL+='<table><thead><tr><th>Produit</th><th>Catégorie</th><th class="right">Stock</th><th class="right">Seuil</th><th class="right">Prix vente</th></tr></thead><tbody>';
+      alerte.forEach(function(p){
+        bodyAL+='<tr style="background:#fffbeb"><td style="font-weight:600">'+p.designation+'</td><td>'+(p.categorie||'—')+'</td><td class="right" style="color:#d97706;font-weight:700">'+p.stock_initial+'</td><td class="right">'+p.seuil_alerte+'</td><td class="right">'+fmtGNF(p.prix_vente||0)+'</td></tr>';
+      });
+      bodyAL+='</tbody></table>';
+    }
+    if(!rupture.length&&!alerte.length) bodyAL+='<div style="text-align:center;padding:30px;color:#16a34a;font-weight:700">✅ Aucune alerte — Tous les produits sont en stock</div>';
+    bodyAL+=makeFooter();
+    openPrint(bodyAL);
+    return;
+  }
+
+
+
+// ── Impression ventes Mois ──
+function printVentesMoisPDF(){
+  var msel=document.getElementById('v-month-filter');
+  var mk=msel?msel.value:'';
+  var yr=new Date().getFullYear(), mo=new Date().getMonth()+1;
+  if(mk){
+    var parts=mk.split('-');
+    yr=parseInt(parts[0])||yr;
+    mo=parseInt(parts[1])||mo;
+  }
+  // Peupler les sélects du rapport mois puis imprimer
+  var ryEl=document.getElementById('rpt-mois-year');
+  var rmEl=document.getElementById('rpt-mois-month');
+  if(ryEl) ryEl.value=String(yr);
+  if(rmEl) rmEl.value=String(mo).padStart(2,'0');
+  agvPrintPDF('rapport-mois');
+}
+
+// ── Impression ventes Année ──
+function printVentesAnneePDF(){
+  var ysel=document.getElementById('v-year-filter');
+  var yr2=ysel?parseInt(ysel.value)||new Date().getFullYear():new Date().getFullYear();
+  var raEl=document.getElementById('rpt-annuel-year');
+  if(raEl) raEl.value=String(yr2);
+  agvPrintPDF('rapport-annuel');
+}
 
   // ── DEFAULT : imprimer la vue active via window.print() ──
   window.print();
