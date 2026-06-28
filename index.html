@@ -9706,7 +9706,7 @@ function printVentesJour(){
 function printVentesJourPDF(){
   var dk = (typeof _vFilterDay!=='undefined' && _vFilterDay)
     ? _vFilterDay
-    : new Date().toLocaleDateString('fr-FR',{year:'numeric',month:'2-digit',day:'2-digit'}).split('/').reverse().join('-');
+    : new Date().toISOString().slice(0,10);
 
   // Prendre la date du select mois si disponible pour validation
   var msel=document.getElementById('v-month-filter');
