@@ -7630,9 +7630,26 @@ function renderDettesFournisseurs(){
 function openDetteFournisseurModal(){
   var ov=document.getElementById('dette-fournisseur-overlay'); if(!ov)return;
   ov.classList.add('open');
-  document.getElementById('df-nom').value=''; document.getElementById('df-desc').value='';
-  document.getElementById('df-montant').value=''; document.getElementById('df-date').value=new Date().toISOString().slice(0,10);
-  var e=new Date(); e.setMonth(e.getMonth()+1); document.getElementById('df-echeance').value=e.toISOString().slice(0,10);
+  // Peupler le select fournisseurs depuis l'onglet fournisseurs/commandes
+  var sel=document.getElementById('df-nom-sel');
+  if(sel){
+    var opts='<option value="">-- Choisir un fournisseur --</option>';
+    if(typeof fournisseurs!=='undefined') fournisseurs.forEach(function(f){
+      opts+='<option value="'+f.nom+'">'+f.nom+(f.tel?' ('+f.tel+')':'')+'</option>';
+    });
+    sel.innerHTML=opts;
+  }
+  document.getElementById('df-nom').value='';
+  document.getElementById('df-desc').value='';
+  document.getElementById('df-montant').value='';
+  document.getElementById('df-date').value=new Date().toISOString().slice(0,10);
+  var e=new Date(); e.setMonth(e.getMonth()+1);
+  document.getElementById('df-echeance').value=e.toISOString().slice(0,10);
+}
+
+function onDfFournChange(sel){
+  var nom=sel.value;
+  if(nom) document.getElementById('df-nom').value=nom;
 }
 function saveDetteFournisseur(){
   var nom=(document.getElementById('df-nom').value||'').trim();
@@ -8488,7 +8505,20 @@ function saveCommande(){
   var total=lignes.reduce(function(s,l){return s+(l.total||0);},0);
   var shop=window._currentShop||{};
   var cmd={
-    id:_cmdEditId||Date.now(),
+    id:(function(){
+      if(_cmdEditId) return _cmdEditId;
+      var now=new Date();
+      var yy=now.getFullYear();
+      var mm=String(now.getMonth()+1).padStart(2,'0');
+      var shop=window._currentShop||{};
+      var code=(shop.codeAcces||shop.codeFondateur||'BQ').toString().slice(0,4).toUpperCase();
+      // Compter les commandes existantes du même mois pour le séquençage
+      var same=commandes.filter(function(c){
+        return c.id&&typeof c.id==='string'&&c.id.indexOf(code+'-'+yy+'-'+mm+'-')===0;
+      });
+      var seq=String(same.length+1).padStart(4,'0');
+      return code+'-'+yy+'-'+mm+'-'+seq;
+    })(),
     fournisseurId:parseInt(fid)||fid,
     fournisseurNom:fourn?fourn.nom:'',
     date:document.getElementById('cmd-date').value||new Date().toISOString().slice(0,10),
@@ -9747,11 +9777,18 @@ function printVentesJourPDF(){
   }
   body+='<div class="foot">Rapport généré par App AGV — '+shopNom+' — '+ds+'</div>';
 
-  var win=window.open('','_blank','width=900,height=700');
-  if(!win){alert('Autorisez les popups pour imprimer');return;}
-  win.document.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Rapport '+dk+'</title><style>'+css+'</style></head><body>'+body+'<div class="np"><button onclick="window.print()" style="padding:8px 18px;background:#1e3a5f;color:#fff;border:none;border-radius:6px;font-size:13px;font-weight:700;cursor:pointer">🖨️ Imprimer / PDF</button><button onclick="window.close()" style="padding:8px 14px;background:#eee;color:#333;border:none;border-radius:6px;font-size:13px;cursor:pointer">✕ Fermer</button></div></body></html>');
-  win.document.close();
-  setTimeout(function(){win.focus();win.print();},600);
+  var html='<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Rapport '+dk+'</title><style>'+css+'</style></head><body>'+body+'<div class="np"><button onclick="window.print()" style="padding:8px 18px;background:#1e3a5f;color:#fff;border:none;border-radius:6px;font-size:13px;font-weight:700;cursor:pointer">🖨️ PDF A4</button><button onclick="agvCapturJPEG()" style="padding:8px 14px;background:#7c3aed;color:#fff;border:none;border-radius:6px;font-size:13px;cursor:pointer">🖼️ JPEG</button><button onclick="window.close()" style="padding:8px 14px;background:#eee;color:#333;border:none;border-radius:6px;font-size:13px;cursor:pointer">✕ Fermer</button></div><script>function agvCapturJPEG(){if(typeof html2canvas!=="undefined"){html2canvas(document.body,{scale:2,backgroundColor:"#fff"}).then(function(c){var a=document.createElement("a");a.href=c.toDataURL("image/jpeg",0.95);a.download="rapport.jpg";a.click();});}else{alert("Cliquez PDF puis Enregistrer comme image.");}}<\/script><script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"><\/script></body></html>';
+  var blob=new Blob([html],{type:'text/html'});
+  var url=URL.createObjectURL(blob);
+  var win=window.open(url,'_blank');
+  if(!win){
+    // Fallback: iframe dans la page courante
+    var ifr=document.getElementById('_agv_print_frame');
+    if(!ifr){ ifr=document.createElement('iframe'); ifr.id='_agv_print_frame'; ifr.style.cssText='position:fixed;top:0;left:0;width:100%;height:100%;z-index:9999;border:none;background:#fff'; document.body.appendChild(ifr); }
+    ifr.src=url;
+    return;
+  }
+  setTimeout(function(){win.focus();win.print();URL.revokeObjectURL(url);},800);
 }
 function initRecapAnnuel(){
   var sel=document.getElementById('recap-year');
@@ -10050,21 +10087,26 @@ function onCmdFournChange(){
 
 function addCmdLigne(produitNom, qte, prixU, unite){
   var container=document.getElementById('cmd-lignes');
-  var lineId='cl_'+Date.now()+'_'+Math.random().toString(36).slice(2,6);
-  var prodOpts='<option value="">-- Produit --</option>'+products.map(function(p){
-    return '<option value="'+p.designation+'" data-prix="'+(p.prix_achat||0)+'"'
-      +(produitNom&&p.designation===produitNom?' selected':'')+'>'+p.designation+'</option>';
+  var lineId='cmdl_'+Date.now()+'_'+Math.random().toString(36).slice(2);
+  var dlId='dl_'+lineId;
+  var uniteVal=unite||'pcs';
+  var dataOpts=products.map(function(p){
+    return '<option value="'+p.designation+'">';
   }).join('');
+  var uniteOpts='';
+  ['pcs','paquet','rouleau','carton','boite','feuille','barre','sac','litre','kg'].forEach(function(u){
+    uniteOpts+='<option value="'+u+'"'+(uniteVal===u?' selected':'')+'>'+u+'</option>';
+  });
   var div=document.createElement('div');
   div.id=lineId;
-  div.style.cssText='display:grid;grid-template-columns:2.5fr 1fr 0.8fr 1.2fr auto;gap:6px;margin-bottom:8px;align-items:center;padding:8px;background:var(--surface2);border-radius:8px';
-  div.innerHTML='<select class="form-input cmd-prod-sel" onchange="onCmdProdChange(this,\''+lineId+'\')" style="font-size:12px;padding:5px">'+prodOpts+'</select>'
-    +'<input type="number" class="form-input cmd-qte" placeholder="Qté" value="'+(qte||1)+'" min="1" oninput="updateCmdTotal()" style="font-size:12px;padding:5px">'
-    +'<input class="form-input cmd-unite" placeholder="Unité" value="'+(unite||'pcs')+'" style="font-size:12px;padding:5px">'
-    +'<input type="number" class="form-input cmd-prix" placeholder="Prix U. (GNF)" value="'+(prixU||'')+'" min="0" oninput="updateCmdTotal()" style="font-size:12px;padding:5px">'
-    +'<button onclick="document.getElementById(\''+lineId+'\').remove();updateCmdTotal()" style="padding:6px 10px;border:none;border-radius:6px;background:var(--red-bg);color:var(--red);cursor:pointer;font-size:14px">✕</button>';
+  div.style.cssText='display:grid;grid-template-columns:2.5fr 1fr 1.2fr auto;gap:6px;margin-bottom:6px;align-items:center;padding:6px;background:var(--surface2);border-radius:8px';
+  div.innerHTML=
+    '<datalist id="'+dlId+'">'+dataOpts+'</datalist>'
+    +'<input list="'+dlId+'" class="form-input cmd-prod-input" placeholder="Saisir ou choisir un produit..." value="'+(produitNom||'')+'" style="font-size:12px;padding:5px" autocomplete="off">'
+    +'<input type="number" class="form-input cmd-qte" placeholder="Qté" value="'+(qte||1)+'" min="1" style="font-size:12px;padding:5px">'
+    +'<select class="form-input cmd-unite" style="font-size:12px;padding:5px">'+uniteOpts+'</select>'
+    +'<button onclick="document.getElementById(\''+lineId+'\').remove()" style="padding:5px 8px;border:none;border-radius:6px;background:var(--red-bg);color:var(--red);cursor:pointer;font-size:12px">✕</button>';
   container.appendChild(div);
-  updateCmdTotal();
 }
 
 function onCmdProdChange(sel, lineId){
@@ -10091,14 +10133,17 @@ function updateCmdTotal(){
 function getCmdLignes(){
   var lignes=[];
   document.querySelectorAll('#cmd-lignes > div').forEach(function(line){
-    var prodSel=line.querySelector('.cmd-prod-sel');
-    var qte=parseFloat(line.querySelector('.cmd-qte').value)||0;
-    var unite=(line.querySelector('.cmd-unite').value||'pcs').trim();
-    var prixU=parseFloat(line.querySelector('.cmd-prix').value)||0;
-    var prodNom=prodSel?prodSel.value:'';
-    if(prodNom && qte>0) lignes.push({
-      produit:prodNom, qte:qte, unite:unite, prixU:prixU,
-      total:qte*prixU, qteRecue:0, statut:'attente'
+    var prodInput=line.querySelector('.cmd-prod-input');
+    var qteSel=line.querySelector('.cmd-qte');
+    var uniteSel=line.querySelector('.cmd-unite');
+    var qte=parseFloat(qteSel?qteSel.value:0)||0;
+    var unite=uniteSel?uniteSel.value||'pcs':'pcs';
+    var prodNom=(prodInput?prodInput.value:'').trim();
+    var prod=products.find(function(p){return p.designation===prodNom;});
+    var cat=prod?prod.categorie||'':'';
+    if(prodNom&&qte>0) lignes.push({
+      produit:prodNom, categorie:cat, qte:qte, unite:unite,
+      prixU:0, total:0, qteRecue:0, statut:'attente'
     });
   });
   return lignes;
@@ -10317,8 +10362,8 @@ function openReceptionModal(cmdId){
         +'<div><label style="font-size:11px;color:var(--text3);display:block;margin-bottom:3px">Stock actuel</label><div style="padding:5px 8px;background:var(--accent-light);border-radius:6px;font-size:12px;font-weight:700;color:var(--accent)">'+(prod?prod.stock_initial:0)+' en stock</div></div>'
         +'</div>'
         +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:8px;background:var(--surface3,var(--bg));border-radius:6px;border:1px solid var(--border)">'
-        +'<div><label style="font-size:11px;color:var(--text3);display:block;margin-bottom:3px">💰 Prix achat (GNF)</label><input type="number" id="rec-pa-'+i+'" value="'+(l.prixU||prixAchatActuel||'')+'" min="0" class="form-input" style="font-size:12px;padding:5px" placeholder="Ex: 5000"></div>'
-        +'<div><label style="font-size:11px;color:var(--text3);display:block;margin-bottom:3px">🏷️ Prix vente (GNF)</label><input type="number" id="rec-pv-'+i+'" value="'+(prixVenteActuel||'')+'" min="0" class="form-input" style="font-size:12px;padding:5px" placeholder="Ex: 7000"></div>'
+        +'<div><label style="font-size:11px;color:var(--text3);display:block;margin-bottom:3px">💰 Prix achat / unité (GNF)</label><input type="number" id="rec-pa-'+i+'" placeholder="—" min="0" class="form-input" style="font-size:12px;padding:5px"></div>'
+        +'<div><label style="font-size:11px;color:var(--text3);display:block;margin-bottom:3px">🏷️ Prix de vente (GNF)</label><input type="number" id="rec-pv-'+i+'" placeholder="—" min="0" class="form-input" style="font-size:12px;padding:5px"></div>'
         +'</div>'
         +'</div>';
     }).join('');
@@ -10697,11 +10742,7 @@ function imprimerCommande(cmdId){
 
   body+='<div class="footer">Commande générée par App AGV — '+(shop.entreprise||'Boutique')+' — '+ds+'</div>';
 
-  var win=window.open('','_blank','width=960,height=750');
-  if(!win){alert('Autorisez les popups pour imprimer');return;}
-  win.document.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Commande #'+String(cmd.id).slice(-6).toUpperCase()+'</title><style>'+css+'</style></head><body>'+body+'<div class="np"><button onclick="window.print()" style="padding:9px 20px;background:#1e3a5f;color:#fff;border:none;border-radius:7px;font-size:13px;font-weight:700;cursor:pointer">🖨️ Imprimer / PDF</button><button onclick="window.close()" style="padding:9px 16px;background:#eee;color:#333;border:none;border-radius:7px;font-size:13px;cursor:pointer">✕ Fermer</button></div></body></html>');
-  win.document.close();
-  setTimeout(function(){win.focus();win.print();},600);
+  agvBlobPrint(css, body, 'Commande-'+String(cmd.id));
 }
 
 // ── WhatsApp bilan ──
@@ -11659,6 +11700,52 @@ function printVentesFiltrePDF(){
 
 console.log('[AGV] Filtres & impressions initialisés');
 
+
+// ==================== IMPRESSION JPEG ====================
+function agvOpenPrintOptions(htmlContent, titre){
+  // Ouvre une fenêtre avec choix PDF ou JPEG
+  var blob=new Blob([htmlContent],{type:'text/html'});
+  var url=URL.createObjectURL(blob);
+  var win=window.open(url,'_blank');
+  if(!win){
+    var ifr=document.getElementById('_agv_print_frame');
+    if(!ifr){ ifr=document.createElement('iframe'); ifr.id='_agv_print_frame'; ifr.style.cssText='position:fixed;top:0;left:0;width:100%;height:100%;z-index:9999;border:none;background:#fff'; document.body.appendChild(ifr); }
+    ifr.src=url; return;
+  }
+  setTimeout(function(){ win.focus(); }, 400);
+}
+
+function agvBlobPrint(css, body, titre){
+  // Créer le HTML avec boutons Imprimer PDF + JPEG + Fermer
+  var btnBar='<div class="np" style="display:flex;position:fixed;top:10px;right:10px;gap:8px;z-index:99">'
+    +'<button onclick="window.print()" style="padding:9px 18px;background:#1e3a5f;color:#fff;border:none;border-radius:7px;font-size:13px;font-weight:700;cursor:pointer">🖨️ PDF A4</button>'
+    +'<button onclick="agvCapturJPEG()" style="padding:9px 14px;background:#7c3aed;color:#fff;border:none;border-radius:7px;font-size:13px;font-weight:700;cursor:pointer">🖼️ JPEG</button>'
+    +'<button onclick="window.close()" style="padding:9px 14px;background:#eee;color:#333;border:none;border-radius:7px;font-size:13px;cursor:pointer">✕ Fermer</button>'
+    +'</div>';
+  var jpegScript='<script>function agvCapturJPEG(){'
+    +'var el=document.body;'
+    +'if(typeof html2canvas!=="undefined"){'
+    +'html2canvas(el,{scale:2,useCORS:true,backgroundColor:"#fff"}).then(function(canvas){'
+    +'var a=document.createElement("a");'
+    +'a.href=canvas.toDataURL("image/jpeg",0.95);'
+    +'a.download="'+titre.replace(/[^a-z0-9]/gi,"_")+'.jpg";'
+    +'a.click();});'
+    +'}else{alert("Cliquez PDF puis Enregistrer comme image dans les options d\'impression");}}'
+    +'<\/script>';
+  var fullHtml='<!DOCTYPE html><html><head><meta charset="UTF-8"><title>'+titre+'</title>'
+    +'<style>'+css+'</style>'
+    +'<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"><\/script>'
+    +'</head><body>'+body+btnBar+jpegScript+'</body></html>';
+  var blob=new Blob([fullHtml],{type:'text/html'});
+  var url=URL.createObjectURL(blob);
+  var win=window.open(url,'_blank');
+  if(!win){
+    var ifr=document.getElementById('_agv_print_frame');
+    if(!ifr){ ifr=document.createElement('iframe'); ifr.id='_agv_print_frame'; ifr.style.cssText='position:fixed;top:0;left:0;width:100%;height:100%;z-index:9999;border:none;background:#fff'; document.body.appendChild(ifr); }
+    ifr.src=url;
+  }
+  setTimeout(function(){ if(win){win.focus();} URL.revokeObjectURL(url); }, 800);
+}
 </script>
 <!-- ========== MODAL VENTE RAPIDE ========== -->
 <div class="overlay" id="vrapide-overlay" onclick="closeVenteRapide(event)">
@@ -11857,7 +11944,7 @@ console.log('[AGV] Filtres & impressions initialisés');
 <div class="overlay" id="dette-fournisseur-overlay" onclick="if(event.target===this)this.classList.remove('open')" style="z-index:300">
   <div class="modal" onclick="event.stopPropagation()" style="max-width:460px;width:95%">
     <h2 style="font-size:16px;font-weight:700;margin-bottom:16px">🏭 Nouvelle dette fournisseur</h2>
-    <div class="form-group" style="margin-bottom:10px"><label class="form-label">Fournisseur *</label><input class="form-input" id="df-nom" placeholder="Nom du fournisseur"></div>
+    <div class="form-group" style="margin-bottom:10px"><label class="form-label">Fournisseur *</label><select class="form-input" id="df-nom-sel" onchange="onDfFournChange(this)"><option value="">-- Choisir un fournisseur --</option></select><input class="form-input" id="df-nom" placeholder="Ou saisir un nom..." style="margin-top:6px;font-size:12px"></div>
     <div class="form-group" style="margin-bottom:10px"><label class="form-label">Description</label><input class="form-input" id="df-desc" placeholder="Facture N..."></div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
       <div class="form-group"><label class="form-label">Montant *</label><input class="form-input" id="df-montant" type="number" placeholder="0"></div>
