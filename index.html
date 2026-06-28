@@ -2198,6 +2198,16 @@ window.addEventListener('DOMContentLoaded',function(){
         Paramètres boutique
       </button>
       <hr class="nav-sep">
+      <div class="nav-label">Analyses</div>
+      <button class="nav-item" id="nav-rapport" onclick="showView('rapport')">
+        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" stroke-width="1.5" stroke-linecap="round"/></svg>
+        Rapports
+      </button>
+      <button class="nav-item" id="nav-recap" onclick="showView('recap')">
+        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z" stroke-width="1.5" stroke-linecap="round"/></svg>
+        Récapitulatif annuel
+      </button>
+      <hr class="nav-sep">
       <div class="nav-label">Alertes</div>
       <button class="nav-item" id="nav-commandes" onclick="showView('commandes')">
         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" stroke-width="1.5" stroke-linecap="round"/></svg>
@@ -2233,7 +2243,18 @@ window.addEventListener('DOMContentLoaded',function(){
     <div class="view active" id="view-dashboard">
       <div class="topbar">
         <h1>Tableau de bord</h1>
-        <span id="dash-date" style="font-size:12px;color:var(--text3)"></span>
+        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+          <select id="dash-year-filter" onchange="renderDashboard()" style="padding:5px 8px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text);font-family:inherit;font-size:12px;font-weight:600"></select>
+          <select id="dash-month-filter" onchange="renderDashboard()" style="padding:5px 8px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text);font-family:inherit;font-size:12px;font-weight:600">
+            <option value="">Tous les mois</option>
+            <option value="01">Janvier</option><option value="02">Février</option><option value="03">Mars</option>
+            <option value="04">Avril</option><option value="05">Mai</option><option value="06">Juin</option>
+            <option value="07">Juillet</option><option value="08">Août</option><option value="09">Septembre</option>
+            <option value="10">Octobre</option><option value="11">Novembre</option><option value="12">Décembre</option>
+          </select>
+          <button onclick="agvPrintPDF('dashboard')" class="btn-print">🖨️ PDF</button>
+          <span id="dash-date" style="font-size:12px;color:var(--text3)"></span>
+        </div>
       </div>
       <div class="stats" id="stats-cards"></div>
       <div id="dash-dettes-widget" style="margin-bottom:8px"></div>
@@ -2321,7 +2342,13 @@ window.addEventListener('DOMContentLoaded',function(){
     <div class="view" id="view-inventaire">
       <div class="topbar">
         <h1>Inventaire général</h1>
-        <button class="btn btn-ghost btn-sm" onclick="window.print()">🖨 Imprimer</button>
+        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+          <select id="inv-cat-filter" onchange="renderTable()" style="padding:5px 8px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text);font-family:inherit;font-size:12px">
+            <option value="">Toutes catégories</option>
+          </select>
+          <input type="text" id="inv-search-filter" placeholder="🔍 Rechercher..." oninput="renderTable()" style="padding:5px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text);font-family:inherit;font-size:12px;width:150px">
+          <button onclick="agvPrintPDF('inventaire')" class="btn-print">🖨️ PDF A4</button>
+        </div>
       </div>
       <div class="stats" id="inv-stats"></div>
       <div id="inv-by-cat"></div>
@@ -2332,7 +2359,7 @@ window.addEventListener('DOMContentLoaded',function(){
       <div class="topbar">
         <h1>Gestion des ventes</h1>
         <div style="display:flex;gap:8px">
-          <button class="btn-print" onclick="printView()">🖨️ Imprimer</button>
+          <button class="btn-print" onclick="agvPrintPDF('ventes')">🖨️ PDF A4</button>
           <button class="btn btn-success" onclick="openVenteRapide()" style="display:flex;align-items:center;gap:6px">⚡ Vente rapide</button>
         </div>
       </div>
@@ -2841,6 +2868,79 @@ window.addEventListener('DOMContentLoaded',function(){
       </div>
     </div>
 
+
+    <!-- ========== VUE RAPPORTS ========== -->
+    <div class="view" id="view-rapport">
+      <div class="topbar">
+        <h1>📊 Rapports</h1>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <button onclick="agvPrintPDF('rapport-jour')" class="btn-print">🖨️ Jour PDF</button>
+          <button onclick="agvPrintPDF('rapport-mois')" class="btn-print">🖨️ Mois PDF</button>
+          <button onclick="agvPrintPDF('rapport-annuel')" class="btn-print">🖨️ Année PDF</button>
+        </div>
+      </div>
+      <!-- Onglets rapport -->
+      <div style="display:flex;gap:4px;margin-bottom:16px;background:var(--surface2);border-radius:10px;padding:4px">
+        <button id="rpt-tab-jour"   onclick="switchRapportTab('jour')"   style="flex:1;padding:8px;border:none;border-radius:8px;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;background:var(--accent);color:#fff">📅 Journalier</button>
+        <button id="rpt-tab-mois"   onclick="switchRapportTab('mois')"   style="flex:1;padding:8px;border:none;border-radius:8px;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;background:transparent;color:var(--text3)">📆 Mensuel</button>
+        <button id="rpt-tab-annuel" onclick="switchRapportTab('annuel')" style="flex:1;padding:8px;border:none;border-radius:8px;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;background:transparent;color:var(--text3)">📈 Annuel</button>
+      </div>
+
+      <!-- Rapport journalier -->
+      <div id="rpt-jour">
+        <div style="display:flex;gap:8px;align-items:flex-end;margin-bottom:14px;flex-wrap:wrap">
+          <div><label class="form-label">Date</label><input type="date" id="rpt-jour-date" onchange="renderRapportJour()" style="padding:6px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text);font-family:inherit;font-size:13px"></div>
+          <button onclick="agvPrintPDF('rapport-jour')" class="btn-print" style="margin-bottom:1px">🖨️ PDF A4</button>
+        </div>
+        <div class="stats" id="rpt-jour-stats" style="margin-bottom:16px"></div>
+        <div id="rpt-jour-content"></div>
+      </div>
+
+      <!-- Rapport mensuel -->
+      <div id="rpt-mois" style="display:none">
+        <div style="display:flex;gap:8px;align-items:flex-end;margin-bottom:14px;flex-wrap:wrap">
+          <div><label class="form-label">Année</label>
+            <select id="rpt-mois-year" onchange="renderRapportMois()" style="padding:6px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text);font-family:inherit;font-size:13px;font-weight:600"></select>
+          </div>
+          <div><label class="form-label">Mois</label>
+            <select id="rpt-mois-month" onchange="renderRapportMois()" style="padding:6px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text);font-family:inherit;font-size:13px;font-weight:600">
+              <option value="01">Janvier</option><option value="02">Février</option><option value="03">Mars</option>
+              <option value="04">Avril</option><option value="05">Mai</option><option value="06">Juin</option>
+              <option value="07">Juillet</option><option value="08">Août</option><option value="09">Septembre</option>
+              <option value="10">Octobre</option><option value="11">Novembre</option><option value="12">Décembre</option>
+            </select>
+          </div>
+          <button onclick="agvPrintPDF('rapport-mois')" class="btn-print" style="margin-bottom:1px">🖨️ PDF A4</button>
+        </div>
+        <div class="stats" id="rpt-mois-stats" style="margin-bottom:16px"></div>
+        <div id="rpt-mois-content"></div>
+      </div>
+
+      <!-- Rapport annuel -->
+      <div id="rpt-annuel" style="display:none">
+        <div style="display:flex;gap:8px;align-items:flex-end;margin-bottom:14px;flex-wrap:wrap">
+          <div><label class="form-label">Année</label>
+            <select id="rpt-annuel-year" onchange="renderRapportAnnuel()" style="padding:6px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text);font-family:inherit;font-size:13px;font-weight:600"></select>
+          </div>
+          <button onclick="agvPrintPDF('rapport-annuel')" class="btn-print" style="margin-bottom:1px">🖨️ PDF A4</button>
+        </div>
+        <div class="stats" id="rpt-annuel-stats" style="margin-bottom:16px"></div>
+        <div id="rpt-annuel-content"></div>
+      </div>
+    </div>
+
+    <!-- ========== VUE RÉCAPITULATIF ANNUEL (fondateur only) ========== -->
+    <div class="view" id="view-recap">
+      <div class="topbar">
+        <h1>📈 Récapitulatif Annuel</h1>
+        <div style="display:flex;gap:8px;align-items:center">
+          <select id="recap-year" onchange="renderRecapAnnuel()" style="padding:6px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text);font-family:inherit;font-size:13px;font-weight:600"></select>
+          <button onclick="agvPrintPDF('recap')" class="btn-print">🖨️ PDF A4</button>
+        </div>
+      </div>
+      <div id="recap-content"></div>
+    </div>
+
     <div class="view" id="view-salaires">
       <div class="topbar">
         <h1>Salaires & Bénéfices</h1>
@@ -3107,7 +3207,7 @@ window.addEventListener('DOMContentLoaded',function(){
       <div style="display:flex;gap:8px;align-items:center">
         <select class="filter-sel" id="appro-year-filter" onchange="onApproYearChange()" style="border-radius:6px;padding:5px 10px"></select>
         <select class="filter-sel" id="appro-month-filter" onchange="renderAppro()" style="border-radius:6px;padding:5px 28px 5px 10px"></select>
-        <button class="btn-print" onclick="printView()">🖨️ Imprimer</button>
+        <button class="btn-print" onclick="agvPrintPDF('inventaire')">🖨️ PDF A4</button>
         <button class="btn btn-primary btn-sm" id="btn-add-appro" onclick="openApproModal()">+ Nouvel approvisionnement</button>
       </div>
     </div>
@@ -3157,9 +3257,18 @@ window.addEventListener('DOMContentLoaded',function(){
   <div id="view-factures" class="view">
     <div class="topbar">
       <h1>🧾 Factures Clients</h1>
-      <div style="display:flex;gap:8px">
+      <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+        <select id="fact-year-filter" onchange="renderFactures()" style="padding:5px 8px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text);font-family:inherit;font-size:12px;font-weight:600"></select>
+        <select id="fact-month-filter" onchange="renderFactures()" style="padding:5px 8px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text);font-family:inherit;font-size:12px;font-weight:600">
+          <option value="">Tous les mois</option>
+          <option value="01">Janvier</option><option value="02">Février</option><option value="03">Mars</option>
+          <option value="04">Avril</option><option value="05">Mai</option><option value="06">Juin</option>
+          <option value="07">Juillet</option><option value="08">Août</option><option value="09">Septembre</option>
+          <option value="10">Octobre</option><option value="11">Novembre</option><option value="12">Décembre</option>
+        </select>
         <button class="btn btn-ghost btn-sm" onclick="showView('clients-list')">👥 Clients</button>
         <button class="btn btn-primary btn-sm" onclick="openFactureModal()">+ Nouvelle facture</button>
+        <button onclick="agvPrintPDF('factures-client')" class="btn-print">🖨️ PDF</button>
       </div>
     </div>
     <!-- Stats top clients -->
@@ -10766,6 +10875,276 @@ function imprimerBilanClient(clientId){
     +'<div class="footer">Relevé généré par App AGV — '+(shop.entreprise||'Boutique')+' — '+ds+'</div>';
   var win=window.open('','_blank','width=900,height=700'); if(!win){alert('Autorisez les popups');return;}
   win.document.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Bilan Client</title><style>'+css+'</style></head><body>'+body+'<div class="no-print" style="display:flex;gap:8px"><button onclick="window.print()" style="padding:8px 18px;background:#1e3a5f;color:#fff;border:none;border-radius:6px;font-size:13px;font-weight:700;cursor:pointer">🖨️ Imprimer / PDF</button><button onclick="window.close()" style="padding:8px 14px;background:#eee;color:#333;border:none;border-radius:6px;font-size:13px;cursor:pointer">✕ Fermer</button></div></body></html>');
+  win.document.close();
+  setTimeout(function(){win.focus();win.print();},500);
+}
+
+
+
+// ==================== FILTRES DASHBOARD ====================
+function _buildYearOpts(selId, defaultAll){
+  var sel=document.getElementById(selId); if(!sel||sel.dataset.init) return;
+  var curY=new Date().getFullYear();
+  var opts=defaultAll?'<option value="">Toutes années</option>':'';
+  for(var y=2040;y>=2020;y--) opts+='<option value="'+y+'"'+(y===curY?' selected':'')+'>'+y+'</option>';
+  sel.innerHTML=opts; if(!defaultAll) sel.value=String(curY);
+  sel.dataset.init='1';
+}
+
+function _buildMonthOptsCurr(selId){
+  var sel=document.getElementById(selId); if(!sel||sel.dataset.init) return;
+  var curM=String(new Date().getMonth()+1).padStart(2,'0');
+  // Garder les options statiques du HTML, juste sélectionner le mois courant
+  if(sel.querySelector('option[value="'+curM+'"]')) sel.value=curM;
+  sel.dataset.init='1';
+}
+
+// Surcharge de renderDashboard pour supporter les filtres
+var _origRenderDashboard = typeof renderDashboard==='function' ? renderDashboard : null;
+function renderDashboard(){
+  // Init filtres année/mois dashboard
+  _buildYearOpts('dash-year-filter', true);
+  var dashYSel=document.getElementById('dash-year-filter');
+  var dashMSel=document.getElementById('dash-month-filter');
+  var filterYr=dashYSel?parseInt(dashYSel.value)||0:0;
+  var filterMo=dashMSel?dashMSel.value||'':'';
+
+  // Filtrer les données selon la sélection
+  function inPeriod(ds){
+    var d=new Date(ds); if(isNaN(d)) return true;
+    var y=d.getFullYear(), mo=String(d.getMonth()+1).padStart(2,'0');
+    if(filterYr && y!==filterYr) return false;
+    if(filterMo && mo!==filterMo) return false;
+    return true;
+  }
+  var periodLabel = filterMo
+    ? ['','Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'][parseInt(filterMo)]+(filterYr?' '+filterYr:'')
+    : filterYr?'Année '+filterYr:'Toutes périodes';
+
+  var total=products.length;
+  var stockVal=products.reduce(function(s,p){return s+(p.total||0);},0);
+  var alerts=products.filter(function(p){return p.stock_initial>0&&p.stock_initial<=p.seuil_alerte;}).length;
+  var rupture=products.filter(function(p){return p.stock_initial===0;}).length;
+
+  var sorties=(filterYr||filterMo)
+    ? ventes.filter(function(v){return v.type!=='entree'&&inPeriod(v.ts||v.date);})
+    : ventes.filter(function(v){return v.type!=='entree';});
+  var aprosF=(filterYr||filterMo)
+    ? appros.filter(function(a){return inPeriod(a.date||a.ts);})
+    : appros;
+  var depF=(filterYr||filterMo)
+    ? depenses.filter(function(d){return inPeriod(d.date||d.ts);})
+    : depenses;
+
+  var totalCA=sorties.reduce(function(s,v){return s+(v.total||0);},0);
+  var totalAppros=aprosF.reduce(function(s,a){return s+(a.montant||0);},0);
+  var totalBen=sorties.reduce(function(s,v){return s+(v.benefice!=null?v.benefice:v.total||0);},0);
+  var totalDep=depF.reduce(function(s,d){return s+(d.montant||0);},0);
+  var beneficeNet=totalBen-totalDep;
+
+  document.getElementById('nb-alertes').textContent=alerts+rupture;
+  var dettesAvecSolde=getDettesSolde();
+  var totalDettesC=dettesAvecSolde.filter(function(d){return d.type==='client'&&d.solde>0;}).reduce(function(s,d){return s+d.solde;},0);
+  var totalDettesP=dettesAvecSolde.filter(function(d){return (d.type==='fondateur'||d.type==='gerant')&&d.solde>0;}).reduce(function(s,d){return s+d.solde;},0);
+  var totalDettesF=dettesAvecSolde.filter(function(d){return d.type==='fournisseur'&&d.solde>0;}).reduce(function(s,d){return s+d.solde;},0);
+  var nbDettes=dettesAvecSolde.filter(function(d){return d.solde>0;}).length;
+  var badgeD=document.getElementById('nb-dettes');
+  if(badgeD){badgeD.textContent=nbDettes;badgeD.style.display=nbDettes?'':'none';}
+
+  var periodHtml=filterYr||filterMo?'<div style="font-size:11px;color:var(--text3);margin-bottom:4px">📅 '+periodLabel+'</div>':'';
+  var sc=document.getElementById('stats-cards');
+  if(sc) sc.innerHTML=periodHtml
+    +'<div class="stat"><div class="stat-label"><div class="dot blue"></div> Total produits</div><div class="stat-val">'+total+'</div><div class="stat-sub">références actives</div></div>'
+    +'<div class="stat"><div class="stat-label"><div class="dot green"></div> Valeur stock</div><div class="stat-val green" style="font-size:18px">'+fmtGNF(stockVal)+'</div><div class="stat-sub">prix d\'achat</div></div>'
+    +'<div class="stat"><div class="stat-label"><div class="dot purple"></div> Chiffre d\'affaires</div><div class="stat-val purple" style="font-size:18px">'+fmtGNF(totalCA)+'</div><div class="stat-sub">'+sorties.length+' ventes | appros: −'+fmtGNF(totalAppros)+'</div></div>'
+    +'<div class="stat"><div class="stat-label"><div class="dot '+(beneficeNet>=0?'green':'red')+'"></div> Bénéfice net</div><div class="stat-val '+(beneficeNet>=0?'green':'red')+'" style="font-size:18px">'+fmtGNF(beneficeNet)+'</div><div class="stat-sub">CA − achats − dépenses ('+fmtGNF(totalDep)+')</div></div>'
+    +'<div class="stat"><div class="stat-label"><div class="dot red"></div> Dépenses</div><div class="stat-val red" style="font-size:16px">'+fmtGNF(totalDep)+'</div><div class="stat-sub">'+depF.length+' dépenses</div></div>'
+    +(nbDettes?'<div class="stat" style="cursor:pointer" onclick="showView(\'dettes\')"><div class="stat-label"><div class="dot red"></div> 💳 Dettes en cours</div><div class="stat-val red" style="font-size:18px">'+fmtGNF(totalDettesC+totalDettesP+totalDettesF)+'</div><div class="stat-sub">clients: '+fmtGNF(totalDettesC)+' | perso: '+fmtGNF(totalDettesP)+' | fourn: '+fmtGNF(totalDettesF)+'</div></div>':'');
+
+  // Graphique catégories
+  var cats={};
+  products.forEach(function(p){cats[p.categorie]=(cats[p.categorie]||0)+1;});
+  var sorted=Object.entries(cats).sort(function(a,b){return b[1]-a[1];}).slice(0,12);
+  var maxC=sorted[0]?sorted[0][1]:1;
+  var ccEl=document.getElementById('cat-chart');
+  if(ccEl) ccEl.innerHTML=sorted.map(function(e){
+    return '<div class="cat-row"><div class="cat-name" title="'+e[0]+'">'+e[0]+'</div>'
+      +'<div class="cat-bar-wrap"><div class="cat-bar" style="width:'+Math.round(e[1]/maxC*100)+'%"></div></div>'
+      +'<div class="cat-count">'+e[1]+'</div></div>';
+  }).join('');
+
+  // Alertes
+  var alEl=document.getElementById('alert-list');
+  if(alEl){
+    var alertProds=products.filter(function(p){return p.stock_initial<=p.seuil_alerte;}).sort(function(a,b){return a.stock_initial-b.stock_initial;}).slice(0,15);
+    alEl.innerHTML=alertProds.length?alertProds.map(function(p){
+      var cl=p.stock_initial===0?'red':'amber';
+      return '<div class="alert-item"><div class="alert-name">'+p.designation+'</div><span class="badge badge-'+cl+'">'+(p.stock_initial===0?'RUPTURE':p.stock_initial+' restants')+'</span></div>';
+    }).join(''):'<div class="empty-text" style="padding:16px">✅ Aucune alerte</div>';
+  }
+}
+
+// ==================== FILTRES INVENTAIRE ====================
+// Surcharger renderTable pour supporter les filtres inv-cat-filter et inv-search-filter
+var _origRenderTable = typeof renderTable==='function' ? renderTable : null;
+function renderTable(){
+  var catFilter=(document.getElementById('inv-cat-filter')||{}).value||'';
+  var searchFilter=((document.getElementById('inv-search-filter')||{}).value||'').toLowerCase().trim();
+
+  // Peupler le filtre catégorie
+  var catSel=document.getElementById('inv-cat-filter');
+  if(catSel&&catSel.options.length<=1){
+    var cats=Array.from(new Set(products.map(function(p){return p.categorie||'';}))).filter(Boolean).sort();
+    var opC='<option value="">Toutes catégories</option>'+cats.map(function(ct){return '<option value="'+ct+'">'+ct+'</option>';}).join('');
+    var prevCat=catSel.value;
+    catSel.innerHTML=opC;
+    if(prevCat) catSel.value=prevCat;
+  }
+
+  var filtered=products.filter(function(p){
+    if(catFilter && (p.categorie||'')!==catFilter) return false;
+    if(searchFilter && !(p.designation||'').toLowerCase().includes(searchFilter) && !(p.reference||'').toLowerCase().includes(searchFilter)) return false;
+    return true;
+  });
+
+  // Déléguer au render original mais avec les produits filtrés
+  // Appel de la logique originale avec produits filtrés
+  _renderTableFiltered(filtered);
+}
+
+function _renderTableFiltered(prods){
+  // Si renderTable originale existe, l'appeler simplement
+  // sinon utiliser la logique de base
+  if(typeof _origRenderTable==='function'){
+    // Sauvegarder products, remplacer temporairement, restaurer
+    var allProds=products;
+    products=prods;
+    _origRenderTable();
+    products=allProds;
+  }
+}
+
+// ==================== FILTRES FACTURES (vue principale) ====================
+// Patcher renderFactures pour supporter les filtres année/mois
+var _origRenderFactures = typeof renderFactures==='function' ? renderFactures : null;
+function renderFactures(){
+  _buildYearOpts('fact-year-filter', true);
+
+  var yr=parseInt((document.getElementById('fact-year-filter')||{}).value)||0;
+  var mo=(document.getElementById('fact-month-filter')||{}).value||'';
+  var search=((document.getElementById('fact-search')||{}).value||'').toLowerCase();
+
+  function inPeriod(ds){
+    var d=new Date(ds); if(isNaN(d)) return true;
+    var y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,'0');
+    if(yr && y!==yr) return false;
+    if(mo && m!==mo) return false;
+    return true;
+  }
+  // Appel original si disponible avec filtre
+  if(typeof _origRenderFactures==='function'){
+    var allFact=factureVentes;
+    factureVentes=factureVentes.filter(function(f){
+      if(!inPeriod(f.date||f.ts)) return false;
+      if(search&&!(f.clientNom||'').toLowerCase().includes(search)&&!String(f.id).includes(search)) return false;
+      return true;
+    });
+    _origRenderFactures();
+    factureVentes=allFact;
+  }
+}
+
+// ==================== INIT RAPPORT (améliorer avec mois courant) ====================
+// La fonction initRapport originale est conservée, on ajoute juste l'init des années
+var _origInitRapport = typeof initRapport==='function' ? initRapport : null;
+function initRapport(){
+  // Init sélects année rapport
+  _buildYearOpts('rpt-mois-year', false);
+  _buildYearOpts('rpt-annuel-year', false);
+  // Date du jour par défaut
+  var djEl=document.getElementById('rpt-jour-date');
+  if(djEl&&!djEl.value) djEl.value=new Date().toISOString().slice(0,10);
+  // Mois courant par défaut
+  var mmEl=document.getElementById('rpt-mois-month');
+  if(mmEl&&!mmEl.dataset.init){
+    mmEl.value=String(new Date().getMonth()+1).padStart(2,'0');
+    mmEl.dataset.init='1';
+  }
+  switchRapportTab('jour');
+}
+
+// ==================== RECAP ANNUEL — init année =====================
+var _origInitRecapAnnuel = typeof initRecapAnnuel==='function' ? initRecapAnnuel : null;
+function initRecapAnnuel(){
+  _buildYearOpts('recap-year', false);
+  if(typeof renderRecapAnnuel==='function') renderRecapAnnuel();
+}
+
+// ==================== DASHBOARD PDF ====================
+// Extension agvPrintPDF pour dashboard
+var _origAgvPrintPDF = typeof agvPrintPDF==='function' ? agvPrintPDF : null;
+function agvPrintPDF(type, extraData){
+  if(type==='dashboard'){
+    _printDashboardPDF();
+    return;
+  }
+  if(typeof _origAgvPrintPDF==='function') _origAgvPrintPDF(type, extraData);
+  else window.print();
+}
+
+function _printDashboardPDF(){
+  var shop=window._currentShop||{};
+  var dashYSel=document.getElementById('dash-year-filter');
+  var dashMSel=document.getElementById('dash-month-filter');
+  var filterYr=dashYSel?parseInt(dashYSel.value)||0:0;
+  var filterMo=dashMSel?dashMSel.value||'':'';
+  var periodLabel=filterMo
+    ?['','Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'][parseInt(filterMo)]+(filterYr?' '+filterYr:'')
+    :filterYr?'Année '+filterYr:'Toutes périodes';
+
+  function inPeriod(ds){
+    var d=new Date(ds); if(isNaN(d)) return true;
+    var y=d.getFullYear(), mo=String(d.getMonth()+1).padStart(2,'0');
+    if(filterYr&&y!==filterYr) return false;
+    if(filterMo&&mo!==filterMo) return false;
+    return true;
+  }
+
+  var sorties=(filterYr||filterMo)?ventes.filter(function(v){return v.type!=='entree'&&inPeriod(v.ts||v.date);}):ventes.filter(function(v){return v.type!=='entree';});
+  var aprosF=(filterYr||filterMo)?appros.filter(function(a){return inPeriod(a.date||a.ts);}):appros;
+  var depF=(filterYr||filterMo)?depenses.filter(function(d){return inPeriod(d.date||d.ts);}):depenses;
+  var totalCA=sorties.reduce(function(s,v){return s+(v.total||0);},0);
+  var totalAppr=aprosF.reduce(function(s,a){return s+(a.montant||0);},0);
+  var totalBen=sorties.reduce(function(s,v){return s+(v.benefice!=null?v.benefice:v.total||0);},0);
+  var totalDep=depF.reduce(function(s,d){return s+(d.montant||0);},0);
+  var benNet=totalBen-totalDep;
+  var stockVal=products.reduce(function(s,p){return s+(p.total||0);},0);
+  var now=new Date(); var ds=now.toLocaleDateString('fr-FR'); var ts=now.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});
+
+  var css='@page{size:A4;margin:15mm 12mm}*{margin:0;padding:0;box-sizing:border-box}body{font-family:Arial,sans-serif;font-size:11px;color:#111;line-height:1.4}.header{display:flex;justify-content:space-between;padding-bottom:10px;border-bottom:2px solid #1e3a5f;margin-bottom:16px}.title{font-size:14px;font-weight:700;color:#1e3a5f;margin:12px 0 10px;text-transform:uppercase;border-bottom:1px solid #e0e0e0;padding-bottom:6px}.stat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px}.stat-box{background:#f5f7fa;border:1px solid #e0e6ef;border-radius:8px;padding:10px;text-align:center}.stat-label{font-size:9px;color:#666;text-transform:uppercase;margin-bottom:4px}.stat-val{font-size:16px;font-weight:700;color:#1e3a5f}.green{color:#16a34a}.red{color:#dc2626}.footer{margin-top:20px;padding-top:8px;border-top:1px solid #e0e0e0;font-size:9px;color:#999;text-align:center}.no-print{display:none}@media screen{.no-print{display:block;position:fixed;top:10px;right:10px}}';
+
+  var body='<div class="header"><div>'
+    +(shop.logo?'<img src="'+shop.logo+'" style="width:48px;height:48px;object-fit:contain;border-radius:6px;float:left;margin-right:10px">':'')
+    +'<div style="font-size:16px;font-weight:700;color:#1e3a5f">'+(shop.entreprise||'Boutique')+'</div>'
+    +(shop.adresse?'<div style="font-size:10px;color:#666">📍 '+shop.adresse+'</div>':'')
+    +(shop.tel?'<div style="font-size:10px;color:#666">📞 '+shop.tel+'</div>':'')
+    +'<div style="clear:both"></div></div>'
+    +'<div style="text-align:right"><div style="font-weight:700;font-size:14px;color:#1e3a5f">TABLEAU DE BORD</div>'
+    +'<div style="font-size:13px;font-weight:700;color:#666">'+periodLabel+'</div>'
+    +'<div style="font-size:10px;color:#666">Imprimé le '+ds+' à '+ts+'</div></div></div>'
+    +'<div class="title">📊 Indicateurs — '+periodLabel+'</div>'
+    +'<div class="stat-grid">'
+    +'<div class="stat-box"><div class="stat-label">Chiffre d\'affaires</div><div class="stat-val green">'+fmtGNF(totalCA)+'</div><div style="font-size:10px;color:#666">'+sorties.length+' ventes</div></div>'
+    +'<div class="stat-box"><div class="stat-label">Approvisionnements</div><div class="stat-val">'+fmtGNF(totalAppr)+'</div><div style="font-size:10px;color:#666">'+aprosF.length+' entrées</div></div>'
+    +'<div class="stat-box"><div class="stat-label">Dépenses</div><div class="stat-val red">'+fmtGNF(totalDep)+'</div><div style="font-size:10px;color:#666">'+depF.length+' dépenses</div></div>'
+    +'<div class="stat-box"><div class="stat-label">Bénéfice net</div><div class="stat-val '+(benNet>=0?'green':'red')+'">'+fmtGNF(benNet)+'</div><div style="font-size:10px;color:#666">CA − achats − dép.</div></div>'
+    +'<div class="stat-box"><div class="stat-label">Valeur stock</div><div class="stat-val">'+fmtGNF(stockVal)+'</div><div style="font-size:10px;color:#666">'+products.length+' références</div></div>'
+    +'<div class="stat-box"><div class="stat-label">Alertes stock</div><div class="stat-val red">'+products.filter(function(p){return p.stock_initial<=p.seuil_alerte;}).length+'</div><div style="font-size:10px;color:#666">produits</div></div>'
+    +'</div>'
+    +'<div class="footer">Document généré par App AGV — '+(shop.entreprise||'Boutique')+' — '+ds+'</div>';
+
+  var win=window.open('','_blank','width=900,height=700'); if(!win){alert('Autorisez les popups');return;}
+  win.document.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Tableau de bord</title><style>'+css+'</style></head><body>'+body+'<div class="no-print" style="display:flex;gap:8px"><button onclick="window.print()" style="padding:8px 18px;background:#1e3a5f;color:#fff;border:none;border-radius:6px;font-size:13px;font-weight:700;cursor:pointer">🖨️ Imprimer / PDF</button><button onclick="window.close()" style="padding:8px 14px;background:#eee;color:#333;border:none;border-radius:6px;font-size:13px;cursor:pointer">✕ Fermer</button></div></body></html>');
   win.document.close();
   setTimeout(function(){win.focus();win.print();},500);
 }
