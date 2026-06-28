@@ -2343,8 +2343,8 @@ window.addEventListener('DOMContentLoaded',function(){
     <div class="view" id="view-ventes">
       <div class="topbar">
         <h1>Gestion des ventes</h1>
-        <div style="display:flex;gap:8px">
-          <button class="btn-print" onclick="agvPrintPDF('ventes')">🖨️ PDF A4</button>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn-print" onclick="printVentesJour()">🖨️ Imprimer période</button>
           <button class="btn btn-success" onclick="openVenteRapide()" style="display:flex;align-items:center;gap:6px">⚡ Vente rapide</button>
         </div>
       </div>
@@ -2396,7 +2396,7 @@ window.addEventListener('DOMContentLoaded',function(){
               <option value="07">Juillet</option><option value="08">Août</option><option value="09">Septembre</option>
               <option value="10">Octobre</option><option value="11">Novembre</option><option value="12">Décembre</option>
             </select>
-            <button id="v-print-day-btn" onclick="printVentesJour()" style="display:none;padding:5px 10px;border:none;border-radius:8px;background:var(--accent);color:#fff;font-family:inherit;font-size:12px;font-weight:700;cursor:pointer">🖨️ Imprimer ce jour</button>
+            <button id="v-print-day-btn" onclick="printVentesJourPDF()" style="display:none;padding:5px 10px;border:none;border-radius:8px;background:var(--accent);color:#fff;font-family:inherit;font-size:12px;font-weight:700;cursor:pointer">🖨️ Imprimer ce jour</button>
           </div>
           <!-- Stats filtre actif -->
           <div id="v-filter-stats" style="margin-bottom:8px"></div>
@@ -4804,11 +4804,12 @@ function buildMonthFilters(){
   [...ventes.map(v=>v.ts), ...depenses.map(d=>d.date)].forEach(d=>{
     dataYears.add(new Date(d).getFullYear());
   });
-  for(let y = currentYear - 2; y <= currentYear + 1; y++) dataYears.add(y);
+  // Toujours inclure 2020 → 2040
+  for(let y = 2020; y <= 2040; y++) dataYears.add(y);
   const years = [...dataYears].sort().reverse();
 
-  // Peupler les filtres année
-  ['sal-year-filter','dep-year-filter','jour-year-filter'].forEach(id=>{
+  // Peupler les filtres année (tous les sélects année de l'app)
+  ['sal-year-filter','dep-year-filter','jour-year-filter','appro-year-filter','sort-year-filter','rep-year-filter'].forEach(id=>{
     const sel = document.getElementById(id);
     if(!sel) return;
     const prev = parseInt(sel.value);
@@ -4821,6 +4822,13 @@ function buildMonthFilters(){
   _syncMonthFilter('sal-year-filter','sal-month-filter', currentMk);
   _syncMonthFilter('dep-year-filter','dep-month-filter', currentMk);
   _syncMonthFilter('jour-year-filter','jour-month-filter', currentMk);
+  // Appro et sorties utilisent buildMonthOptions() — juste initialiser l'année courante
+  var _approY=document.getElementById('appro-year-filter');
+  var _sortY=document.getElementById('sort-year-filter');
+  var _repY=document.getElementById('rep-year-filter');
+  if(_approY&&!_approY.dataset.done){ _approY.value=String(currentYear); buildMonthOptions(document.getElementById('appro-month-filter')); _approY.dataset.done='1'; }
+  if(_sortY&&!_sortY.dataset.done){ _sortY.value=String(currentYear); buildMonthOptions(document.getElementById('sort-month-filter')); _sortY.dataset.done='1'; }
+  if(_repY&&!_repY.dataset.done){ _repY.value=String(currentYear); buildMonthOptions(document.getElementById('rep-month-filter')); _repY.dataset.done='1'; }
 }
 
 function _syncMonthFilter(yearSelId, monthSelId, currentMk){
@@ -4829,20 +4837,11 @@ function _syncMonthFilter(yearSelId, monthSelId, currentMk){
   if(!yearSel || !monthSel) return;
   const selectedYear = parseInt(yearSel.value);
 
-  // Mois de l'année sélectionnée
+  // Tous les mois jan→déc de l'année sélectionnée
   const months = [];
   for(let m = 12; m >= 1; m--){
     months.push(`${selectedYear}-${String(m).padStart(2,'0')}`);
   }
-  // Ajouter aussi les mois des données pour cette année si absents
-  [...ventes.map(v=>v.ts), ...depenses.map(d=>d.date)].forEach(d=>{
-    const dt = new Date(d);
-    if(dt.getFullYear()===selectedYear){
-      const mk2=getMonthKey(d);
-      if(!months.includes(mk2)) months.push(mk2);
-    }
-  });
-  months.sort().reverse();
 
   const prev = monthSel.value;
   monthSel.innerHTML = months.map(m=>`<option value="${m}">${getMonthLabel(m)}</option>`).join('');
@@ -5227,7 +5226,7 @@ function renderVentesView(){
       if(container.children[0]) container.children[0].style.display='none';
       if(container.children[1]) container.children[1].style.display='block';
     }
-    refreshVentesHistory();
+    renderVentesHistory();
   } else if(canVente){
     // Gerant avec permission ventes: acces complet
     document.getElementById('ventes-blocked-msg').style.display='none';
@@ -5237,7 +5236,7 @@ function renderVentesView(){
       if(container.children[0]) container.children[0].style.display='';
       if(container.children[1]) container.children[1].style.display='';
     }
-    refreshVentesHistory();
+    renderVentesHistory();
   } else {
     document.getElementById('ventes-blocked-msg').style.display='none';
     if(container){
@@ -5245,7 +5244,7 @@ function renderVentesView(){
       if(container.children[0]) container.children[0].style.display='';
       if(container.children[1]) container.children[1].style.display='';
     }
-    refreshVentesHistory();
+    renderVentesHistory();
   }
 }
 
@@ -5580,7 +5579,12 @@ function renderDepenses(){
   document.getElementById('btn-add-dep').style.display=(isFondateur||canDep)?'block':'none';
 
   const mk=document.getElementById('dep-month-filter')?document.getElementById('dep-month-filter').value:'';
-  const filtered=mk?depenses.filter(d=>getMonthKey(d.date)===mk):depenses;
+  const yrDep=parseInt(document.getElementById('dep-year-filter')?document.getElementById('dep-year-filter').value:'')||0;
+  const filtered=mk
+    ? depenses.filter(d=>getMonthKey(d.date)===mk)
+    : yrDep
+      ? depenses.filter(d=>new Date(d.date).getFullYear()===yrDep)
+      : depenses;
   const total=filtered.reduce((s,d)=>s+d.montant,0);
   const cats=[...new Set(filtered.map(d=>d.cat))];
 
@@ -9375,8 +9379,40 @@ function vFilterDay(dk){
 }
 
 function printVentesJour(){
-  if(typeof agvPrintPDF==='function') agvPrintPDF('rapport-jour', _vFilterDay||new Date().toISOString().slice(0,10));
-  else window.print();
+  // Cas 1 : jour sélectionné → rapport journalier
+  if(typeof _vFilterDay!=='undefined' && _vFilterDay){
+    agvPrintPDF('rapport-jour', _vFilterDay);
+    return;
+  }
+  // Cas 2 : mois sélectionné → rapport mensuel
+  var msel=document.getElementById('v-month-filter');
+  var mk=msel?msel.value:'';
+  if(mk){
+    var parts=mk.split('-');
+    var yr=parseInt(parts[0])||new Date().getFullYear();
+    var mo=parseInt(parts[1])||new Date().getMonth()+1;
+    // Peupler rpt-mois-year et rpt-mois-month puis imprimer
+    var ryEl=document.getElementById('rpt-mois-year');
+    var rmEl=document.getElementById('rpt-mois-month');
+    if(ryEl) ryEl.value=String(yr);
+    if(rmEl) rmEl.value=String(mo).padStart(2,'0');
+    agvPrintPDF('rapport-mois');
+    return;
+  }
+  // Cas 3 : année sélectionnée → rapport annuel
+  var ysel=document.getElementById('v-year-filter');
+  var yr2=ysel?parseInt(ysel.value)||new Date().getFullYear():new Date().getFullYear();
+  var raEl=document.getElementById('rpt-annuel-year');
+  if(raEl) raEl.value=String(yr2);
+  agvPrintPDF('rapport-annuel');
+}
+
+function printVentesJourPDF(){
+  // Alias pour le bouton "Imprimer ce jour" — toujours rapport journalier de la date sélectionnée
+  var dateTarget = (typeof _vFilterDay!=='undefined' && _vFilterDay)
+    ? _vFilterDay
+    : new Date().toISOString().slice(0,10);
+  agvPrintPDF('rapport-jour', dateTarget);
 }
 
 // ==================== RÉCAPITULATIF ANNUEL ====================
@@ -11020,16 +11056,11 @@ function printVentesJour(){
 // La fonction renderDepenses lit déjà dep-month-filter et dep-year-filter
 // On ajoute juste l'init des sélects avec les bonnes années
 function initDepFilters(){
-  _buildYearOpts('dep-year-filter', false);
-  // Initialiser mois courant si pas encore fait
-  var mSel=document.getElementById('dep-month-filter');
-  if(mSel && !mSel.dataset.minit){
-    var curM=String(new Date().getMonth()+1).padStart(2,'0');
-    // Chercher et sélectionner le mois courant
-    for(var i=0; i<mSel.options.length; i++){
-      if(mSel.options[i].value===curM){ mSel.selectedIndex=i; break; }
-    }
-    mSel.dataset.minit='1';
+  // buildMonthFilters gère dep-year-filter et dep-month-filter
+  // Si pas encore peuplé (premier appel), forcer buildMonthFilters
+  var ySel=document.getElementById('dep-year-filter');
+  if(ySel && !ySel.options.length){
+    if(typeof buildMonthFilters==='function') buildMonthFilters();
   }
 }
 
