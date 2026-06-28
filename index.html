@@ -8461,30 +8461,6 @@ function onCmdFournChange(){
   }
 }
 
-function addCmdLigne(produitNom, qte, prixU, unite){
-  var container=document.getElementById('cmd-lignes');
-  var lineId='cmdl_'+Date.now()+'_'+Math.random().toString(36).slice(2);
-  var uniteVal=unite||'pcs';
-  var prodOpts='<option value="">-- Produit --</option>';
-  products.forEach(function(p){
-    var sel=(produitNom&&p.designation===produitNom)?' selected':'';
-    var cat=p.categorie?(' ('+p.categorie+')'):'';
-    prodOpts+='<option value="'+p.designation+'" data-cat="'+(p.categorie||'')+'"'+sel+'>'+p.designation+cat+'</option>';
-  });
-  var uniteOpts='';
-  ['pcs','paquet','rouleau','carton','boite','feuille','barre','sac','litre','kg'].forEach(function(u){
-    uniteOpts+='<option value="'+u+'"'+(uniteVal===u?' selected':'')+'>'+u+'</option>';
-  });
-  var div=document.createElement('div');
-  div.id=lineId;
-  div.style.cssText='display:grid;grid-template-columns:2.5fr 1fr 1.2fr auto;gap:6px;margin-bottom:6px;align-items:center;padding:6px;background:var(--surface2);border-radius:8px';
-  div.innerHTML=
-    '<select class="form-input cmd-prod-sel" style="font-size:12px;padding:5px">'+prodOpts+'</select>'
-    +'<input type="number" class="form-input cmd-qte" placeholder="Qté" value="'+(qte||1)+'" min="1" style="font-size:12px;padding:5px">'
-    +'<select class="form-input cmd-unite" style="font-size:12px;padding:5px">'+uniteOpts+'</select>'
-    +'<button onclick="document.getElementById(\''+lineId+'\').remove()" style="padding:5px 8px;border:none;border-radius:6px;background:var(--red-bg);color:var(--red);cursor:pointer;font-size:12px">✕</button>';
-  container.appendChild(div);
-}
 
 function onCmdProdChange(sel, lineId){
   // Prix renseigné uniquement à la réception, pas ici
@@ -8502,24 +8478,6 @@ function updateCmdTotal(){
   return total;
 }
 
-function getCmdLignes(){
-  var lignes=[];
-  document.querySelectorAll('#cmd-lignes > div').forEach(function(line){
-    var prodSel=line.querySelector('.cmd-prod-sel');
-    var qteSel=line.querySelector('.cmd-qte');
-    var uniteSel=line.querySelector('.cmd-unite');
-    var qte=parseFloat(qteSel?qteSel.value:0)||0;
-    var unite=uniteSel?uniteSel.value||'pcs':'pcs';
-    var prodNom=prodSel?prodSel.value:'';
-    var opt=prodSel?prodSel.options[prodSel.selectedIndex]:null;
-    var cat=opt?opt.getAttribute('data-cat'):'';
-    if(prodNom&&qte>0) lignes.push({
-      produit:prodNom, categorie:cat, qte:qte, unite:unite,
-      prixU:0, total:0, qteRecue:0, statut:'attente'
-    });
-  });
-  return lignes;
-}
 
 function saveCommande(){
   var fid=document.getElementById('cmd-fourn-sel').value;
@@ -10571,48 +10529,179 @@ function renderBilanFournisseur(){
 
 // ── Impression commande ──
 function imprimerCommande(cmdId){
-  var cmd=commandes.find(function(c){ return String(c.id)===String(cmdId); }); if(!cmd) return;
+  var cmd=commandes.find(function(c){ return String(c.id)===String(cmdId); });
+  if(!cmd) return;
   var fourn=fournisseurs.find(function(f){ return String(f.id)===String(cmd.fournisseurId); })||{nom:cmd.fournisseurNom||'?'};
   var shop=window._currentShop||{};
-  var now=new Date(); var dateStr=now.toLocaleDateString('fr-FR'); var timeStr=now.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});
-  var total=cmd.montantTotal||cmd.totalEstime||cmd.lignes.reduce(function(s,l){return s+(l.total||0);},0);
-  var css='@page{size:A4 portrait;margin:15mm 12mm}*{margin:0;padding:0;box-sizing:border-box}body{font-family:Arial,sans-serif;font-size:11px;color:#111;line-height:1.4}.header{display:flex;justify-content:space-between;padding-bottom:10px;border-bottom:2px solid #1e3a5f;margin-bottom:14px}.shop-name{font-size:16px;font-weight:700;color:#1e3a5f}.title{font-size:14px;font-weight:700;color:#1e3a5f;margin:12px 0 10px;text-transform:uppercase;border-bottom:1px solid #e0e0e0;padding-bottom:6px}table{width:100%;border-collapse:collapse;margin-bottom:14px}thead th{background:#1e3a5f;color:#fff;padding:6px 8px;font-size:9px;text-transform:uppercase;text-align:left}tbody td{padding:6px 8px;border-bottom:1px solid #ececec}tbody tr:nth-child(even){background:#f9f9f9}.total-row{background:#1e3a5f;color:#fff;font-weight:700}.footer{margin-top:20px;padding-top:8px;border-top:1px solid #e0e0e0;font-size:9px;color:#999;text-align:center}.no-print{display:none}@media screen{.no-print{display:block;position:fixed;top:10px;right:10px}}';
-  var body='<div class="header"><div>'
-    +(shop.logo?'<img src="'+shop.logo+'" style="width:48px;height:48px;object-fit:contain;border-radius:6px;margin-right:10px;float:left">':'')
-    +'<div class="shop-name">'+(shop.entreprise||'Boutique')+'</div>'
-    +(shop.adresse?'<div style="font-size:10px;color:#666">📍 '+shop.adresse+'</div>':'')
-    +(shop.tel?'<div style="font-size:10px;color:#666">📞 '+shop.tel+'</div>':'')
-    +'</div><div style="text-align:right"><div style="font-weight:700;font-size:12px;color:#1e3a5f">COMMANDE</div><div style="font-size:10px;color:#666">'+dateStr+' à '+timeStr+'</div>'
-    +'<div style="margin-top:8px;padding:8px;background:#f0f4ff;border-radius:6px;text-align:left">'
-    +(fourn.logo?'<img src="'+fourn.logo+'" style="width:36px;height:36px;object-fit:contain;border-radius:6px;float:left;margin-right:8px">':'')
-    +'<div style="font-size:11px;font-weight:700;color:#1e3a5f">'+fourn.nom+'</div>'
-    +(fourn.adresse?'<div style="font-size:10px;color:#666">'+fourn.adresse+'</div>':'')
-    +(fourn.tel?'<div style="font-size:10px;color:#666">'+fourn.tel+'</div>':'')
-    +'</div></div>'
-    +'<div class="title">📋 Commande du '+new Date(cmd.date).toLocaleDateString('fr-FR')+(cmd.note?' — '+cmd.note:'')+'</div>'
-    +'<table><thead><tr><th>Produit</th><th>Qté</th><th>Unité</th><th style="text-align:right">Prix U.</th><th style="text-align:right">Total</th><th>Statut réception</th></tr></thead><tbody>'
-    +cmd.lignes.map(function(l){
-      var statut=l.statut==='recu'?'✅ Reçu ('+l.qteRecue+'/'+l.qte+')':l.statut==='non-recu'?'❌ Non reçu':'⏳ En attente';
-      return '<tr><td style="font-weight:600">'+l.produit+'</td><td style="text-align:center">'+l.qte+'</td><td>'+l.unite+'</td><td style="text-align:right">'+(l.prixU?fmtGNF(l.prixU):'—')+'</td><td style="text-align:right;font-weight:700">'+(l.total?fmtGNF(l.total):'—')+'</td><td>'+statut+'</td></tr>';
-    }).join('')
-    +'<tr class="total-row"><td colspan="4">TOTAL</td><td style="text-align:right">'+fmtGNF(total)+'</td><td></td></tr>'
-    +'</tbody></table>'
-    +(cmd.montantTotal>0?
-      '<table style="width:50%;float:right"><thead><tr><th colspan="2">Situation paiement</th></tr></thead><tbody>'
-      +'<tr><td>Montant total</td><td style="text-align:right;font-weight:700">'+fmtGNF(cmd.montantTotal)+'</td></tr>'
-      +'<tr><td>Montant payé</td><td style="text-align:right;color:#16a34a;font-weight:700">'+fmtGNF(cmd.montantPaye||0)+'</td></tr>'
-      +'<tr style="background:#fee2e2"><td style="font-weight:700">Solde restant</td><td style="text-align:right;font-weight:700;color:#dc2626">'+fmtGNF(cmd.soldeRestant||0)+'</td></tr>'
-      +(cmd.paiements&&cmd.paiements.length?'<tr><td colspan="2" style="padding-top:8px;font-size:10px;color:#666">Paiements: '+cmd.paiements.map(function(p){return new Date(p.date).toLocaleDateString('fr-FR')+': '+fmtGNF(p.montant)+(p.note?' ('+p.note+')':'');}).join(' | ')+'</td></tr>':'')
-      +'</tbody></table><div style="clear:both"></div>':'')
-    +'<div class="footer">Document généré par App AGV — '+(shop.entreprise||'Boutique')+' — '+dateStr+'</div>';
+  var now=new Date();
+  var ds=now.toLocaleDateString('fr-FR');
+  var ts=now.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});
 
-  var win=window.open('','_blank','width=900,height=700'); if(!win){ alert('Autorisez les popups'); return; }
-  win.document.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Commande</title><style>'+css+'</style></head><body>');
-  win.document.write(body);
-  win.document.write('<div class="no-print" style="display:flex;gap:8px"><button onclick="window.print()" style="padding:8px 18px;background:#1e3a5f;color:#fff;border:none;border-radius:6px;font-size:13px;font-weight:700;cursor:pointer">🖨️ Imprimer / PDF</button><button onclick="window.close()" style="padding:8px 14px;background:#eee;color:#333;border:none;border-radius:6px;font-size:13px;cursor:pointer">✕ Fermer</button></div>');
-  win.document.write('</body></html>');
+  // Calcul solde et dettes fournisseur
+  var cmdsFourn=commandes.filter(function(c){ return String(c.fournisseurId)===String(cmd.fournisseurId)&&c.id!==cmd.id; });
+  var soldePrecedent=cmdsFourn.reduce(function(s,c){ return s+(c.soldeRestant||0); },0);
+  var montantCmd=cmd.montantTotal||cmd.totalEstime||0;
+  var soldeTotal=soldePrecedent+(cmd.soldeRestant||0);
+  var totalPaye=cmd.montantPaye||0;
+
+  var css='@page{size:A4 portrait;margin:18mm 15mm}*{margin:0;padding:0;box-sizing:border-box}body{font-family:Arial,sans-serif;font-size:10.5px;color:#111;line-height:1.5}'+
+    '.header{display:grid;grid-template-columns:1fr 1fr;gap:20px;padding-bottom:14px;border-bottom:3px solid #1e3a5f;margin-bottom:16px}'+
+    '.party{display:flex;gap:10px;align-items:flex-start}'+
+    '.party-logo{width:52px;height:52px;object-fit:contain;border-radius:8px;flex-shrink:0}'+
+    '.party-logo-placeholder{width:52px;height:52px;background:#1e3a5f;border-radius:8px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:22px;flex-shrink:0}'+
+    '.party-name{font-size:14px;font-weight:800;color:#1e3a5f;margin-bottom:3px}'+
+    '.party-label{font-size:8px;font-weight:700;text-transform:uppercase;color:#fff;background:#1e3a5f;padding:2px 7px;border-radius:20px;display:inline-block;margin-bottom:5px}'+
+    '.party-info{font-size:9.5px;color:#555;line-height:1.6}'+
+    '.doc-meta{text-align:right;border-left:3px solid #1e3a5f;padding-left:14px;display:flex;flex-direction:column;justify-content:center}'+
+    '.doc-title{font-size:22px;font-weight:900;color:#1e3a5f;letter-spacing:1px;margin-bottom:6px}'+
+    '.doc-num{font-size:11px;color:#666;margin-bottom:2px}'+
+    '.doc-date{font-size:11px;font-weight:700;color:#333}'+
+    '.section-title{font-size:11px;font-weight:800;color:#1e3a5f;text-transform:uppercase;letter-spacing:.5px;border-bottom:2px solid #1e3a5f;padding-bottom:4px;margin:14px 0 8px}'+
+    'table{width:100%;border-collapse:collapse;margin-bottom:12px}'+
+    'thead th{background:#1e3a5f;color:#fff;padding:6px 8px;font-size:9px;text-transform:uppercase;text-align:left;font-weight:700}'+
+    'tbody td{padding:6px 8px;border-bottom:1px solid #e8e8e8;font-size:10px}'+
+    'tbody tr:nth-child(even){background:#f8faff}'+
+    '.total-row{background:#f0f4ff;font-weight:700}'+
+    '.finance-box{border:2px solid #1e3a5f;border-radius:8px;overflow:hidden;margin-top:14px}'+
+    '.finance-title{background:#1e3a5f;color:#fff;padding:7px 12px;font-size:10px;font-weight:700;text-transform:uppercase}'+
+    '.finance-row{display:flex;justify-content:space-between;align-items:center;padding:7px 12px;border-bottom:1px solid #e8e8e8;font-size:10.5px}'+
+    '.finance-row:last-child{border-bottom:none}'+
+    '.finance-total{background:#1e3a5f;color:#fff;font-weight:800;font-size:12px}'+
+    '.finance-alert{background:#fff5f5;color:#dc2626;font-weight:700;font-size:11px}'+
+    '.paiements{margin-top:10px;background:#f0fff4;border:1px solid #bbf7d0;border-radius:6px;padding:8px 12px}'+
+    '.paiement-row{display:flex;justify-content:space-between;font-size:9.5px;padding:2px 0;color:#166534}'+
+    '.note-box{background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:8px 12px;font-size:9.5px;color:#92400e;margin-top:10px}'+
+    '.signatures{display:grid;grid-template-columns:1fr 1fr;gap:40px;margin-top:30px}'+
+    '.sig-box{border-top:1.5px solid #999;padding-top:8px;font-size:9px;color:#666;text-align:center}'+
+    '.footer{margin-top:16px;padding-top:8px;border-top:1px solid #e0e0e0;font-size:8.5px;color:#999;text-align:center}'+
+    '.np{display:none}@media screen{.np{display:flex;position:fixed;top:10px;right:10px;gap:8px;z-index:99}}';
+
+  // ── HEADER : boutique gauche | info doc droite ──
+  var shopLogoHtml=shop.logo?'<img class="party-logo" src="'+shop.logo+'">'
+    :'<div class="party-logo-placeholder">🏪</div>';
+  var fournLogoHtml=fourn.logo?'<img class="party-logo" src="'+fourn.logo+'">'
+    :'<div class="party-logo-placeholder">🏭</div>';
+
+  var body='<div class="header">'
+    // ── COLONNE GAUCHE : Boutique émettrice ──
+    +'<div><div class="party-label">📤 Commandé par</div>'
+    +'<div class="party">'+shopLogoHtml
+    +'<div><div class="party-name">'+(shop.entreprise||'Ma Boutique')+'</div>'
+    +'<div class="party-info">'
+    +(shop.adresse?'📍 '+shop.adresse+'<br>':'')
+    +(shop.tel?'📞 '+shop.tel+'<br>':'')
+    +(shop.email?'✉️ '+shop.email:'')
+    +'</div></div></div></div>'
+    // ── COLONNE DROITE : Fournisseur destinataire ──
+    +'<div style="border-left:2px dashed #c7d2fe;padding-left:16px">'
+    +'<div class="party-label" style="background:#7c3aed">📦 Fournisseur</div>'
+    +'<div class="party">'+fournLogoHtml
+    +'<div><div class="party-name">'+fourn.nom+'</div>'
+    +'<div class="party-info">'
+    +(fourn.adresse?'📍 '+fourn.adresse+'<br>':'')
+    +(fourn.tel?'📞 '+fourn.tel+'<br>':'')
+    +(fourn.email?'✉️ '+fourn.email+'<br>':'')
+    +(fourn.whatsapp?'📱 '+fourn.whatsapp:'')
+    +'</div></div></div>'
+    // N° commande et date
+    +'<div style="margin-top:10px;text-align:right">'
+    +'<div style="font-size:9px;color:#999;text-transform:uppercase">N° Commande</div>'
+    +'<div style="font-size:14px;font-weight:800;color:#1e3a5f">#'+String(cmd.id).slice(-6).toUpperCase()+'</div>'
+    +'<div style="font-size:10px;color:#555;margin-top:2px">📅 '+new Date(cmd.date+'T12:00:00').toLocaleDateString('fr-FR',{weekday:'long',year:'numeric',month:'long',day:'numeric'})+'</div>'
+    +'<div style="font-size:9px;color:#999">Imprimé le '+ds+' à '+ts+'</div>'
+    +'</div></div></div>';
+
+  // ── ARTICLES COMMANDÉS ──
+  var total=0;
+  body+='<div class="section-title">📋 Articles commandés</div>'
+    +'<table><thead><tr>'
+    +'<th style="width:40%">Produit / Article</th>'
+    +'<th>Catégorie</th>'
+    +'<th style="text-align:center">Quantité</th>'
+    +'<th style="text-align:center">Unité</th>'
+    +'<th style="text-align:right">Prix U.</th>'
+    +'<th style="text-align:right">Sous-total</th>'
+    +'<th style="text-align:center">Réception</th>'
+    +'</tr></thead><tbody>';
+
+  (cmd.lignes||[]).forEach(function(l){
+    var recuLabel=l.statut==='recu'?'✅ Reçu ('+l.qteRecue+'/'+l.qte+')':l.statut==='non-recu'?'❌ Non reçu':'⏳ Attente';
+    var sousTotal=(l.prixU||0)*(l.qte||0);
+    total+=sousTotal;
+    body+='<tr>'
+      +'<td style="font-weight:700">'+l.produit+'</td>'
+      +'<td style="color:#666">'+(l.categorie||'—')+'</td>'
+      +'<td style="text-align:center;font-weight:700;color:#2563eb">'+l.qte+'</td>'
+      +'<td style="text-align:center">'+(l.unite||'pcs')+'</td>'
+      +'<td style="text-align:right">'+(l.prixU?fmtGNF(l.prixU):'—')+'</td>'
+      +'<td style="text-align:right;font-weight:700">'+(sousTotal?fmtGNF(sousTotal):'—')+'</td>'
+      +'<td style="text-align:center;font-size:9px">'+recuLabel+'</td>'
+      +'</tr>';
+  });
+
+  // Ligne total
+  if(montantCmd>0){
+    body+='<tr class="total-row">'
+      +'<td colspan="5" style="text-align:right;font-size:11px">TOTAL COMMANDE</td>'
+      +'<td style="text-align:right;font-size:13px;font-weight:800;color:#1e3a5f">'+fmtGNF(montantCmd)+'</td>'
+      +'<td></td></tr>';
+  } else if(total>0){
+    body+='<tr class="total-row">'
+      +'<td colspan="5" style="text-align:right;font-size:11px">TOTAL ESTIMÉ</td>'
+      +'<td style="text-align:right;font-size:13px;font-weight:800;color:#1e3a5f">'+fmtGNF(total)+'</td>'
+      +'<td></td></tr>';
+  }
+  body+='</tbody></table>';
+
+  // ── NOTE ──
+  if(cmd.note){
+    body+='<div class="note-box">📝 Note : '+cmd.note+'</div>';
+  }
+
+  // ── SITUATION FINANCIÈRE ──
+  body+='<div class="finance-box">'
+    +'<div class="finance-title">💰 Situation financière — '+fourn.nom+'</div>';
+
+  if(montantCmd>0){
+    body+='<div class="finance-row"><span>Montant de cette commande</span><span style="font-weight:700">'+fmtGNF(montantCmd)+'</span></div>';
+    body+='<div class="finance-row"><span style="color:#16a34a">✅ Montant payé (cette commande)</span><span style="color:#16a34a;font-weight:700">'+fmtGNF(totalPaye)+'</span></div>';
+    body+='<div class="finance-row"><span>Solde de cette commande</span><span style="font-weight:700;color:#dc2626">'+fmtGNF(cmd.soldeRestant||0)+'</span></div>';
+  }
+  if(soldePrecedent>0){
+    body+='<div class="finance-row"><span>⚠️ Solde des autres commandes</span><span style="font-weight:700;color:#d97706">'+fmtGNF(soldePrecedent)+'</span></div>';
+  }
+  body+='<div class="finance-row finance-total"><span>SOLDE TOTAL DÛ AU FOURNISSEUR</span><span>'+fmtGNF(soldeTotal)+'</span></div>';
+  if(soldeTotal===0){
+    body+='<div class="finance-row" style="background:#f0fff4;color:#16a34a;font-weight:700;font-size:11px"><span>✅ Compte soldé — Aucune dette</span><span></span></div>';
+  }
+  body+='</div>';
+
+  // ── HISTORIQUE PAIEMENTS ──
+  if(cmd.paiements&&cmd.paiements.length){
+    body+='<div class="paiements"><div style="font-size:10px;font-weight:700;color:#166534;margin-bottom:6px">💳 Historique des paiements</div>';
+    cmd.paiements.forEach(function(p){
+      body+='<div class="paiement-row">'
+        +'<span>'+new Date(p.date).toLocaleDateString('fr-FR')+'</span>'
+        +(p.note?'<span>'+p.note+'</span>':'<span></span>')
+        +'<span style="font-weight:700">+'+fmtGNF(p.montant)+'</span>'
+        +'</div>';
+    });
+    body+='</div>';
+  }
+
+  // ── SIGNATURES ──
+  body+='<div class="signatures">'
+    +'<div class="sig-box">Signature & Cachet<br><strong>'+fourn.nom+'</strong></div>'
+    +'<div class="sig-box">Signature & Cachet<br><strong>'+(shop.entreprise||'La Boutique')+'</strong></div>'
+    +'</div>';
+
+  body+='<div class="footer">Commande générée par App AGV — '+(shop.entreprise||'Boutique')+' — '+ds+'</div>';
+
+  var win=window.open('','_blank','width=960,height=750');
+  if(!win){alert('Autorisez les popups pour imprimer');return;}
+  win.document.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Commande #'+String(cmd.id).slice(-6).toUpperCase()+'</title><style>'+css+'</style></head><body>'+body+'<div class="np"><button onclick="window.print()" style="padding:9px 20px;background:#1e3a5f;color:#fff;border:none;border-radius:7px;font-size:13px;font-weight:700;cursor:pointer">🖨️ Imprimer / PDF</button><button onclick="window.close()" style="padding:9px 16px;background:#eee;color:#333;border:none;border-radius:7px;font-size:13px;cursor:pointer">✕ Fermer</button></div></body></html>');
   win.document.close();
-  setTimeout(function(){ win.focus(); win.print(); }, 500);
+  setTimeout(function(){win.focus();win.print();},600);
 }
 
 // ── WhatsApp bilan ──
@@ -11399,6 +11488,28 @@ renderDashboard = function(){
     +'<div class="stat"><div class="stat-label"><div class="dot '+(benNet>=0?'green':'red')+'"></div>Bénéfice net</div><div class="stat-val '+(benNet>=0?'green':'red')+'" style="font-size:18px">'+fmtGNF(benNet)+'</div><div class="stat-sub">CA − achats − dép.</div></div>'
     +'<div class="stat"><div class="stat-label"><div class="dot blue"></div>Valeur stock</div><div class="stat-val" style="font-size:18px">'+fmtGNF(stockVal)+'</div><div class="stat-sub">'+products.length+' références</div></div>'
     +(nbD?'<div class="stat" style="cursor:pointer" onclick="showView(\'dettes\')"><div class="stat-label"><div class="dot red"></div>💳 Dettes en cours</div><div class="stat-val red" style="font-size:18px">'+fmtGNF(tDC+tDP+tDF)+'</div><div class="stat-sub">clients:'+fmtGNF(tDC)+' | perso:'+fmtGNF(tDP)+' | fourn:'+fmtGNF(tDF)+'</div></div>':'');
+
+  // Toujours mettre à jour cat-chart et alert-list
+  var cats={};
+  products.forEach(function(p){ cats[p.categorie]=(cats[p.categorie]||0)+1; });
+  var sorted=Object.entries(cats).sort(function(a,b){return b[1]-a[1];}).slice(0,12);
+  var maxC=sorted[0]?sorted[0][1]:1;
+  var ccEl=document.getElementById('cat-chart');
+  if(ccEl) ccEl.innerHTML=sorted.map(function(e){
+    return '<div class="cat-row"><div class="cat-name" title="'+e[0]+'">'+e[0]+'</div>'
+      +'<div class="cat-bar-wrap"><div class="cat-bar" style="width:'+Math.round(e[1]/maxC*100)+'%"></div></div>'
+      +'<div class="cat-count">'+e[1]+'</div></div>';
+  }).join('');
+
+  var alertItems=products.filter(function(p){return p.stock_initial===0||p.stock_initial<=p.seuil_alerte;})
+    .sort(function(a,b){return a.stock_initial-b.stock_initial;}).slice(0,12);
+  var alEl=document.getElementById('alert-list');
+  if(alEl) alEl.innerHTML=alertItems.length?alertItems.map(function(p){
+    var cl=p.stock_initial===0?'zero':'low';
+    return '<div class="alert-item"><div class="alert-name">'+p.designation+'</div>'
+      +'<div class="alert-stock">'+p.stock_initial+' / '+p.seuil_alerte+'</div>'
+      +'<span class="alert-badge '+cl+'">'+(p.stock_initial===0?'RUPTURE':'ALERTE')+'</span></div>';
+  }).join(''):'<div class="empty-text" style="padding:12px">✅ Aucune alerte</div>';
 };
 
 // ==================== IMPRESSION DASHBOARD PDF ====================
