@@ -9427,6 +9427,10 @@ function agvPrintPDF(type, extraData){
 
 
 
+  // ── DEFAULT : imprimer la vue active via window.print() ──
+  window.print();
+}
+
 // ── Impression ventes Mois ──
 function printVentesMoisPDF(){
   var msel=document.getElementById('v-month-filter');
@@ -9437,7 +9441,6 @@ function printVentesMoisPDF(){
     yr=parseInt(parts[0])||yr;
     mo=parseInt(parts[1])||mo;
   }
-  // Peupler les sélects du rapport mois puis imprimer
   var ryEl=document.getElementById('rpt-mois-year');
   var rmEl=document.getElementById('rpt-mois-month');
   if(ryEl) ryEl.value=String(yr);
@@ -9452,10 +9455,6 @@ function printVentesAnneePDF(){
   var raEl=document.getElementById('rpt-annuel-year');
   if(raEl) raEl.value=String(yr2);
   agvPrintPDF('rapport-annuel');
-}
-
-  // ── DEFAULT : imprimer la vue active via window.print() ──
-  window.print();
 }
 
 
