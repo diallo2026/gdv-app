@@ -900,22 +900,7 @@ function agvLogin(){
 }
 
 // ===== LANCEMENT DE L'APP =====
-function showView(v){
-  document.querySelectorAll('.view').forEach(function(el){ el.classList.remove('active'); });
-  var vel=document.getElementById('view-'+v); if(vel) vel.classList.add('active');
-  document.querySelectorAll('.nav-item').forEach(function(el){
-    var oc=el.getAttribute('onclick')||'';
-    el.classList.toggle('active', oc.indexOf("'"+v+"'")>=0||oc.indexOf('"'+v+'"')>=0);
-  });
-  currentView=v;
-  if(v==='rapport'&&typeof initRapport==='function') initRapport();
-  if(v==='recap'&&typeof initRecapAnnuel==='function') initRecapAnnuel();
-  if(v==='commandes'&&typeof switchCmdTab==='function') switchCmdTab('fourn');
-  if(v==='clients-mgr'&&typeof switchCliTab==='function') switchCliTab('list');
-  if(v==='ventes'&&typeof renderVentesView==='function') renderVentesView();
-  if(v==='depenses'&&typeof renderDepenses==='function') renderDepenses();
-  if(v==='parametres'&&typeof renderParametresBoutique==='function') renderParametresBoutique();
-}
+
 
 function applyRoleUI(){
   var isFond = currentRole==='fondateur';
@@ -2252,7 +2237,7 @@ window.addEventListener('DOMContentLoaded',function(){
             <option value="07">Juillet</option><option value="08">Août</option><option value="09">Septembre</option>
             <option value="10">Octobre</option><option value="11">Novembre</option><option value="12">Décembre</option>
           </select>
-          <button onclick="agvPrintPDF('dashboard')" class="btn-print">🖨️ PDF</button>
+          <button onclick="printDashboardPDF()" class="btn-print">🖨️ PDF</button>
           <span id="dash-date" style="font-size:12px;color:var(--text3)"></span>
         </div>
       </div>
@@ -2401,7 +2386,23 @@ window.addEventListener('DOMContentLoaded',function(){
           </div>
         </div>
         <div class="card">
-          <div class="card-title">Historique des mouvements (session)</div>
+          <!-- Filtres date -->
+          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;align-items:center">
+            <select id="v-year-filter" onchange="renderVentesHistory()" style="padding:5px 8px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text);font-family:inherit;font-size:12px;font-weight:600"></select>
+            <select id="v-month-filter" onchange="renderVentesHistory()" style="padding:5px 8px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text);font-family:inherit;font-size:12px;font-weight:600">
+              <option value="">Tous les mois</option>
+              <option value="01">Janvier</option><option value="02">Février</option><option value="03">Mars</option>
+              <option value="04">Avril</option><option value="05">Mai</option><option value="06">Juin</option>
+              <option value="07">Juillet</option><option value="08">Août</option><option value="09">Septembre</option>
+              <option value="10">Octobre</option><option value="11">Novembre</option><option value="12">Décembre</option>
+            </select>
+            <button id="v-print-day-btn" onclick="printVentesJour()" style="display:none;padding:5px 10px;border:none;border-radius:8px;background:var(--accent);color:#fff;font-family:inherit;font-size:12px;font-weight:700;cursor:pointer">🖨️ Imprimer ce jour</button>
+          </div>
+          <!-- Stats filtre actif -->
+          <div id="v-filter-stats" style="margin-bottom:8px"></div>
+          <!-- Calendrier jours -->
+          <div id="v-day-picker" style="margin-bottom:10px"></div>
+          <div class="card-title">Historique des mouvements</div>
           <div id="ventes-history" style="max-height:400px;overflow-y:auto">
             <div class="empty"><div class="empty-icon">📋</div><div class="empty-text">Aucun mouvement enregistré</div></div>
           </div>
@@ -10881,273 +10882,235 @@ function imprimerBilanClient(clientId){
 
 
 
+
+
+
+
+
 // ==================== FILTRES DASHBOARD ====================
-function _buildYearOpts(selId, defaultAll){
-  var sel=document.getElementById(selId); if(!sel||sel.dataset.init) return;
+function _buildYearOpts(selId, withAll){
+  var sel=document.getElementById(selId); if(!sel||sel.dataset.yinit) return;
   var curY=new Date().getFullYear();
-  var opts=defaultAll?'<option value="">Toutes années</option>':'';
+  var opts=withAll?'<option value="">Toutes années</option>':'';
   for(var y=2040;y>=2020;y--) opts+='<option value="'+y+'"'+(y===curY?' selected':'')+'>'+y+'</option>';
-  sel.innerHTML=opts; if(!defaultAll) sel.value=String(curY);
-  sel.dataset.init='1';
+  sel.innerHTML=opts;
+  if(!withAll) sel.value=String(curY);
+  sel.dataset.yinit='1';
 }
 
-function _buildMonthOptsCurr(selId){
-  var sel=document.getElementById(selId); if(!sel||sel.dataset.init) return;
+function _buildMonthOpts(selId){
+  var sel=document.getElementById(selId); if(!sel||sel.dataset.minit) return;
+  var names=['Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
   var curM=String(new Date().getMonth()+1).padStart(2,'0');
-  // Garder les options statiques du HTML, juste sélectionner le mois courant
-  if(sel.querySelector('option[value="'+curM+'"]')) sel.value=curM;
-  sel.dataset.init='1';
+  var opts='<option value="">Tous les mois</option>';
+  names.forEach(function(n,i){ var v=String(i+1).padStart(2,'0'); opts+='<option value="'+v+'"'+(v===curM?' selected':'')+'>'+n+'</option>'; });
+  sel.innerHTML=opts;
+  sel.dataset.minit='1';
 }
 
-// Surcharge de renderDashboard pour supporter les filtres
-var _origRenderDashboard = typeof renderDashboard==='function' ? renderDashboard : null;
-function renderDashboard(){
-  // Init filtres année/mois dashboard
+function _inPeriod(ds, yr, mo){
+  var d=new Date(ds); if(isNaN(d)) return true;
+  var y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,'0');
+  if(yr && y!==yr) return false;
+  if(mo && m!==mo) return false;
+  return true;
+}
+
+// ==================== DASHBOARD FILTRÉ ====================
+var _dashOrigRender = renderDashboard;
+renderDashboard = function(){
+  // Init filtres
   _buildYearOpts('dash-year-filter', true);
-  var dashYSel=document.getElementById('dash-year-filter');
-  var dashMSel=document.getElementById('dash-month-filter');
-  var filterYr=dashYSel?parseInt(dashYSel.value)||0:0;
-  var filterMo=dashMSel?dashMSel.value||'':'';
+  var ySel=document.getElementById('dash-year-filter');
+  var mSel=document.getElementById('dash-month-filter');
+  var fYr=ySel?parseInt(ySel.value)||0:0;
+  var fMo=mSel?mSel.value||'':'';
 
-  // Filtrer les données selon la sélection
-  function inPeriod(ds){
-    var d=new Date(ds); if(isNaN(d)) return true;
-    var y=d.getFullYear(), mo=String(d.getMonth()+1).padStart(2,'0');
-    if(filterYr && y!==filterYr) return false;
-    if(filterMo && mo!==filterMo) return false;
-    return true;
-  }
-  var periodLabel = filterMo
-    ? ['','Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'][parseInt(filterMo)]+(filterYr?' '+filterYr:'')
-    : filterYr?'Année '+filterYr:'Toutes périodes';
+  // Si aucun filtre actif → comportement original
+  if(!fYr && !fMo){ _dashOrigRender(); return; }
 
-  var total=products.length;
+  // Filtrer les données
+  var sorties=ventes.filter(function(v){ return v.type!=='entree' && _inPeriod(v.ts||v.date, fYr, fMo); });
+  var aprosF=appros.filter(function(a){ return _inPeriod(a.date||a.ts, fYr, fMo); });
+  var depF=depenses.filter(function(d){ return _inPeriod(d.date||d.ts, fYr, fMo); });
+
+  var tCA=sorties.reduce(function(s,v){return s+(v.total||0);},0);
+  var tAppr=aprosF.reduce(function(s,a){return s+(a.montant||0);},0);
+  var tBen=sorties.reduce(function(s,v){return s+(v.benefice!=null?v.benefice:v.total||0);},0);
+  var tDep=depF.reduce(function(s,d){return s+(d.montant||0);},0);
+  var benNet=tBen-tDep;
   var stockVal=products.reduce(function(s,p){return s+(p.total||0);},0);
-  var alerts=products.filter(function(p){return p.stock_initial>0&&p.stock_initial<=p.seuil_alerte;}).length;
-  var rupture=products.filter(function(p){return p.stock_initial===0;}).length;
 
-  var sorties=(filterYr||filterMo)
-    ? ventes.filter(function(v){return v.type!=='entree'&&inPeriod(v.ts||v.date);})
-    : ventes.filter(function(v){return v.type!=='entree';});
-  var aprosF=(filterYr||filterMo)
-    ? appros.filter(function(a){return inPeriod(a.date||a.ts);})
-    : appros;
-  var depF=(filterYr||filterMo)
-    ? depenses.filter(function(d){return inPeriod(d.date||d.ts);})
-    : depenses;
+  var mNames=['','Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
+  var pLabel=fMo?mNames[parseInt(fMo)]+(fYr?' '+fYr:''):fYr?'Année '+fYr:'';
 
-  var totalCA=sorties.reduce(function(s,v){return s+(v.total||0);},0);
-  var totalAppros=aprosF.reduce(function(s,a){return s+(a.montant||0);},0);
-  var totalBen=sorties.reduce(function(s,v){return s+(v.benefice!=null?v.benefice:v.total||0);},0);
-  var totalDep=depF.reduce(function(s,d){return s+(d.montant||0);},0);
-  var beneficeNet=totalBen-totalDep;
+  document.getElementById('nb-alertes').textContent=products.filter(function(p){return p.stock_initial<=p.seuil_alerte;}).length;
+  var dAS=getDettesSolde();
+  var tDC=dAS.filter(function(d){return d.type==='client'&&d.solde>0;}).reduce(function(s,d){return s+d.solde;},0);
+  var tDP=dAS.filter(function(d){return (d.type==='fondateur'||d.type==='gerant')&&d.solde>0;}).reduce(function(s,d){return s+d.solde;},0);
+  var tDF=dAS.filter(function(d){return d.type==='fournisseur'&&d.solde>0;}).reduce(function(s,d){return s+d.solde;},0);
+  var nbD=dAS.filter(function(d){return d.solde>0;}).length;
 
-  document.getElementById('nb-alertes').textContent=alerts+rupture;
-  var dettesAvecSolde=getDettesSolde();
-  var totalDettesC=dettesAvecSolde.filter(function(d){return d.type==='client'&&d.solde>0;}).reduce(function(s,d){return s+d.solde;},0);
-  var totalDettesP=dettesAvecSolde.filter(function(d){return (d.type==='fondateur'||d.type==='gerant')&&d.solde>0;}).reduce(function(s,d){return s+d.solde;},0);
-  var totalDettesF=dettesAvecSolde.filter(function(d){return d.type==='fournisseur'&&d.solde>0;}).reduce(function(s,d){return s+d.solde;},0);
-  var nbDettes=dettesAvecSolde.filter(function(d){return d.solde>0;}).length;
-  var badgeD=document.getElementById('nb-dettes');
-  if(badgeD){badgeD.textContent=nbDettes;badgeD.style.display=nbDettes?'':'none';}
-
-  var periodHtml=filterYr||filterMo?'<div style="font-size:11px;color:var(--text3);margin-bottom:4px">📅 '+periodLabel+'</div>':'';
   var sc=document.getElementById('stats-cards');
-  if(sc) sc.innerHTML=periodHtml
-    +'<div class="stat"><div class="stat-label"><div class="dot blue"></div> Total produits</div><div class="stat-val">'+total+'</div><div class="stat-sub">références actives</div></div>'
-    +'<div class="stat"><div class="stat-label"><div class="dot green"></div> Valeur stock</div><div class="stat-val green" style="font-size:18px">'+fmtGNF(stockVal)+'</div><div class="stat-sub">prix d\'achat</div></div>'
-    +'<div class="stat"><div class="stat-label"><div class="dot purple"></div> Chiffre d\'affaires</div><div class="stat-val purple" style="font-size:18px">'+fmtGNF(totalCA)+'</div><div class="stat-sub">'+sorties.length+' ventes | appros: −'+fmtGNF(totalAppros)+'</div></div>'
-    +'<div class="stat"><div class="stat-label"><div class="dot '+(beneficeNet>=0?'green':'red')+'"></div> Bénéfice net</div><div class="stat-val '+(beneficeNet>=0?'green':'red')+'" style="font-size:18px">'+fmtGNF(beneficeNet)+'</div><div class="stat-sub">CA − achats − dépenses ('+fmtGNF(totalDep)+')</div></div>'
-    +'<div class="stat"><div class="stat-label"><div class="dot red"></div> Dépenses</div><div class="stat-val red" style="font-size:16px">'+fmtGNF(totalDep)+'</div><div class="stat-sub">'+depF.length+' dépenses</div></div>'
-    +(nbDettes?'<div class="stat" style="cursor:pointer" onclick="showView(\'dettes\')"><div class="stat-label"><div class="dot red"></div> 💳 Dettes en cours</div><div class="stat-val red" style="font-size:18px">'+fmtGNF(totalDettesC+totalDettesP+totalDettesF)+'</div><div class="stat-sub">clients: '+fmtGNF(totalDettesC)+' | perso: '+fmtGNF(totalDettesP)+' | fourn: '+fmtGNF(totalDettesF)+'</div></div>':'');
+  if(sc) sc.innerHTML=(pLabel?'<div style="grid-column:1/-1;font-size:12px;font-weight:700;color:var(--text3);padding:6px 0;border-bottom:1px solid var(--border);margin-bottom:8px">📅 Période : '+pLabel+'</div>':'')
+    +'<div class="stat"><div class="stat-label"><div class="dot green"></div>Chiffre d\'affaires</div><div class="stat-val green" style="font-size:18px">'+fmtGNF(tCA)+'</div><div class="stat-sub">'+sorties.length+' ventes</div></div>'
+    +'<div class="stat"><div class="stat-label"><div class="dot blue"></div>Approvisionnements</div><div class="stat-val" style="font-size:18px">'+fmtGNF(tAppr)+'</div><div class="stat-sub">'+aprosF.length+' entrées</div></div>'
+    +'<div class="stat"><div class="stat-label"><div class="dot red"></div>Dépenses</div><div class="stat-val red" style="font-size:18px">'+fmtGNF(tDep)+'</div><div class="stat-sub">'+depF.length+' dépenses</div></div>'
+    +'<div class="stat"><div class="stat-label"><div class="dot '+(benNet>=0?'green':'red')+'"></div>Bénéfice net</div><div class="stat-val '+(benNet>=0?'green':'red')+'" style="font-size:18px">'+fmtGNF(benNet)+'</div><div class="stat-sub">CA − achats − dép.</div></div>'
+    +'<div class="stat"><div class="stat-label"><div class="dot blue"></div>Valeur stock</div><div class="stat-val" style="font-size:18px">'+fmtGNF(stockVal)+'</div><div class="stat-sub">'+products.length+' références</div></div>'
+    +(nbD?'<div class="stat" style="cursor:pointer" onclick="showView(\'dettes\')"><div class="stat-label"><div class="dot red"></div>💳 Dettes en cours</div><div class="stat-val red" style="font-size:18px">'+fmtGNF(tDC+tDP+tDF)+'</div><div class="stat-sub">clients:'+fmtGNF(tDC)+' | perso:'+fmtGNF(tDP)+' | fourn:'+fmtGNF(tDF)+'</div></div>':'');
+};
 
-  // Graphique catégories
-  var cats={};
-  products.forEach(function(p){cats[p.categorie]=(cats[p.categorie]||0)+1;});
-  var sorted=Object.entries(cats).sort(function(a,b){return b[1]-a[1];}).slice(0,12);
-  var maxC=sorted[0]?sorted[0][1]:1;
-  var ccEl=document.getElementById('cat-chart');
-  if(ccEl) ccEl.innerHTML=sorted.map(function(e){
-    return '<div class="cat-row"><div class="cat-name" title="'+e[0]+'">'+e[0]+'</div>'
-      +'<div class="cat-bar-wrap"><div class="cat-bar" style="width:'+Math.round(e[1]/maxC*100)+'%"></div></div>'
-      +'<div class="cat-count">'+e[1]+'</div></div>';
-  }).join('');
-
-  // Alertes
-  var alEl=document.getElementById('alert-list');
-  if(alEl){
-    var alertProds=products.filter(function(p){return p.stock_initial<=p.seuil_alerte;}).sort(function(a,b){return a.stock_initial-b.stock_initial;}).slice(0,15);
-    alEl.innerHTML=alertProds.length?alertProds.map(function(p){
-      var cl=p.stock_initial===0?'red':'amber';
-      return '<div class="alert-item"><div class="alert-name">'+p.designation+'</div><span class="badge badge-'+cl+'">'+(p.stock_initial===0?'RUPTURE':p.stock_initial+' restants')+'</span></div>';
-    }).join(''):'<div class="empty-text" style="padding:16px">✅ Aucune alerte</div>';
-  }
-}
-
-// ==================== FILTRES INVENTAIRE ====================
-// Surcharger renderTable pour supporter les filtres inv-cat-filter et inv-search-filter
-var _origRenderTable = typeof renderTable==='function' ? renderTable : null;
-function renderTable(){
-  var catFilter=(document.getElementById('inv-cat-filter')||{}).value||'';
-  var searchFilter=((document.getElementById('inv-search-filter')||{}).value||'').toLowerCase().trim();
-
-  // Peupler le filtre catégorie
-  var catSel=document.getElementById('inv-cat-filter');
-  if(catSel&&catSel.options.length<=1){
-    var cats=Array.from(new Set(products.map(function(p){return p.categorie||'';}))).filter(Boolean).sort();
-    var opC='<option value="">Toutes catégories</option>'+cats.map(function(ct){return '<option value="'+ct+'">'+ct+'</option>';}).join('');
-    var prevCat=catSel.value;
-    catSel.innerHTML=opC;
-    if(prevCat) catSel.value=prevCat;
-  }
-
-  var filtered=products.filter(function(p){
-    if(catFilter && (p.categorie||'')!==catFilter) return false;
-    if(searchFilter && !(p.designation||'').toLowerCase().includes(searchFilter) && !(p.reference||'').toLowerCase().includes(searchFilter)) return false;
-    return true;
-  });
-
-  // Déléguer au render original mais avec les produits filtrés
-  // Appel de la logique originale avec produits filtrés
-  _renderTableFiltered(filtered);
-}
-
-function _renderTableFiltered(prods){
-  // Si renderTable originale existe, l'appeler simplement
-  // sinon utiliser la logique de base
-  if(typeof _origRenderTable==='function'){
-    // Sauvegarder products, remplacer temporairement, restaurer
-    var allProds=products;
-    products=prods;
-    _origRenderTable();
-    products=allProds;
-  }
-}
-
-// ==================== FILTRES FACTURES (vue principale) ====================
-// Patcher renderFactures pour supporter les filtres année/mois
-var _origRenderFactures = typeof renderFactures==='function' ? renderFactures : null;
-function renderFactures(){
-  _buildYearOpts('fact-year-filter', true);
-
-  var yr=parseInt((document.getElementById('fact-year-filter')||{}).value)||0;
-  var mo=(document.getElementById('fact-month-filter')||{}).value||'';
-  var search=((document.getElementById('fact-search')||{}).value||'').toLowerCase();
-
-  function inPeriod(ds){
-    var d=new Date(ds); if(isNaN(d)) return true;
-    var y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,'0');
-    if(yr && y!==yr) return false;
-    if(mo && m!==mo) return false;
-    return true;
-  }
-  // Appel original si disponible avec filtre
-  if(typeof _origRenderFactures==='function'){
-    var allFact=factureVentes;
-    factureVentes=factureVentes.filter(function(f){
-      if(!inPeriod(f.date||f.ts)) return false;
-      if(search&&!(f.clientNom||'').toLowerCase().includes(search)&&!String(f.id).includes(search)) return false;
-      return true;
-    });
-    _origRenderFactures();
-    factureVentes=allFact;
-  }
-}
-
-// ==================== INIT RAPPORT (améliorer avec mois courant) ====================
-// La fonction initRapport originale est conservée, on ajoute juste l'init des années
-var _origInitRapport = typeof initRapport==='function' ? initRapport : null;
-function initRapport(){
-  // Init sélects année rapport
-  _buildYearOpts('rpt-mois-year', false);
-  _buildYearOpts('rpt-annuel-year', false);
-  // Date du jour par défaut
-  var djEl=document.getElementById('rpt-jour-date');
-  if(djEl&&!djEl.value) djEl.value=new Date().toISOString().slice(0,10);
-  // Mois courant par défaut
-  var mmEl=document.getElementById('rpt-mois-month');
-  if(mmEl&&!mmEl.dataset.init){
-    mmEl.value=String(new Date().getMonth()+1).padStart(2,'0');
-    mmEl.dataset.init='1';
-  }
-  switchRapportTab('jour');
-}
-
-// ==================== RECAP ANNUEL — init année =====================
-var _origInitRecapAnnuel = typeof initRecapAnnuel==='function' ? initRecapAnnuel : null;
-function initRecapAnnuel(){
-  _buildYearOpts('recap-year', false);
-  if(typeof renderRecapAnnuel==='function') renderRecapAnnuel();
-}
-
-// ==================== DASHBOARD PDF ====================
-// Extension agvPrintPDF pour dashboard
-var _origAgvPrintPDF = typeof agvPrintPDF==='function' ? agvPrintPDF : null;
-function agvPrintPDF(type, extraData){
-  if(type==='dashboard'){
-    _printDashboardPDF();
-    return;
-  }
-  if(typeof _origAgvPrintPDF==='function') _origAgvPrintPDF(type, extraData);
-  else window.print();
-}
-
-function _printDashboardPDF(){
+// ==================== IMPRESSION DASHBOARD PDF ====================
+function printDashboardPDF(){
   var shop=window._currentShop||{};
-  var dashYSel=document.getElementById('dash-year-filter');
-  var dashMSel=document.getElementById('dash-month-filter');
-  var filterYr=dashYSel?parseInt(dashYSel.value)||0:0;
-  var filterMo=dashMSel?dashMSel.value||'':'';
-  var periodLabel=filterMo
-    ?['','Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'][parseInt(filterMo)]+(filterYr?' '+filterYr:'')
-    :filterYr?'Année '+filterYr:'Toutes périodes';
+  var ySel=document.getElementById('dash-year-filter');
+  var mSel=document.getElementById('dash-month-filter');
+  var fYr=ySel?parseInt(ySel.value)||0:0;
+  var fMo=mSel?mSel.value||'':'';
+  var mNames=['','Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
+  var pLabel=fMo?mNames[parseInt(fMo)]+(fYr?' '+fYr:''):fYr?'Année '+fYr:'Toutes périodes';
 
-  function inPeriod(ds){
-    var d=new Date(ds); if(isNaN(d)) return true;
-    var y=d.getFullYear(), mo=String(d.getMonth()+1).padStart(2,'0');
-    if(filterYr&&y!==filterYr) return false;
-    if(filterMo&&mo!==filterMo) return false;
-    return true;
-  }
-
-  var sorties=(filterYr||filterMo)?ventes.filter(function(v){return v.type!=='entree'&&inPeriod(v.ts||v.date);}):ventes.filter(function(v){return v.type!=='entree';});
-  var aprosF=(filterYr||filterMo)?appros.filter(function(a){return inPeriod(a.date||a.ts);}):appros;
-  var depF=(filterYr||filterMo)?depenses.filter(function(d){return inPeriod(d.date||d.ts);}):depenses;
-  var totalCA=sorties.reduce(function(s,v){return s+(v.total||0);},0);
-  var totalAppr=aprosF.reduce(function(s,a){return s+(a.montant||0);},0);
-  var totalBen=sorties.reduce(function(s,v){return s+(v.benefice!=null?v.benefice:v.total||0);},0);
-  var totalDep=depF.reduce(function(s,d){return s+(d.montant||0);},0);
-  var benNet=totalBen-totalDep;
+  var sorties=(fYr||fMo)?ventes.filter(function(v){return v.type!=='entree'&&_inPeriod(v.ts||v.date,fYr,fMo);}):ventes.filter(function(v){return v.type!=='entree';});
+  var aprosF=(fYr||fMo)?appros.filter(function(a){return _inPeriod(a.date||a.ts,fYr,fMo);}):appros;
+  var depF=(fYr||fMo)?depenses.filter(function(d){return _inPeriod(d.date||d.ts,fYr,fMo);}):depenses;
+  var tCA=sorties.reduce(function(s,v){return s+(v.total||0);},0);
+  var tAppr=aprosF.reduce(function(s,a){return s+(a.montant||0);},0);
+  var tBen=sorties.reduce(function(s,v){return s+(v.benefice!=null?v.benefice:v.total||0);},0);
+  var tDep=depF.reduce(function(s,d){return s+(d.montant||0);},0);
+  var benNet=tBen-tDep;
   var stockVal=products.reduce(function(s,p){return s+(p.total||0);},0);
   var now=new Date(); var ds=now.toLocaleDateString('fr-FR'); var ts=now.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});
-
-  var css='@page{size:A4;margin:15mm 12mm}*{margin:0;padding:0;box-sizing:border-box}body{font-family:Arial,sans-serif;font-size:11px;color:#111;line-height:1.4}.header{display:flex;justify-content:space-between;padding-bottom:10px;border-bottom:2px solid #1e3a5f;margin-bottom:16px}.title{font-size:14px;font-weight:700;color:#1e3a5f;margin:12px 0 10px;text-transform:uppercase;border-bottom:1px solid #e0e0e0;padding-bottom:6px}.stat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px}.stat-box{background:#f5f7fa;border:1px solid #e0e6ef;border-radius:8px;padding:10px;text-align:center}.stat-label{font-size:9px;color:#666;text-transform:uppercase;margin-bottom:4px}.stat-val{font-size:16px;font-weight:700;color:#1e3a5f}.green{color:#16a34a}.red{color:#dc2626}.footer{margin-top:20px;padding-top:8px;border-top:1px solid #e0e0e0;font-size:9px;color:#999;text-align:center}.no-print{display:none}@media screen{.no-print{display:block;position:fixed;top:10px;right:10px}}';
-
-  var body='<div class="header"><div>'
-    +(shop.logo?'<img src="'+shop.logo+'" style="width:48px;height:48px;object-fit:contain;border-radius:6px;float:left;margin-right:10px">':'')
-    +'<div style="font-size:16px;font-weight:700;color:#1e3a5f">'+(shop.entreprise||'Boutique')+'</div>'
-    +(shop.adresse?'<div style="font-size:10px;color:#666">📍 '+shop.adresse+'</div>':'')
-    +(shop.tel?'<div style="font-size:10px;color:#666">📞 '+shop.tel+'</div>':'')
-    +'<div style="clear:both"></div></div>'
-    +'<div style="text-align:right"><div style="font-weight:700;font-size:14px;color:#1e3a5f">TABLEAU DE BORD</div>'
-    +'<div style="font-size:13px;font-weight:700;color:#666">'+periodLabel+'</div>'
-    +'<div style="font-size:10px;color:#666">Imprimé le '+ds+' à '+ts+'</div></div></div>'
-    +'<div class="title">📊 Indicateurs — '+periodLabel+'</div>'
-    +'<div class="stat-grid">'
-    +'<div class="stat-box"><div class="stat-label">Chiffre d\'affaires</div><div class="stat-val green">'+fmtGNF(totalCA)+'</div><div style="font-size:10px;color:#666">'+sorties.length+' ventes</div></div>'
-    +'<div class="stat-box"><div class="stat-label">Approvisionnements</div><div class="stat-val">'+fmtGNF(totalAppr)+'</div><div style="font-size:10px;color:#666">'+aprosF.length+' entrées</div></div>'
-    +'<div class="stat-box"><div class="stat-label">Dépenses</div><div class="stat-val red">'+fmtGNF(totalDep)+'</div><div style="font-size:10px;color:#666">'+depF.length+' dépenses</div></div>'
-    +'<div class="stat-box"><div class="stat-label">Bénéfice net</div><div class="stat-val '+(benNet>=0?'green':'red')+'">'+fmtGNF(benNet)+'</div><div style="font-size:10px;color:#666">CA − achats − dép.</div></div>'
-    +'<div class="stat-box"><div class="stat-label">Valeur stock</div><div class="stat-val">'+fmtGNF(stockVal)+'</div><div style="font-size:10px;color:#666">'+products.length+' références</div></div>'
-    +'<div class="stat-box"><div class="stat-label">Alertes stock</div><div class="stat-val red">'+products.filter(function(p){return p.stock_initial<=p.seuil_alerte;}).length+'</div><div style="font-size:10px;color:#666">produits</div></div>'
+  var css='@page{size:A4;margin:15mm 12mm}*{margin:0;padding:0;box-sizing:border-box}body{font-family:Arial,sans-serif;font-size:11px;color:#111;line-height:1.4}.hdr{display:flex;justify-content:space-between;padding-bottom:10px;border-bottom:2px solid #1e3a5f;margin-bottom:16px}.sn{font-size:16px;font-weight:700;color:#1e3a5f}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px}.box{background:#f5f7fa;border:1px solid #dce;border-radius:8px;padding:10px;text-align:center}.lbl{font-size:9px;color:#666;text-transform:uppercase;margin-bottom:4px}.val{font-size:16px;font-weight:700;color:#1e3a5f}.green{color:#16a34a!important}.red{color:#dc2626!important}.foot{margin-top:20px;padding-top:8px;border-top:1px solid #e0e0e0;font-size:9px;color:#999;text-align:center}';
+  var body='<div class="hdr"><div>'+(shop.logo?'<img src="'+shop.logo+'" style="width:48px;height:48px;object-fit:contain;border-radius:6px;float:left;margin-right:10px">':'')+'<div class="sn">'+(shop.entreprise||'Boutique')+'</div>'+(shop.adresse?'<div style="font-size:10px;color:#666">'+shop.adresse+'</div>':'')+(shop.tel?'<div style="font-size:10px;color:#666">'+shop.tel+'</div>':'')+'<div style="clear:both"></div></div>'
+    +'<div style="text-align:right"><div style="font-weight:700;font-size:14px;color:#1e3a5f">TABLEAU DE BORD</div><div style="font-size:13px;font-weight:700;color:#666">'+pLabel+'</div><div style="font-size:10px;color:#666">'+ds+' à '+ts+'</div></div></div>'
+    +'<div class="grid">'
+    +'<div class="box"><div class="lbl">Chiffre d\'affaires</div><div class="val green">'+fmtGNF(tCA)+'</div><div style="font-size:10px;color:#666">'+sorties.length+' ventes</div></div>'
+    +'<div class="box"><div class="lbl">Approvisionnements</div><div class="val">'+fmtGNF(tAppr)+'</div><div style="font-size:10px;color:#666">'+aprosF.length+' entrées</div></div>'
+    +'<div class="box"><div class="lbl">Dépenses</div><div class="val red">'+fmtGNF(tDep)+'</div><div style="font-size:10px;color:#666">'+depF.length+' dépenses</div></div>'
+    +'<div class="box"><div class="lbl">Bénéfice net</div><div class="val '+(benNet>=0?'green':'red')+'">'+fmtGNF(benNet)+'</div></div>'
+    +'<div class="box"><div class="lbl">Valeur stock</div><div class="val">'+fmtGNF(stockVal)+'</div><div style="font-size:10px;color:#666">'+products.length+' réf.</div></div>'
+    +'<div class="box"><div class="lbl">Alertes stock</div><div class="val red">'+products.filter(function(p){return p.stock_initial<=p.seuil_alerte;}).length+'</div></div>'
     +'</div>'
-    +'<div class="footer">Document généré par App AGV — '+(shop.entreprise||'Boutique')+' — '+ds+'</div>';
-
+    +'<div class="foot">Généré par App AGV — '+(shop.entreprise||'Boutique')+' — '+ds+'</div>';
   var win=window.open('','_blank','width=900,height=700'); if(!win){alert('Autorisez les popups');return;}
-  win.document.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Tableau de bord</title><style>'+css+'</style></head><body>'+body+'<div class="no-print" style="display:flex;gap:8px"><button onclick="window.print()" style="padding:8px 18px;background:#1e3a5f;color:#fff;border:none;border-radius:6px;font-size:13px;font-weight:700;cursor:pointer">🖨️ Imprimer / PDF</button><button onclick="window.close()" style="padding:8px 14px;background:#eee;color:#333;border:none;border-radius:6px;font-size:13px;cursor:pointer">✕ Fermer</button></div></body></html>');
-  win.document.close();
-  setTimeout(function(){win.focus();win.print();},500);
+  win.document.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Dashboard</title><style>'+css+'</style></head><body>'+body+'<div style="position:fixed;top:10px;right:10px;display:flex;gap:8px"><button onclick="window.print()" style="padding:8px 18px;background:#1e3a5f;color:#fff;border:none;border-radius:6px;font-size:13px;font-weight:700;cursor:pointer">🖨️ Imprimer / PDF</button><button onclick="window.close()" style="padding:8px 14px;background:#eee;color:#333;border:none;border-radius:6px;font-size:13px;cursor:pointer">✕ Fermer</button></div></body></html>');
+  win.document.close(); setTimeout(function(){win.focus();win.print();},500);
 }
+
+// ==================== INVENTAIRE : filtre catégorie + recherche ====================
+function initInvFilters(){
+  var catSel=document.getElementById('inv-cat-filter');
+  if(catSel && catSel.options.length<=1){
+    var cats=Array.from(new Set(products.map(function(p){return p.categorie||'';}))).filter(Boolean).sort();
+    catSel.innerHTML='<option value="">Toutes catégories</option>'+cats.map(function(ct){return '<option value="'+ct+'">'+ct+'</option>';}).join('');
+  }
+}
+
+// ==================== VENTES JOURNALIÈRES — impression par date ====================
+// printVentesJour utilise _vFilterDay ou la date du jour
+// La fonction est déjà définie, on la re-câble sur agvPrintPDF
+var _origPrintVentesJour = typeof printVentesJour==='function' ? printVentesJour : null;
+function printVentesJour(){
+  var dateTarget = (typeof _vFilterDay!=='undefined' && _vFilterDay) ? _vFilterDay : new Date().toISOString().slice(0,10);
+  agvPrintPDF('rapport-jour', dateTarget);
+}
+
+// ==================== DÉPENSES — filtre mois courant ====================
+// La fonction renderDepenses lit déjà dep-month-filter et dep-year-filter
+// On ajoute juste l'init des sélects avec les bonnes années
+function initDepFilters(){
+  _buildYearOpts('dep-year-filter', false);
+  // Initialiser mois courant si pas encore fait
+  var mSel=document.getElementById('dep-month-filter');
+  if(mSel && !mSel.dataset.minit){
+    var curM=String(new Date().getMonth()+1).padStart(2,'0');
+    // Chercher et sélectionner le mois courant
+    for(var i=0; i<mSel.options.length; i++){
+      if(mSel.options[i].value===curM){ mSel.selectedIndex=i; break; }
+    }
+    mSel.dataset.minit='1';
+  }
+}
+
+// ==================== ENTRÉES — afficher prix ====================
+// renderEntrees est ligne 4892, lire son contenu pour voir si prix est affiché
+// La fonction doit afficher nouveauPrix dans le tableau
+// On override renderEntrees pour s'assurer que le prix s'affiche
+var _origRenderEntrees = typeof renderEntrees==='function' ? renderEntrees : null;
+
+// ==================== INIT GLOBAL DES FILTRES ====================
+// Appelé depuis showView pour initialiser les filtres selon la vue
+var _origShowView2 = showView;
+showView = function(v){
+  _origShowView2(v);
+  // Init filtres après changement de vue
+  setTimeout(function(){
+    if(v==='dashboard'){ _buildYearOpts('dash-year-filter', true); }
+    if(v==='inventaire'){ initInvFilters(); }
+    if(v==='depenses'){ initDepFilters(); }
+    if(v==='rapport'){ 
+      _buildYearOpts('rpt-mois-year', false);
+      _buildYearOpts('rpt-annuel-year', false);
+    }
+    if(v==='recap'){ _buildYearOpts('recap-year', false); }
+    if(v==='factures'){ _buildYearOpts('fact-year-filter', true); }
+  }, 50);
+};
+
+// ==================== FACTURES — filtre mois courant ====================
+// Patcher renderFactures (la version ligne 7889) pour lire fact-year-filter et fact-month-filter
+var _origRenderFactures2 = renderFactures;
+renderFactures = function(){
+  _buildYearOpts('fact-year-filter', true);
+  var fYr=parseInt((document.getElementById('fact-year-filter')||{}).value)||0;
+  var fMo=(document.getElementById('fact-month-filter')||{}).value||'';
+  var search=((document.getElementById('fact-search')||{}).value||'').toLowerCase();
+
+  if(!fYr && !fMo){ _origRenderFactures2(); return; }
+
+  // Filtrer temporairement factureVentes
+  var allFV=factureVentes;
+  factureVentes=factureVentes.filter(function(f){
+    return _inPeriod(f.date||f.ts||'', fYr, fMo);
+  });
+  _origRenderFactures2();
+  factureVentes=allFV;
+};
+
+// ==================== APPROS — init filtre année ====================
+function initApproFilters(){
+  _buildYearOpts('appro-year-filter', false);
+}
+
+// ==================== RÉCAP ANNUEL — init année ====================
+var _origInitRecapAnnuel2 = typeof initRecapAnnuel==='function' ? initRecapAnnuel : null;
+initRecapAnnuel = function(){
+  _buildYearOpts('recap-year', false);
+  if(typeof renderRecapAnnuel==='function') renderRecapAnnuel();
+};
+
+// ==================== RAPPORT — init ====================
+var _origInitRapport2 = typeof initRapport==='function' ? initRapport : null;
+initRapport = function(){
+  var djEl=document.getElementById('rpt-jour-date');
+  if(djEl && !djEl.value) djEl.value=new Date().toISOString().slice(0,10);
+  _buildYearOpts('rpt-mois-year', false);
+  _buildYearOpts('rpt-annuel-year', false);
+  var mmEl=document.getElementById('rpt-mois-month');
+  if(mmEl && !mmEl.dataset.minit){
+    mmEl.value=String(new Date().getMonth()+1).padStart(2,'0');
+    mmEl.dataset.minit='1';
+  }
+  if(typeof switchRapportTab==='function') switchRapportTab('jour');
+};
+
+// ==================== VENTES — bouton PDF ====================
+function printVentesFiltrePDF(){
+  agvPrintPDF('ventes');
+}
+
+console.log('[AGV] Filtres & impressions initialisés');
 
 </script>
 <!-- ========== MODAL VENTE RAPIDE ========== -->
