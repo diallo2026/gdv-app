@@ -8261,9 +8261,15 @@ function renderVentesHistory(){
     }
     msel.innerHTML=opM;
     var targetM=selY+'-'+curM;
-    if(prevM && msel.querySelector('option[value="'+prevM+'"]')) msel.value=prevM;
-    else if(msel.querySelector('option[value="'+targetM+'"]')) msel.value=targetM;
-    else msel.value=targetM;
+    // Conserver la sélection précédente (y compris '' = tous les mois)
+    // Ne mettre le mois courant que si le select n'avait aucune valeur du tout (premiere init)
+    if(prevM !== null && msel.querySelector('option[value="'+prevM+'"]')){
+      msel.value=prevM; // Restaurer (inclus '' = tous les mois)
+    } else if(msel.querySelector('option[value="'+targetM+'"]')){
+      msel.value=targetM; // Mois courant par defaut (premiere ouverture)
+    } else {
+      msel.value=''; // Fallback: tous les mois
+    }
   }
 
   var mk=msel?msel.value:'';
@@ -8289,11 +8295,16 @@ function renderVentesHistory(){
     return true; // Fondateur voit tout
   });
 
-  // Calendrier jours
-  if(ysel && msel){
+  // Calendrier jours — seulement si un mois est sélectionné
+  if(ysel && msel && msel.value){
     var selYC=parseInt(ysel.value)||curY;
-    var selMC=parseInt(msel.value.split('-')[1])||parseInt(curM);
+    var parts=msel.value.split('-');
+    var selMC=parts[1]?parseInt(parts[1]):parseInt(curM);
     renderVDayPicker(selYC, String(selMC).padStart(2,'0'));
+  } else {
+    // Pas de mois sélectionné → vider le calendrier
+    var dpEl=document.getElementById('v-day-picker');
+    if(dpEl) dpEl.innerHTML='';
   }
 
   // Stats
