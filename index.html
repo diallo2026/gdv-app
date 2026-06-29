@@ -10101,6 +10101,50 @@ function renderCommandesList(){
         }).join('')
         +'</div>':''
       )
+      // ── Récapitulatif solde fournisseur en bas de carte ──
+      +(function(){
+        // Recalculer le solde total du fournisseur en temps réel
+        var toutesCmd=commandes.filter(function(c2){
+          return String(c2.fournisseurId)===String(cmd.fournisseurId);
+        });
+        var soldeTotCmd=toutesCmd.reduce(function(s,c2){return s+(c2.soldeRestant||0);},0);
+        // Dettes de l'onglet gestion dettes
+        var fournNom=(fourn?fourn.nom:cmd.fournisseurNom||'');
+        var dettesGestion=getDettesSolde().filter(function(d){
+          return d.type==='fournisseur'&&d.nom===fournNom&&d.solde>0;
+        });
+        var soldeTotGestion=dettesGestion.reduce(function(s,d){return s+d.solde;},0);
+        var soldeGlobal=soldeTotCmd+soldeTotGestion;
+        var html='<div style="margin-top:14px;padding-top:12px;border-top:2px solid var(--border)">'
+          +'<div style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;margin-bottom:8px">📊 Solde global — '+(fournNom||'Fournisseur')+'</div>'
+          +'<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">'
+          +'<div style="background:var(--surface2);border-radius:8px;padding:8px;text-align:center">'
+          +'<div style="font-size:10px;color:var(--text3);text-transform:uppercase;margin-bottom:3px">Commandes</div>'
+          +'<div style="font-size:14px;font-weight:800;color:'+(soldeTotCmd>0?'var(--red)':'var(--green)')+'">'+fmtGNF(soldeTotCmd)+'</div>'
+          +'<div style="font-size:9px;color:var(--text3)">'+toutesCmd.filter(function(c2){return (c2.soldeRestant||0)>0;}).length+' impayée(s)</div>'
+          +'</div>'
+          +(soldeTotGestion>0
+            ?'<div style="background:rgba(249,115,22,0.08);border:1px solid #f97316;border-radius:8px;padding:8px;text-align:center">'
+            +'<div style="font-size:10px;color:var(--text3);text-transform:uppercase;margin-bottom:3px">Dettes enregistrées</div>'
+            +'<div style="font-size:14px;font-weight:800;color:#f97316">'+fmtGNF(soldeTotGestion)+'</div>'
+            +'<div style="font-size:9px;color:var(--text3)">'+dettesGestion.length+' entrée(s)</div>'
+            +'</div>'
+            :'<div style="background:rgba(22,163,74,0.08);border:1px solid var(--green);border-radius:8px;padding:8px;text-align:center">'
+            +'<div style="font-size:10px;color:var(--text3);text-transform:uppercase;margin-bottom:3px">Dettes enregistrées</div>'
+            +'<div style="font-size:14px;font-weight:800;color:var(--green)">'+fmtGNF(0)+'</div>'
+            +'<div style="font-size:9px;color:var(--green)">✅ Aucune</div>'
+            +'</div>'
+          )
+          +'<div style="background:'+(soldeGlobal>0?'rgba(239,68,68,0.12)':'rgba(22,163,74,0.12)')+';border:2px solid '+(soldeGlobal>0?'var(--red)':'var(--green)')+';border-radius:8px;padding:8px;text-align:center">'
+          +'<div style="font-size:10px;color:var(--text3);text-transform:uppercase;margin-bottom:3px">SOLDE TOTAL DÛ</div>'
+          +'<div style="font-size:16px;font-weight:900;color:'+(soldeGlobal>0?'var(--red)':'var(--green)')+'">'+fmtGNF(soldeGlobal)+'</div>'
+          +(soldeGlobal===0?'<div style="font-size:10px;color:var(--green);font-weight:700">✅ Compte soldé</div>':'<div style="font-size:9px;color:var(--text3)">toutes dettes confondues</div>')
+          +'</div>'
+          +'</div>'
+          +(soldeGlobal>0?'<div style="margin-top:8px;text-align:right"><button onclick="openReglerDetteModal(\''+cmd.fournisseurId+'\')" style="padding:5px 14px;border:none;border-radius:8px;background:var(--red);color:#fff;font-family:inherit;font-size:12px;font-weight:700;cursor:pointer">💳 Régler la dette ('+fmtGNF(soldeGlobal)+')</button></div>':'')
+          +'</div>';
+        return html;
+      })()
       +'</div>';
   }).join('');
 }
