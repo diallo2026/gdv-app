@@ -9777,264 +9777,28 @@ function printVentesJourPDF(){
   }
   body+='<div class="foot">Rapport généré par App AGV — '+shopNom+' — '+ds+'</div>';
 
-  var html='<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Rapport '+dk+'</title><style>'+css+'</style></head><body>'+body+'<div class="np"><button onclick="window.print()" style="padding:8px 18px;background:#1e3a5f;color:#fff;border:none;border-radius:6px;font-size:13px;font-weight:700;cursor:pointer">🖨️ PDF A4</button><button onclick="agvCapturJPEG()" style="padding:8px 14px;background:#7c3aed;color:#fff;border:none;border-radius:6px;font-size:13px;cursor:pointer">🖼️ JPEG</button><button onclick="window.close()" style="padding:8px 14px;background:#eee;color:#333;border:none;border-radius:6px;font-size:13px;cursor:pointer">✕ Fermer</button></div><script>function agvCapturJPEG(){if(typeof html2canvas!=="undefined"){html2canvas(document.body,{scale:2,backgroundColor:"#fff"}).then(function(c){var a=document.createElement("a");a.href=c.toDataURL("image/jpeg",0.95);a.download="rapport.jpg";a.click();});}else{alert("Cliquez PDF puis Enregistrer comme image.");}}<\/script><script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"><\/script></body></html>';
-  var blob=new Blob([html],{type:'text/html'});
-  var url=URL.createObjectURL(blob);
-  var win=window.open(url,'_blank');
-  if(!win){
-    // Fallback: iframe dans la page courante
-    var ifr=document.getElementById('_agv_print_frame');
-    if(!ifr){ ifr=document.createElement('iframe'); ifr.id='_agv_print_frame'; ifr.style.cssText='position:fixed;top:0;left:0;width:100%;height:100%;z-index:9999;border:none;background:#fff'; document.body.appendChild(ifr); }
-    ifr.src=url;
-    return;
-  }
-  setTimeout(function(){win.focus();win.print();URL.revokeObjectURL(url);},800);
-}
-function initRecapAnnuel(){
-  var sel=document.getElementById('recap-year');
-  if(sel&&!sel.dataset.init){
-    var curY=new Date().getFullYear();
-    var opts='';
-    for(var y=2040;y>=2020;y--) opts+='<option value="'+y+'"'+(y===curY?' selected':'')+'>'+y+'</option>';
-    sel.innerHTML=opts;
-    sel.dataset.init='1';
-  }
-  renderRecapAnnuel();
-}
+  // Utiliser iframe caché pour impression — jamais bloqué car dans la même page
+  var fullHtml='<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Rapport '+dk+'</title>'
+    +'<style>'+css+'@media print{.np{display:none!important}}</style>'
+    +'<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"><\/script>'
+    +'<script>function agvJpegCapture(){if(typeof html2canvas!=="undefined"){html2canvas(document.body,{scale:2,backgroundColor:"#fff"}).then(function(cv){var a=document.createElement("a");a.href=cv.toDataURL("image/jpeg",0.95);a.download="rapport.jpg";a.click();});}else{setTimeout(agvJpegCapture,500);}}<\/script><\/head><body>'+body
+    +'<div class="np" style="position:fixed;top:10px;right:10px;display:flex;gap:8px;z-index:99">'
+    +'<button onclick="window.print()" style="padding:8px 18px;background:#1e3a5f;color:#fff;border:none;border-radius:6px;font-size:13px;font-weight:700;cursor:pointer">🖨️ PDF A4<\/button>'
+    +'<button onclick="agvJpegCapture()" style="padding:8px 14px;background:#7c3aed;color:#fff;border:none;border-radius:6px;font-size:13px;cursor:pointer">🖼️ JPEG<\/button>'
+    +'<button onclick="document.getElementById(\'_agv_pf\').remove()" style="padding:8px 14px;background:#dc2626;color:#fff;border:none;border-radius:6px;font-size:13px;cursor:pointer">✕ Fermer<\/button>'
+    +'<\/div><\/body><\/html>';
 
-function renderRecapAnnuel(){
-  var el = document.getElementById('recap-content');
-  if(!el) return;
-
-  if(currentRole !== 'fondateur'){
-    el.innerHTML = '<div class="empty" style="padding:60px 20px;text-align:center">'
-      +'<div style="font-size:48px;margin-bottom:16px">🔒</div>'
-      +'<div style="font-size:16px;font-weight:700;color:var(--text);margin-bottom:8px">Accès réservé au Fondateur</div>'
-      +'<div style="font-size:13px;color:var(--text3)">Le récapitulatif annuel contient des informations confidentielles.</div>'
-      +'</div>';
-    return;
-  }
-
-  var yr=parseInt((document.getElementById('recap-year')||{}).value)||new Date().getFullYear();
-  function inY(ds){var d=new Date(ds);return !isNaN(d)&&d.getFullYear()===yr;}
-
-  var yVentes   = ventes.filter(function(v){return v.type!=='entree'&&inY(v.ts||v.date);});
-  var yDep      = depenses.filter(function(d){return inY(d.date||d.ts);});
-  var yAppros   = appros.filter(function(a){return inY(a.date||a.ts);});
-  var tCA       = yVentes.reduce(function(s,v){return s+(v.total||0);},0);
-  var tBen      = yVentes.reduce(function(s,v){return s+(v.benefice!=null?v.benefice:v.total||0);},0);
-  var tDep      = yDep.reduce(function(s,d){return s+(d.montant||0);},0);
-  var tAppro    = yAppros.reduce(function(s,a){return s+(a.montant||0);},0);
-  var stockVal  = products.reduce(function(s,p){return s+(p.total||0);},0);
-  var benNet    = tBen-tDep;
-
-  var mNamesLong=['Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
-  var mNamesShort=['Jan','Fév','Mar','Avr','Mai','Jun','Jul','Août','Sep','Oct','Nov','Déc'];
-
-  var byM=Array.from({length:12},function(_,i){return {ca:0,dep:0,appro:0,nv:0};});
-  yVentes.forEach(function(v){var mi=new Date(v.ts||v.date).getMonth(); byM[mi].ca+=v.total||0; byM[mi].nv++;});
-  yDep.forEach(function(d){byM[new Date(d.date||d.ts).getMonth()].dep+=d.montant||0;});
-  yAppros.forEach(function(a){byM[new Date(a.date||a.ts).getMonth()].appro+=a.montant||0;});
-
-  var maxM=Math.max.apply(null,byM.map(function(m){return Math.max(m.ca,m.dep);})||[1])||1;
-  var bW=28,bGap=4,svgW=(bW*2+bGap+4)*12+20,svgH=130;
-  var barsSVG=byM.map(function(m,i){
-    var x=10+i*(bW*2+bGap+4);
-    var hCA=Math.round(m.ca/maxM*(svgH-30));
-    var hDep=Math.round(m.dep/maxM*(svgH-30));
-    return '<rect x="'+x+'" y="'+(svgH-25-hCA)+'" width="'+bW+'" height="'+hCA+'" rx="3" fill="#16a34a" opacity=".85"/>'
-      +'<rect x="'+(x+bW+2)+'" y="'+(svgH-25-hDep)+'" width="'+bW+'" height="'+hDep+'" rx="3" fill="#dc2626" opacity=".7"/>'
-      +'<text x="'+(x+bW)+'" y="'+(svgH-5)+'" text-anchor="middle" font-size="8" fill="var(--text3)" font-family="sans-serif">'+mNamesShort[i]+'</text>';
-  }).join('');
-  var svg='<svg viewBox="0 0 '+svgW+' '+svgH+'" style="width:100%;max-height:'+svgH+'px">'
-    +'<text x="12" y="14" font-size="9" fill="#16a34a" font-family="sans-serif">■ CA</text>'
-    +'<text x="50" y="14" font-size="9" fill="#dc2626" font-family="sans-serif">■ Dépenses</text>'
-    +barsSVG+'</svg>';
-
-  var html='<div class="stats" style="margin-bottom:20px">'
-    +'<div class="stat"><div class="stat-label"><div class="dot green"></div>Ventes totales</div><div class="stat-val green" style="font-size:18px">'+fmtGNF(tCA)+'</div><div class="stat-sub">'+yVentes.length+' ventes</div></div>'
-    +'<div class="stat"><div class="stat-label"><div class="dot red"></div>Dépenses</div><div class="stat-val red" style="font-size:18px">'+fmtGNF(tDep)+'</div><div class="stat-sub">'+yDep.length+' dép.</div></div>'
-    +'<div class="stat"><div class="stat-label"><div class="dot blue"></div>Approvisionnement</div><div class="stat-val blue" style="font-size:18px">'+fmtGNF(tAppro)+'</div><div class="stat-sub">'+yAppros.length+' appros</div></div>'
-    +'<div class="stat"><div class="stat-label"><div class="dot blue"></div>Valeur stock</div><div class="stat-val blue" style="font-size:18px">'+fmtGNF(stockVal)+'</div></div>'
-    +'<div class="stat"><div class="stat-label"><div class="dot '+(benNet>=0?'green':'red')+'"></div>Bénéfice net</div><div class="stat-val '+(benNet>=0?'green':'red')+'" style="font-size:18px">'+fmtGNF(benNet)+'</div><div class="stat-sub">CA − achats − dép.</div></div>'
-    +'</div>';
-
-  html+='<div class="card" style="margin-bottom:16px"><div class="card-title">📊 Évolution CA vs Dépenses — '+yr+'</div>'+svg+'</div>';
-
-  html+='<div class="card"><div class="card-title">📆 Détail mensuel '+yr+'</div>'
-    +'<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px">'
-    +'<thead><tr style="background:var(--surface2)">'
-    +'<th style="padding:8px;text-align:left">Mois</th>'
-    +'<th style="padding:8px;text-align:right">Ventes</th>'
-    +'<th style="padding:8px;text-align:right">CA</th>'
-    +'<th style="padding:8px;text-align:right">Dépenses</th>'
-    +'<th style="padding:8px;text-align:right">Appros</th>'
-    +'<th style="padding:8px;text-align:right">Résultat net</th>'
-    +'</tr></thead><tbody>';
-
-  byM.forEach(function(m,i){
-    var net=m.ca-m.dep-m.appro;
-    html+='<tr style="border-bottom:1px solid var(--border)">'
-      +'<td style="padding:7px;font-weight:600">'+mNamesLong[i]+'</td>'
-      +'<td style="padding:7px;text-align:right;color:var(--text3)">'+m.nv+'</td>'
-      +'<td style="padding:7px;text-align:right;color:var(--green);font-weight:700">'+fmtGNF(m.ca)+'</td>'
-      +'<td style="padding:7px;text-align:right;color:var(--red)">'+fmtGNF(m.dep)+'</td>'
-      +'<td style="padding:7px;text-align:right;color:var(--text3)">'+fmtGNF(m.appro)+'</td>'
-      +'<td style="padding:7px;text-align:right;font-weight:700;color:'+(net>=0?'var(--green)':'var(--red)')+'">'+fmtGNF(net)+'</td>'
-      +'</tr>';
-  });
-
-  html+='<tr style="background:var(--accent-light);font-weight:700">'
-    +'<td style="padding:8px">TOTAL '+yr+'</td>'
-    +'<td style="padding:8px;text-align:right">'+yVentes.length+'</td>'
-    +'<td style="padding:8px;text-align:right;color:var(--green)">'+fmtGNF(tCA)+'</td>'
-    +'<td style="padding:8px;text-align:right;color:var(--red)">'+fmtGNF(tDep)+'</td>'
-    +'<td style="padding:8px;text-align:right">'+fmtGNF(tAppro)+'</td>'
-    +'<td style="padding:8px;text-align:right;color:'+(benNet>=0?'var(--green)':'var(--red)')+'">'+fmtGNF(benNet)+'</td>'
-    +'</tr></tbody></table></div></div>';
-
-  el.innerHTML=html;
-}
-
-
-function gotoMoisRpt(el){
-  var yr=el.getAttribute('data-yr');
-  var mo=el.getAttribute('data-mo');
-  var yEl=document.getElementById('rpt-mois-year');
-  var mEl=document.getElementById('rpt-mois-month');
-  if(yEl) yEl.value=yr;
-  if(mEl) mEl.value=yr+'-'+mo;
-  if(typeof switchRapportTab==='function') switchRapportTab('mois');
-}
-
-
-// ==================== FOURNISSEURS & COMMANDES ====================
-var _fournLogoData = null;
-var _cmdEditId = null;
-var _receptionCmdId = null;
-var _paiementCmdId = null;
-
-// ── Onglets ──
-function switchFournTab(tab){
-  ['fourn','cmds','bilan'].forEach(function(t){
-    var panel = document.getElementById('panel-fourn-'+t);
-    var btn   = document.getElementById('tab-fourn-'+t);
-    if(panel) panel.style.display = t===tab ? '' : 'none';
-    if(btn){
-      btn.style.background = t===tab ? 'var(--accent)' : 'transparent';
-      btn.style.color      = t===tab ? '#fff' : 'var(--text3)';
-    }
-  });
-  if(tab==='fourn')  renderFournisseurs();
-  if(tab==='cmds')   { peupleFiltreCommandes(); renderCommandesList(); }
-  if(tab==='bilan')  { peupleSelFourn(); renderBilanFournisseur(); }
-}
-
-// ── Fournisseurs ──
-function openFournisseurModal(id){
-  _fournLogoData = null;
-  var ov = document.getElementById('fourn-overlay'); if(!ov) return;
-  ov.style.display = 'flex';
-  var f = id ? fournisseurs.find(function(x){ return String(x.id)===String(id); }) : null;
-  document.getElementById('fourn-edit-id').value = id||'';
-  document.getElementById('fourn-modal-title').textContent = id ? '✏️ Modifier fournisseur' : '🏭 Nouveau fournisseur';
-  document.getElementById('fourn-nom').value     = f ? (f.nom||'')     : '';
-  document.getElementById('fourn-adresse').value = f ? (f.adresse||'') : '';
-  document.getElementById('fourn-tel').value     = f ? (f.tel||'')     : '';
-  document.getElementById('fourn-whatsapp').value= f ? (f.whatsapp||''): '';
-  document.getElementById('fourn-email').value   = f ? (f.email||'')   : '';
-  document.getElementById('fourn-notes').value   = f ? (f.notes||'')   : '';
-  var prev = document.getElementById('fourn-logo-preview');
-  if(prev){
-    if(f && f.logo){ prev.innerHTML='<img src="'+f.logo+'" style="width:100%;height:100%;object-fit:contain">'; _fournLogoData=f.logo; }
-    else prev.innerHTML='🏭';
-  }
-}
-function closeFournisseurModal(){ var ov=document.getElementById('fourn-overlay'); if(ov) ov.style.display='none'; }
-
-function fournPreviewLogo(input){
-  var file=input.files[0]; if(!file) return;
-  var r=new FileReader();
-  r.onload=function(e){
-    _fournLogoData=e.target.result;
-    var p=document.getElementById('fourn-logo-preview');
-    if(p) p.innerHTML='<img src="'+e.target.result+'" style="width:100%;height:100%;object-fit:contain">';
-  };
-  r.readAsDataURL(file);
-}
-
-function saveFournisseur(){
-  var nom=(document.getElementById('fourn-nom').value||'').trim();
-  if(!nom){ showToast('Nom du fournisseur requis'); return; }
-  var id=document.getElementById('fourn-edit-id').value;
-  var obj={
-    id: id||String(Date.now()),
-    nom: nom,
-    adresse: (document.getElementById('fourn-adresse').value||'').trim(),
-    tel:     (document.getElementById('fourn-tel').value||'').trim(),
-    whatsapp:(document.getElementById('fourn-whatsapp').value||'').trim(),
-    email:   (document.getElementById('fourn-email').value||'').trim(),
-    notes:   (document.getElementById('fourn-notes').value||'').trim(),
-    logo:    _fournLogoData||'',
-    createdAt: new Date().toISOString()
-  };
-  if(id){
-    var idx=fournisseurs.findIndex(function(f){ return String(f.id)===String(id); });
-    if(idx>=0) fournisseurs[idx]=obj; else fournisseurs.push(obj);
-  } else {
-    fournisseurs.unshift(obj);
-  }
-  if(typeof sauvegarderFirebase==='function') sauvegarderFirebase();
-  closeFournisseurModal();
-  renderFournisseurs();
-  showToast('✅ Fournisseur enregistré');
-}
-
-function deleteFournisseur(id){
-  if(!confirm('Supprimer ce fournisseur ?')) return;
-  fournisseurs = fournisseurs.filter(function(f){ return String(f.id)!==String(id); });
-  if(typeof sauvegarderFirebase==='function') sauvegarderFirebase();
-  renderFournisseurs();
-}
-
-function renderFournisseurs(){
-  var el=document.getElementById('fourn-list'); if(!el) return;
-  if(!fournisseurs.length){
-    el.innerHTML='<div class="empty"><div class="empty-icon">🏭</div><div class="empty-text">Aucun fournisseur.<br>Cliquez "+ Fournisseur" pour commencer.</div></div>';
-    return;
-  }
-  el.innerHTML = fournisseurs.map(function(f){
-    // Stats de ce fournisseur
-    var cmdsF  = commandes.filter(function(c){ return String(c.fournisseurId)===String(f.id); });
-    var solde  = cmdsF.reduce(function(s,c){ return s + (c.soldeRestant||0); }, 0);
-    var nbEnCours = cmdsF.filter(function(c){ return c.statut!=='recu'; }).length;
-    var logoHtml = f.logo
-      ? '<img src="'+f.logo+'" style="width:100%;height:100%;object-fit:contain">'
-      : '<span style="font-size:24px">🏭</span>';
-    return '<div class="card" style="margin-bottom:14px">'
-      + '<div style="display:flex;gap:14px;align-items:flex-start">'
-      + '<div style="width:60px;height:60px;border-radius:10px;background:var(--surface2);border:2px solid var(--border);display:flex;align-items:center;justify-content:center;flex-shrink:0;overflow:hidden">'+logoHtml+'</div>'
-      + '<div style="flex:1">'
-      + '<div style="font-weight:800;font-size:16px;margin-bottom:4px">'+f.nom+'</div>'
-      + (f.adresse?'<div style="font-size:12px;color:var(--text3)">📍 '+f.adresse+'</div>':'')
-      + (f.tel?'<div style="font-size:12px;color:var(--text3)">📞 '+f.tel+'</div>':'')
-      + (f.email?'<div style="font-size:12px;color:var(--text3)">✉️ '+f.email+'</div>':'')
-      + (f.notes?'<div style="font-size:12px;color:var(--text3);margin-top:4px;font-style:italic">'+f.notes+'</div>':'')
-      + '</div>'
-      + '<div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0">'
-      + (f.whatsapp?'<a href="https://wa.me/'+f.whatsapp.replace(/\D/g,'')+'" target="_blank" style="padding:5px 12px;border-radius:20px;background:#25d366;color:#fff;font-size:12px;font-weight:700;text-decoration:none;text-align:center">📱 WA</a>':'')
-      + '<button onclick="openFournisseurModal(\''+f.id+'\')" style="padding:5px 12px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text);font-family:inherit;font-size:12px;cursor:pointer">✏️ Modifier</button>'
-      + '<button onclick="openCommandeModal(\''+f.id+'\')" style="padding:5px 12px;border:none;border-radius:8px;background:var(--accent);color:#fff;font-family:inherit;font-size:12px;cursor:pointer;font-weight:700">+ Commande</button>'
-      + '<button onclick="deleteFournisseur(\''+f.id+'\')" style="padding:5px 12px;border:none;border-radius:8px;background:var(--red-bg);color:var(--red);font-family:inherit;font-size:12px;cursor:pointer">🗑️</button>'
-      + '</div></div>'
-      // Stats
-      + '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">'
-      + '<div style="text-align:center"><div style="font-size:10px;color:var(--text3);text-transform:uppercase">Commandes</div><div style="font-weight:700;font-size:18px">'+cmdsF.length+'</div></div>'
-      + '<div style="text-align:center"><div style="font-size:10px;color:var(--text3);text-transform:uppercase">En cours</div><div style="font-weight:700;font-size:18px;color:var(--accent)">'+nbEnCours+'</div></div>'
-      + '<div style="text-align:center"><div style="font-size:10px;color:var(--text3);text-transform:uppercase">Solde dû</div><div style="font-weight:700;font-size:16px;color:'+(solde>0?'var(--red)':'var(--green)')+'">'+fmtGNF(solde)+'</div></div>'
-      + '</div>'
-      + '</div>';
-  }).join('');
+  // Supprimer ancien iframe si existe
+  var oldIfr=document.getElementById('_agv_pf');
+  if(oldIfr) oldIfr.remove();
+  var ifr=document.createElement('iframe');
+  ifr.id='_agv_pf';
+  ifr.style.cssText='position:fixed;top:0;left:0;width:100%;height:100%;z-index:99999;border:none;background:#fff';
+  document.body.appendChild(ifr);
+  ifr.contentDocument.open();
+  ifr.contentDocument.write(fullHtml);
+  ifr.contentDocument.close();
+  setTimeout(function(){ try{ ifr.contentWindow.print(); }catch(e){} }, 800);
 }
 
 // ── Commandes ──
@@ -10240,6 +10004,9 @@ function renderCommandesList(){
 
   el.innerHTML=list.map(function(cmd){
     var fourn=fournisseurs.find(function(f){ return String(f.id)===String(cmd.fournisseurId); });
+    // Calculer dette totale du fournisseur (toutes ses commandes)
+    var detteTotFourn=commandes.filter(function(c2){ return String(c2.fournisseurId)===String(cmd.fournisseurId)&&c2.soldeRestant>0; })
+      .reduce(function(s,c2){ return s+(c2.soldeRestant||0); },0);
     var statutBadge=cmd.statut==='recu'
       ?'<span style="background:#dcfce7;color:#16a34a;padding:2px 10px;border-radius:20px;font-size:11px;font-weight:700">✅ Reçue</span>'
       :cmd.statut==='partiel'
@@ -10270,8 +10037,9 @@ function renderCommandesList(){
       +'<div style="text-align:right">'
       +statutBadge
       +(cmd.montantTotal>0?'<div style="margin-top:6px;font-size:12px"><span style="color:var(--text3)">Montant: </span><strong>'+fmtGNF(cmd.montantTotal)+'</strong></div>':'')
-      +(cmd.soldeRestant>0?'<div style="font-size:12px;color:var(--red)">Solde dû: <strong>'+fmtGNF(cmd.soldeRestant)+'</strong></div>':'')
+      +(cmd.soldeRestant>0?'<div style="font-size:12px;color:var(--red)">Solde cmd: <strong>'+fmtGNF(cmd.soldeRestant)+'</strong></div>':'')
       +(cmd.montantTotal>0&&cmd.soldeRestant===0?'<div style="font-size:12px;color:var(--green)">✅ Soldée</div>':'')
+      +(detteTotFourn>0?'<div style="font-size:11px;margin-top:4px;padding:4px 8px;background:rgba(239,68,68,0.1);border-radius:6px;color:var(--red);font-weight:700">⚠️ Dette totale fourn.: '+fmtGNF(detteTotFourn)+'</div>':'')
       +'</div>'
       +'</div>'
       // Lignes produits
@@ -10460,13 +10228,28 @@ function openPaiementFournModal(cmdId){
   var ov=document.getElementById('paiement-fourn-overlay'); if(!ov) return;
   ov.style.display='flex';
   var fourn=fournisseurs.find(function(f){ return String(f.id)===String(cmd.fournisseurId); });
+  // Calculer la dette totale du fournisseur (toutes commandes)
+  var toutesLesCommandes=commandes.filter(function(c){ return String(c.fournisseurId)===String(cmd.fournisseurId); });
+  var detteTotale=toutesLesCommandes.reduce(function(s,c){ return s+(c.soldeRestant||0); },0);
   var info=document.getElementById('paiement-fourn-info');
   if(info) info.innerHTML=
-    '<strong>'+(fourn?fourn.nom:cmd.fournisseurNom)+'</strong> — Commande du '+new Date(cmd.date).toLocaleDateString('fr-FR')
-    +'<br>Montant total: <strong>'+fmtGNF(cmd.montantTotal||0)+'</strong>'
-    +' | Payé: <strong style="color:var(--green)">'+fmtGNF(cmd.montantPaye||0)+'</strong>'
-    +' | <strong style="color:var(--red)">Solde: '+fmtGNF(cmd.soldeRestant||0)+'</strong>';
-  document.getElementById('paiement-fourn-montant').value='';
+    '<div style="font-weight:800;font-size:14px;margin-bottom:6px">'+(fourn?fourn.nom:cmd.fournisseurNom)+'</div>'
+    +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">'
+    +'<div style="background:var(--surface2);padding:8px;border-radius:6px">'
+    +'<div style="font-size:10px;color:var(--text3);text-transform:uppercase">Cette commande</div>'
+    +'<div style="font-size:11px">Montant: <strong>'+fmtGNF(cmd.montantTotal||0)+'</strong></div>'
+    +'<div style="font-size:11px">Payé: <strong style="color:var(--green)">'+fmtGNF(cmd.montantPaye||0)+'</strong></div>'
+    +'<div style="font-size:11px">Solde: <strong style="color:var(--red)">'+fmtGNF(cmd.soldeRestant||0)+'</strong></div>'
+    +'</div>'
+    +'<div style="background:'+(detteTotale>0?'rgba(239,68,68,0.1)':'rgba(22,163,74,0.1)')+';padding:8px;border-radius:6px;border:1px solid '+(detteTotale>0?'var(--red)':'var(--green)')+'">'
+    +'<div style="font-size:10px;color:var(--text3);text-transform:uppercase">Dette totale fournisseur</div>'
+    +'<div style="font-size:15px;font-weight:800;color:'+(detteTotale>0?'var(--red)':'var(--green)')+'">'+fmtGNF(detteTotale)+'</div>'
+    +'<div style="font-size:10px;color:var(--text3)">'+toutesLesCommandes.length+' commande(s)</div>'
+    +'</div>'
+    +'</div>'
+    +(detteTotale>0?'<div style="font-size:11px;color:var(--text3);font-style:italic">Le versement sera appliqué sur cette commande. Solde restant mis à jour automatiquement.</div>':'');
+  // Pré-remplir avec le solde de cette commande
+  document.getElementById('paiement-fourn-montant').value=cmd.soldeRestant>0?cmd.soldeRestant:'';
   document.getElementById('paiement-fourn-date').value=new Date().toISOString().slice(0,10);
   document.getElementById('paiement-fourn-note').value='';
   document.getElementById('paiement-fourn-cmd-id').value=cmdId;
@@ -10704,20 +10487,33 @@ function imprimerCommande(cmdId){
   }
 
   // ── SITUATION FINANCIÈRE ──
+  // Détail des autres commandes impayées
+  var autresCmdsImpayees=cmdsFourn.filter(function(c){return c.soldeRestant>0;});
+
   body+='<div class="finance-box">'
     +'<div class="finance-title">💰 Situation financière — '+fourn.nom+'</div>';
 
+  // Cette commande
   if(montantCmd>0){
-    body+='<div class="finance-row"><span>Montant de cette commande</span><span style="font-weight:700">'+fmtGNF(montantCmd)+'</span></div>';
-    body+='<div class="finance-row"><span style="color:#16a34a">✅ Montant payé (cette commande)</span><span style="color:#16a34a;font-weight:700">'+fmtGNF(totalPaye)+'</span></div>';
-    body+='<div class="finance-row"><span>Solde de cette commande</span><span style="font-weight:700;color:#dc2626">'+fmtGNF(cmd.soldeRestant||0)+'</span></div>';
+    body+='<div class="finance-row"><span style="font-weight:700">📋 Cette commande (#'+String(cmd.id).slice(-8)+')</span><span></span></div>';
+    body+='<div class="finance-row" style="padding-left:20px"><span>Montant total</span><span style="font-weight:700">'+fmtGNF(montantCmd)+'</span></div>';
+    body+='<div class="finance-row" style="padding-left:20px"><span style="color:#16a34a">Montant payé</span><span style="color:#16a34a;font-weight:700">'+fmtGNF(totalPaye)+'</span></div>';
+    body+='<div class="finance-row" style="padding-left:20px"><span>Solde restant</span><span style="font-weight:700;color:#dc2626">'+fmtGNF(cmd.soldeRestant||0)+'</span></div>';
   }
-  if(soldePrecedent>0){
-    body+='<div class="finance-row"><span>⚠️ Solde des autres commandes</span><span style="font-weight:700;color:#d97706">'+fmtGNF(soldePrecedent)+'</span></div>';
+
+  // Autres commandes impayées
+  if(autresCmdsImpayees.length>0){
+    body+='<div class="finance-row" style="background:#fffbeb"><span style="font-weight:700;color:#d97706">⚠️ Autres commandes impayées ('+autresCmdsImpayees.length+')</span><span></span></div>';
+    autresCmdsImpayees.forEach(function(cmd2){
+      body+='<div class="finance-row" style="padding-left:20px;font-size:9.5px"><span>Commande du '+new Date(cmd2.date).toLocaleDateString('fr-FR')+'</span><span style="color:#d97706;font-weight:700">'+fmtGNF(cmd2.soldeRestant)+'</span></div>';
+    });
+    body+='<div class="finance-row" style="padding-left:20px"><span>Sous-total autres commandes</span><span style="font-weight:700;color:#d97706">'+fmtGNF(soldePrecedent)+'</span></div>';
   }
-  body+='<div class="finance-row finance-total"><span>SOLDE TOTAL DÛ AU FOURNISSEUR</span><span>'+fmtGNF(soldeTotal)+'</span></div>';
+
+  // Total général
+  body+='<div class="finance-row finance-total"><span>SOLDE TOTAL DÛ AU FOURNISSEUR</span><span style="font-size:13px">'+fmtGNF(soldeTotal)+'</span></div>';
   if(soldeTotal===0){
-    body+='<div class="finance-row" style="background:#f0fff4;color:#16a34a;font-weight:700;font-size:11px"><span>✅ Compte soldé — Aucune dette</span><span></span></div>';
+    body+='<div class="finance-row" style="background:#f0fff4;color:#16a34a;font-weight:700"><span>✅ Compte soldé — Aucune dette en cours</span><span></span></div>';
   }
   body+='</div>';
 
