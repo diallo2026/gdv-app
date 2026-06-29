@@ -2519,6 +2519,7 @@ window.addEventListener('DOMContentLoaded',function(){
         <div style="display:flex;gap:6px;flex-wrap:wrap">
           <button onclick="openFournisseurModal()" class="btn btn-primary">+ Fournisseur</button>
           <button onclick="openCommandeModal()" class="btn btn-success">+ Commande</button>
+          <button onclick="openReglerDetteModal()" style="padding:6px 14px;border:none;border-radius:8px;background:var(--red);color:#fff;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer">💳 Régler dette</button>
           <button onclick="agvPrintPDF('bilan-fournisseur')" class="btn-print">🖨️ PDF Bilan</button>
         </div>
       </div>
@@ -2576,6 +2577,7 @@ window.addEventListener('DOMContentLoaded',function(){
             <input type="date" id="bilan-date-to" onchange="renderBilanFournisseur()" style="padding:6px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text);font-family:inherit;font-size:13px">
           </div>
           <button onclick="agvPrintPDF('bilan-fournisseur')" class="btn-print" style="margin-top:20px">🖨️ PDF Bilan</button>
+          <button onclick="openReglerDetteModal()" style="margin-top:20px;padding:7px 14px;border:none;border-radius:8px;background:#dc2626;color:#fff;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer">💳 Régler une dette</button>
         </div>
         <div id="bilan-fourn-content"></div>
       </div>
@@ -11671,6 +11673,470 @@ function deletePaiementFourn(cmdId, pmtId){
   renderCommandesList();
   showToast('🗑️ Paiement supprimé — Nouveau solde: '+fmtGNF(cmd.soldeRestant));
 }
+
+// ==================== RÈGLEMENT DETTES FOURNISSEURS ====================
+
+function openReglerDetteModal(){
+  var ov=document.getElementById('regler-dette-overlay');
+  if(!ov) return;
+  ov.style.display='flex';
+
+  // Calculer les dettes par fournisseur (commandes + onglet dettes)
+  var sel=document.getElementById('regler-fourn-sel');
+  // Construire la liste des fournisseurs avec dettes
+  var fourn_avec_dette=[];
+
+  // Dettes des commandes
+  fournisseurs.forEach(function(f){
+    var cmdsImpayees=commandes.filter(function(cm){
+      return String(cm.fournisseurId)===String(f.id)&&(cm.soldeRestant||0)>0;
+    });
+    var detteCmd=cmdsImpayees.reduce(function(s,cm){return s+(cm.soldeRestant||0);},0);
+    // Dettes de l'onglet gestion
+    var dettesG=getDettesSolde().filter(function(d){
+      return d.type==='fournisseur'&&d.nom===f.nom&&d.solde>0;
+    });
+    var detteG=dettesG.reduce(function(s,d){return s+d.solde;},0);
+    var total=detteCmd+detteG;
+    if(total>0){
+      fourn_avec_dette.push({
+        id:f.id, nom:f.nom, logo:f.logo||'', tel:f.tel||'',
+        detteCmd:detteCmd, detteG:detteG, total:total,
+        cmds:cmdsImpayees, dettesG:dettesG
+      });
+    }
+  });
+
+  // Peupler le select
+  sel.innerHTML='<option value="">-- Choisir un fournisseur --</option>';
+  fourn_avec_dette.forEach(function(f){
+    sel.innerHTML+='<option value="'+f.id+'">'+f.nom+' — Dette: '+fmtGNF(f.total)+'</option>';
+  });
+  sel._data=fourn_avec_dette;
+
+  // Reset
+  document.getElementById('regler-dette-resume').style.display='none';
+  document.getElementById('regler-cmd-group').style.display='none';
+  document.getElementById('regler-versement-group').style.display='none';
+  document.getElementById('regler-montant').value='';
+  document.getElementById('regler-date').value=new Date().toISOString().slice(0,10);
+  document.getElementById('regler-note').value='';
+  document.getElementById('regler-solde-preview').innerHTML='';
+
+  if(!fourn_avec_dette.length){
+    sel.innerHTML='<option value="">✅ Aucune dette en cours</option>';
+  }
+}
+
+function closeReglerDetteModal(){
+  var ov=document.getElementById('regler-dette-overlay');
+  if(ov) ov.style.display='none';
+}
+
+function onReglerFournChange(){
+  var sel=document.getElementById('regler-fourn-sel');
+  var fid=sel.value;
+  var data=sel._data||[];
+  var fd=data.find(function(f){return String(f.id)===String(fid);});
+
+  var resume=document.getElementById('regler-dette-resume');
+  var cmdGroup=document.getElementById('regler-cmd-group');
+  var versGroup=document.getElementById('regler-versement-group');
+
+  if(!fd){
+    resume.style.display='none';
+    cmdGroup.style.display='none';
+    versGroup.style.display='none';
+    return;
+  }
+
+  // Afficher résumé des dettes
+  resume.style.display='block';
+  var html='<div style="background:var(--surface2);border-radius:10px;padding:14px;border:2px solid var(--red)">';
+  html+='<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">';
+  html+=(fd.logo?'<img src="'+fd.logo+'" style="width:36px;height:36px;object-fit:contain;border-radius:6px">':'<div style="width:36px;height:36px;background:var(--accent);border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-size:16px;font-weight:700">'+fd.nom.charAt(0)+'</div>');
+  html+='<div><div style="font-weight:800;font-size:15px">'+fd.nom+'</div>';
+  html+=(fd.tel?'<div style="font-size:11px;color:var(--text3)">📞 '+fd.tel+'</div>':'');
+  html+='</div></div>';
+
+  html+='<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:10px">';
+  html+='<div style="text-align:center;background:var(--bg);border-radius:8px;padding:8px"><div style="font-size:10px;color:var(--text3);text-transform:uppercase">Dette commandes</div><div style="font-weight:700;color:var(--red);font-size:14px">'+fmtGNF(fd.detteCmd)+'</div></div>';
+  html+='<div style="text-align:center;background:var(--bg);border-radius:8px;padding:8px"><div style="font-size:10px;color:var(--text3);text-transform:uppercase">Dette enregistrée</div><div style="font-weight:700;color:#d97706;font-size:14px">'+fmtGNF(fd.detteG)+'</div></div>';
+  html+='<div style="text-align:center;background:rgba(220,38,38,0.1);border-radius:8px;padding:8px;border:1px solid var(--red)"><div style="font-size:10px;color:var(--text3);text-transform:uppercase">TOTAL DÛ</div><div style="font-weight:800;color:var(--red);font-size:16px">'+fmtGNF(fd.total)+'</div></div>';
+  html+='</div>';
+
+  // Détail commandes impayées
+  if(fd.cmds.length){
+    html+='<div style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;margin-bottom:5px">📋 Commandes impayées</div>';
+    fd.cmds.forEach(function(cm){
+      html+='<div style="display:flex;justify-content:space-between;font-size:12px;padding:4px 8px;background:var(--bg);border-radius:6px;margin-bottom:3px">'
+        +'<span>'+new Date(cm.date).toLocaleDateString('fr-FR')+(cm.note?' — '+cm.note:'')+'</span>'
+        +'<span style="font-weight:700;color:var(--red)">'+fmtGNF(cm.soldeRestant)+'</span>'
+        +'</div>';
+    });
+  }
+
+  // Détail dettes gestion
+  if(fd.dettesG.length){
+    html+='<div style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;margin:6px 0 5px">🏦 Dettes enregistrées</div>';
+    fd.dettesG.forEach(function(d){
+      html+='<div style="display:flex;justify-content:space-between;font-size:12px;padding:4px 8px;background:var(--bg);border-radius:6px;margin-bottom:3px">'
+        +'<span>'+(d.desc||d.nom)+'</span>'
+        +'<span style="font-weight:700;color:#d97706">'+fmtGNF(d.solde)+'</span>'
+        +'</div>';
+    });
+  }
+  html+='</div>';
+  resume.innerHTML=html;
+
+  // Peupler le select des commandes impayées
+  var cmdSel=document.getElementById('regler-cmd-sel');
+  cmdSel.innerHTML='<option value="">-- Choisir une commande à créditer --</option>';
+  fd.cmds.forEach(function(cm){
+    cmdSel.innerHTML+='<option value="'+cm.id+'">Cmd du '+new Date(cm.date).toLocaleDateString('fr-FR')+' — Solde: '+fmtGNF(cm.soldeRestant)+(cm.note?' ('+cm.note+')':'')+'</option>';
+  });
+
+  cmdGroup.style.display=fd.cmds.length?'':'none';
+  versGroup.style.display='block';
+
+  // Pré-remplir avec le total
+  document.getElementById('regler-montant').value=fd.total;
+  updateReglerSolde();
+}
+
+function updateReglerSolde(){
+  var sel=document.getElementById('regler-fourn-sel');
+  var fid=sel.value;
+  var data=sel._data||[];
+  var fd=data.find(function(f){return String(f.id)===String(fid);});
+  if(!fd) return;
+
+  var montant=parseFloat(document.getElementById('regler-montant').value)||0;
+  var total=fd.total;
+  var reste=Math.max(0,total-montant);
+  var surplus=montant>total?montant-total:0;
+
+  var el=document.getElementById('regler-solde-preview');
+  if(el){
+    el.innerHTML='Versement : <strong style="color:var(--green)">'+fmtGNF(montant)+'</strong>'
+      +' | Solde restant : <strong style="color:'+(reste>0?'var(--red)':'var(--green)')+'">'+fmtGNF(reste)+'</strong>'
+      +(surplus>0?' | ⚠️ Surplus : '+fmtGNF(surplus):'')
+      +(reste===0?' ✅ Dette soldée':'');
+  }
+}
+
+function saveReglerDette(){
+  var sel=document.getElementById('regler-fourn-sel');
+  var fid=sel.value;
+  var data=sel._data||[];
+  var fd=data.find(function(f){return String(f.id)===String(fid);});
+  if(!fd){ showToast('Choisissez un fournisseur'); return; }
+
+  var montant=parseFloat(document.getElementById('regler-montant').value)||0;
+  if(!montant){ showToast('Montant requis'); return; }
+
+  var date=document.getElementById('regler-date').value||new Date().toISOString().slice(0,10);
+  var note=document.getElementById('regler-note').value||'Règlement dette';
+  var cmdId=document.getElementById('regler-cmd-sel').value;
+  var resteMontant=montant;
+
+  // ── 1. Imputer sur la commande choisie (si sélectionnée) ──
+  if(cmdId){
+    var cmdChoisie=commandes.find(function(cm){return String(cm.id)===String(cmdId);});
+    if(cmdChoisie&&(cmdChoisie.soldeRestant||0)>0){
+      var aCrediter=Math.min(resteMontant, cmdChoisie.soldeRestant||0);
+      cmdChoisie.paiements=cmdChoisie.paiements||[];
+      cmdChoisie.paiements.push({id:'pmt_'+Date.now(),date:date,montant:aCrediter,note:note});
+      cmdChoisie.montantPaye=(cmdChoisie.montantPaye||0)+aCrediter;
+      cmdChoisie.soldeRestant=Math.max(0,(cmdChoisie.montantTotal||0)-cmdChoisie.montantPaye);
+      resteMontant-=aCrediter;
+    }
+  }
+
+  // ── 2. Imputer sur les autres commandes impayées (ordre chronologique) ──
+  if(resteMontant>0){
+    var cmdsACrediter=commandes.filter(function(cm){
+      return String(cm.fournisseurId)===String(fid)&&(cm.soldeRestant||0)>0&&String(cm.id)!==String(cmdId);
+    }).sort(function(a,b){return new Date(a.date)-new Date(b.date);});
+
+    cmdsACrediter.forEach(function(cm){
+      if(resteMontant<=0) return;
+      var aCrediter=Math.min(resteMontant, cm.soldeRestant||0);
+      cm.paiements=cm.paiements||[];
+      cm.paiements.push({id:'pmt_'+Date.now()+'_'+cm.id,date:date,montant:aCrediter,note:note});
+      cm.montantPaye=(cm.montantPaye||0)+aCrediter;
+      cm.soldeRestant=Math.max(0,(cm.montantTotal||0)-cm.montantPaye);
+      resteMontant-=aCrediter;
+    });
+  }
+
+  // ── 3. Si reste → imputer sur les dettes de l'onglet gestion ──
+  if(resteMontant>0&&fd.dettesG.length){
+    var fourn=fournisseurs.find(function(f){return String(f.id)===String(fid);});
+    fd.dettesG.forEach(function(d){
+      if(resteMontant<=0) return;
+      // Retrouver la dette originale dans dettes[]
+      var detteOrig=dettes.find(function(dt){return String(dt.id)===String(d.id);});
+      if(!detteOrig) return;
+      var aCrediter=Math.min(resteMontant, d.solde||0);
+      detteOrig.paiements=detteOrig.paiements||[];
+      detteOrig.paiements.push({id:Date.now(),date:date,montant:aCrediter,note:note});
+      resteMontant-=aCrediter;
+    });
+  }
+
+  // ── 4. Sauvegarder + rafraîchir ──
+  if(typeof sauvegarderFirebase==='function') sauvegarderFirebase();
+  if(typeof saveAll==='function') saveAll();
+  closeReglerDetteModal();
+
+  // Rafraîchir les vues
+  if(typeof renderBilanFournisseur==='function') renderBilanFournisseur();
+  if(typeof renderCommandesList==='function') renderCommandesList();
+  if(typeof renderDettesFournisseurs==='function') renderDettesFournisseurs();
+  if(typeof renderDashboard==='function') renderDashboard();
+
+  var soldeRestantTotal=montant>0?Math.max(0,fd.total-montant):fd.total;
+  showToast('✅ Versement de '+fmtGNF(montant)+' enregistré'+(soldeRestantTotal>0?' — Solde restant: '+fmtGNF(soldeRestantTotal):' — Compte soldé ✅'));
+}
+
+// ==================== RÉGLER DETTE FOURNISSEUR ====================
+
+function openReglerDetteModal(fournId){
+  var ov=document.getElementById('regler-dette-overlay');
+  if(!ov) return;
+  ov.style.display='flex';
+
+  // Init date
+  var dateEl=document.getElementById('rd-date');
+  if(dateEl) dateEl.value=new Date().toISOString().slice(0,10);
+
+  // Peupler le select fournisseurs
+  var sel=document.getElementById('rd-fourn-sel');
+  if(sel){
+    var opts='<option value="">-- Choisir un fournisseur --</option>';
+    fournisseurs.forEach(function(f){
+      // Calculer si ce fournisseur a des dettes
+      var dettesF=_rdGetDettesTotales(f.id,f.nom);
+      var total=dettesF.totalCommandes+dettesF.totalGestion;
+      opts+='<option value="'+f.id+'"'+(String(f.id)===String(fournId)?' selected':'')+'>'
+        +f.nom+(total>0?' — Dû: '+fmtGNF(total):'')+'</option>';
+    });
+    sel.innerHTML=opts;
+    if(fournId) sel.value=String(fournId);
+  }
+
+  // Réinitialiser les champs
+  var montantEl=document.getElementById('rd-montant');
+  var noteEl=document.getElementById('rd-note');
+  if(montantEl) montantEl.value='';
+  if(noteEl) noteEl.value='';
+
+  // Masquer les sections
+  ['rd-dettes-resume','rd-cmds-list','rd-saisie','rd-repartition'].forEach(function(id){
+    var el=document.getElementById(id);
+    if(el) el.style.display='none';
+  });
+
+  // Si fournisseur pré-sélectionné → charger
+  if(fournId) onRdFournChange();
+}
+
+function closeReglerDetteModal(){
+  var ov=document.getElementById('regler-dette-overlay');
+  if(ov) ov.style.display='none';
+}
+
+// Calculer toutes les dettes d'un fournisseur (commandes + onglet dettes)
+function _rdGetDettesTotales(fournId, fournNom){
+  // Commandes impayées
+  var cmdsImp=commandes.filter(function(cm){
+    return String(cm.fournisseurId)===String(fournId) && (cm.soldeRestant||0)>0;
+  }).sort(function(a,b){ return new Date(a.date)-new Date(b.date); });
+  var totalCommandes=cmdsImp.reduce(function(s,cm){return s+(cm.soldeRestant||0);},0);
+
+  // Dettes de l'onglet gestion dettes
+  var dettesG=getDettesSolde().filter(function(d){
+    return d.type==='fournisseur' && d.nom===fournNom && d.solde>0;
+  });
+  var totalGestion=dettesG.reduce(function(s,d){return s+d.solde;},0);
+
+  return { cmdsImp:cmdsImp, dettesG:dettesG, totalCommandes:totalCommandes, totalGestion:totalGestion };
+}
+
+function onRdFournChange(){
+  var sel=document.getElementById('rd-fourn-sel');
+  var fid=sel?sel.value:'';
+  var fourn=fournisseurs.find(function(f){return String(f.id)===String(fid);});
+  if(!fourn){
+    ['rd-dettes-resume','rd-cmds-list','rd-saisie'].forEach(function(id){
+      var el=document.getElementById(id); if(el) el.style.display='none';
+    });
+    return;
+  }
+
+  var d=_rdGetDettesTotales(fourn.id, fourn.nom);
+  var total=d.totalCommandes+d.totalGestion;
+
+  // Résumé
+  var resumeEl=document.getElementById('rd-dettes-resume');
+  if(resumeEl){
+    resumeEl.style.display='block';
+    resumeEl.innerHTML='<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px">'
+      +'<div style="background:'+(d.totalCommandes>0?'rgba(239,68,68,0.08)':'rgba(22,163,74,0.08)')+';border:1px solid '+(d.totalCommandes>0?'var(--red)':'var(--green)')+';border-radius:8px;padding:10px;text-align:center">'
+      +'<div style="font-size:10px;color:var(--text3);text-transform:uppercase;margin-bottom:4px">Commandes dues</div>'
+      +'<div style="font-size:16px;font-weight:800;color:'+(d.totalCommandes>0?'var(--red)':'var(--green)')+'">'+fmtGNF(d.totalCommandes)+'</div>'
+      +'<div style="font-size:10px;color:var(--text3)">'+d.cmdsImp.length+' commande(s)</div></div>'
+      +'<div style="background:'+(d.totalGestion>0?'rgba(249,115,22,0.08)':'rgba(22,163,74,0.08)')+';border:1px solid '+(d.totalGestion>0?'#f97316':'var(--green)')+';border-radius:8px;padding:10px;text-align:center">'
+      +'<div style="font-size:10px;color:var(--text3);text-transform:uppercase;margin-bottom:4px">Dettes enregistrées</div>'
+      +'<div style="font-size:16px;font-weight:800;color:'+(d.totalGestion>0?'#f97316':'var(--green)')+'">'+fmtGNF(d.totalGestion)+'</div>'
+      +'<div style="font-size:10px;color:var(--text3)">'+d.dettesG.length+' entrée(s)</div></div>'
+      +'<div style="background:'+(total>0?'rgba(239,68,68,0.12)':'rgba(22,163,74,0.12)')+';border:2px solid '+(total>0?'var(--red)':'var(--green)')+';border-radius:8px;padding:10px;text-align:center">'
+      +'<div style="font-size:10px;color:var(--text3);text-transform:uppercase;margin-bottom:4px">Total dû</div>'
+      +'<div style="font-size:18px;font-weight:900;color:'+(total>0?'var(--red)':'var(--green)')+'">'+fmtGNF(total)+'</div>'
+      +(total===0?'<div style="font-size:10px;color:var(--green)">✅ Aucune dette</div>':'')
+      +'</div></div>';
+  }
+
+  // Liste des commandes impayées
+  var cmdsListEl=document.getElementById('rd-cmds-list');
+  var cmdsItemsEl=document.getElementById('rd-cmds-items');
+  if(cmdsListEl && cmdsItemsEl){
+    if(d.cmdsImp.length>0){
+      cmdsListEl.style.display='block';
+      cmdsItemsEl.innerHTML=d.cmdsImp.map(function(cm){
+        return '<div style="display:flex;justify-content:space-between;align-items:center;padding:8px;background:var(--surface2);border-radius:8px;margin-bottom:6px;font-size:12px">'
+          +'<div>'
+          +'<div style="font-weight:700">#'+String(cm.id).slice(-8).toUpperCase()+'</div>'
+          +'<div style="color:var(--text3)">'+new Date(cm.date).toLocaleDateString('fr-FR')+(cm.note?' — '+cm.note:'')+'</div>'
+          +(cm.montantTotal>0?'<div style="font-size:11px;color:var(--text3)">Total: '+fmtGNF(cm.montantTotal)+' | Payé: '+fmtGNF(cm.montantPaye||0)+'</div>':'')
+          +'</div>'
+          +'<div style="text-align:right">'
+          +'<div style="font-size:15px;font-weight:800;color:var(--red)">'+fmtGNF(cm.soldeRestant)+'</div>'
+          +'<div style="font-size:10px;color:var(--text3)">à régler</div>'
+          +'</div></div>';
+      }).join('');
+    } else {
+      cmdsListEl.style.display='none';
+    }
+  }
+
+  // Afficher la saisie
+  var saisieEl=document.getElementById('rd-saisie');
+  if(saisieEl) saisieEl.style.display=total>0?'block':'none';
+
+  // Pré-remplir avec le total dû
+  var montantEl=document.getElementById('rd-montant');
+  if(montantEl && total>0) montantEl.value=total;
+
+  // Déclencher la répartition
+  onRdMontantChange();
+}
+
+function onRdMontantChange(){
+  var sel=document.getElementById('rd-fourn-sel');
+  var fid=sel?sel.value:'';
+  var fourn=fournisseurs.find(function(f){return String(f.id)===String(fid);});
+  if(!fourn) return;
+
+  var montant=parseFloat(document.getElementById('rd-montant').value)||0;
+  if(!montant){ var rEl=document.getElementById('rd-repartition'); if(rEl) rEl.style.display='none'; return; }
+
+  var d=_rdGetDettesTotales(fourn.id, fourn.nom);
+  var rEl=document.getElementById('rd-repartition');
+  if(!rEl) return;
+
+  var html='<div style="font-weight:700;margin-bottom:6px">📊 Répartition du versement ('+fmtGNF(montant)+')</div>';
+  var restant=montant;
+
+  // Appliquer d'abord sur les commandes (ordre chronologique)
+  d.cmdsImp.forEach(function(cm){
+    if(restant<=0) return;
+    var appliquer=Math.min(restant, cm.soldeRestant||0);
+    html+='<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid rgba(255,255,255,0.3)">'
+      +'<span>Cmd #'+String(cm.id).slice(-8).toUpperCase()+' ('+new Date(cm.date).toLocaleDateString('fr-FR')+')</span>'
+      +'<span style="font-weight:700">−'+fmtGNF(appliquer)+'</span></div>';
+    restant-=appliquer;
+  });
+
+  if(restant>0 && d.dettesG.length>0){
+    html+='<div style="display:flex;justify-content:space-between;padding:3px 0">'
+      +'<span>Dettes enregistrées</span>'
+      +'<span style="font-weight:700">−'+fmtGNF(Math.min(restant, d.totalGestion))+'</span></div>';
+    restant-=Math.min(restant, d.totalGestion);
+  }
+
+  if(restant>0){
+    html+='<div style="display:flex;justify-content:space-between;padding:3px 0;color:#fbbf24">'
+      +'<span>⚠️ Excédent (crédit)</span><span>+'+fmtGNF(restant)+'</span></div>';
+  }
+
+  rEl.innerHTML=html;
+  rEl.style.display='block';
+}
+
+function saveReglerDette(){
+  var sel=document.getElementById('rd-fourn-sel');
+  var fid=sel?sel.value:'';
+  var fourn=fournisseurs.find(function(f){return String(f.id)===String(fid);});
+  if(!fourn){ showToast('Choisissez un fournisseur'); return; }
+
+  var montant=parseFloat(document.getElementById('rd-montant').value)||0;
+  if(!montant){ showToast('Montant requis'); return; }
+  var date=document.getElementById('rd-date').value||new Date().toISOString().slice(0,10);
+  var note=(document.getElementById('rd-note').value||'Versement global').trim();
+
+  var d=_rdGetDettesTotales(fourn.id, fourn.nom);
+  var restant=montant;
+  var nbCmdsModifiees=0;
+
+  // 1. Appliquer sur les commandes (ordre chronologique)
+  d.cmdsImp.forEach(function(cm){
+    if(restant<=0) return;
+    var appliquer=Math.min(restant, cm.soldeRestant||0);
+    if(appliquer<=0) return;
+
+    cm.paiements=cm.paiements||[];
+    // Assurer un id unique sur le paiement
+    var pmtId='pmt_'+Date.now()+'_'+Math.random().toString(36).slice(2,6);
+    cm.paiements.push({ id:pmtId, date:date, montant:appliquer, note:note });
+    cm.montantPaye=(cm.montantPaye||0)+appliquer;
+    cm.soldeRestant=Math.max(0,(cm.montantTotal||0)-cm.montantPaye);
+    restant-=appliquer;
+    nbCmdsModifiees++;
+  });
+
+  // 2. Appliquer sur les dettes de l'onglet gestion dettes
+  if(restant>0){
+    d.dettesG.forEach(function(dg){
+      if(restant<=0) return;
+      var appliquer=Math.min(restant, dg.solde||0);
+      if(appliquer<=0) return;
+      // Trouver la dette originale dans dettes[]
+      var detteOrig=dettes.find(function(dd){return String(dd.id)===String(dg.id);});
+      if(detteOrig){
+        detteOrig.paiements=detteOrig.paiements||[];
+        detteOrig.paiements.push({id:'pmt_'+Date.now(),date:date,montant:appliquer,note:note});
+      }
+      restant-=appliquer;
+    });
+  }
+
+  // 3. Sauvegarder
+  if(typeof sauvegarderFirebase==='function') sauvegarderFirebase();
+
+  // 4. Fermer le modal et rafraîchir
+  closeReglerDetteModal();
+  renderCommandesList();
+  if(typeof renderBilanFournisseur==='function') renderBilanFournisseur();
+  if(typeof renderDettesFournisseurs==='function') renderDettesFournisseurs();
+  renderDashboard();
+
+  var msg='✅ Versement de '+fmtGNF(montant)+' enregistré'
+    +(nbCmdsModifiees>0?' sur '+nbCmdsModifiees+' commande(s)':'');
+  if(restant>0) msg+=' — Crédit: '+fmtGNF(restant);
+  showToast(msg);
+}
 </script>
 <!-- ========== MODAL VENTE RAPIDE ========== -->
 <div class="overlay" id="vrapide-overlay" onclick="closeVenteRapide(event)">
@@ -11911,6 +12377,110 @@ function deletePaiementFourn(cmdId, pmtId){
           <button onclick="saveEditPmtFourn()" class="btn btn-primary" style="flex:1">💾 Enregistrer</button>
           <button onclick="closeEditPmtFourn()" class="btn" style="flex:1">Annuler</button>
         </div>
+      </div>
+    </div>
+
+
+    <!-- MODAL RÈGLEMENT DETTE FOURNISSEUR -->
+    <div class="overlay" id="regler-dette-overlay" onclick="if(event.target===this)closeReglerDetteModal()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:1000;align-items:center;justify-content:center">
+      <div class="modal" style="max-width:520px;width:95%;max-height:92vh;overflow-y:auto">
+        <div class="modal-head">
+          <h2>💳 Régler une dette fournisseur</h2>
+          <button class="modal-close" onclick="closeReglerDetteModal()">✕</button>
+        </div>
+        <!-- Sélecteur fournisseur -->
+        <div class="form-group">
+          <label class="form-label">Fournisseur</label>
+          <select class="form-input" id="regler-fourn-sel" onchange="onReglerFournChange()">
+            <option value="">-- Choisir un fournisseur --</option>
+          </select>
+        </div>
+        <!-- Résumé des dettes du fournisseur sélectionné -->
+        <div id="regler-dette-resume" style="display:none;margin-bottom:14px"></div>
+        <!-- Commande à créditer -->
+        <div class="form-group" id="regler-cmd-group" style="display:none">
+          <label class="form-label">Imputer sur la commande</label>
+          <select class="form-input" id="regler-cmd-sel">
+            <option value="">-- Choisir une commande --</option>
+          </select>
+        </div>
+        <!-- Saisie versement -->
+        <div id="regler-versement-group" style="display:none">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+            <div class="form-group">
+              <label class="form-label">Montant versé (GNF) *</label>
+              <input type="number" class="form-input" id="regler-montant" placeholder="0" min="0" oninput="updateReglerSolde()">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Date</label>
+              <input type="date" class="form-input" id="regler-date">
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Note</label>
+            <input class="form-input" id="regler-note" placeholder="Espèces, virement, mobile money...">
+          </div>
+          <div id="regler-solde-preview" style="padding:10px;background:var(--accent-light);border-radius:8px;font-size:13px;font-weight:700;color:var(--accent);margin-bottom:12px"></div>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:8px">
+          <button onclick="saveReglerDette()" class="btn btn-primary" style="flex:1">💾 Enregistrer le versement</button>
+          <button onclick="closeReglerDetteModal()" class="btn">Annuler</button>
+        </div>
+      </div>
+    </div>
+
+
+    <!-- MODAL RÉGLER DETTE FOURNISSEUR GLOBAL -->
+    <div class="overlay" id="regler-dette-overlay" onclick="if(event.target===this)closeReglerDetteModal()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:1000;align-items:center;justify-content:center">
+      <div class="modal" style="max-width:560px;width:95%;max-height:92vh;overflow-y:auto">
+        <div class="modal-head">
+          <h2>💳 Régler une dette fournisseur</h2>
+          <button class="modal-close" onclick="closeReglerDetteModal()">✕</button>
+        </div>
+
+        <!-- Sélecteur fournisseur -->
+        <div class="form-group" style="margin-bottom:12px">
+          <label class="form-label">Fournisseur *</label>
+          <select class="form-input" id="rd-fourn-sel" onchange="onRdFournChange()">
+            <option value="">-- Choisir un fournisseur --</option>
+          </select>
+        </div>
+
+        <!-- Résumé dettes -->
+        <div id="rd-dettes-resume" style="display:none;margin-bottom:14px"></div>
+
+        <!-- Commandes à régler -->
+        <div id="rd-cmds-list" style="display:none;margin-bottom:14px">
+          <div style="font-size:12px;font-weight:700;color:var(--text);margin-bottom:8px;text-transform:uppercase">Commandes impayées</div>
+          <div id="rd-cmds-items"></div>
+        </div>
+
+        <!-- Saisie versement -->
+        <div id="rd-saisie" style="display:none">
+          <div style="background:var(--surface2);border-radius:10px;padding:14px;margin-bottom:12px">
+            <div style="font-size:12px;font-weight:700;color:var(--text);margin-bottom:10px">💰 Versement à effectuer</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+              <div class="form-group">
+                <label class="form-label">Montant (GNF) *</label>
+                <input type="number" class="form-input" id="rd-montant" placeholder="0" min="0" oninput="onRdMontantChange()">
+              </div>
+              <div class="form-group">
+                <label class="form-label">Date</label>
+                <input type="date" class="form-input" id="rd-date">
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Note / Référence</label>
+              <input class="form-input" id="rd-note" placeholder="Virement, espèces, chèque...">
+            </div>
+            <div id="rd-repartition" style="margin-top:10px;padding:10px;background:var(--accent-light);border-radius:8px;font-size:12px;color:var(--accent);display:none"></div>
+          </div>
+          <div style="display:flex;gap:8px">
+            <button onclick="saveReglerDette()" class="btn btn-primary" style="flex:1">💾 Enregistrer le versement</button>
+            <button onclick="closeReglerDetteModal()" class="btn" style="flex:1">Annuler</button>
+          </div>
+        </div>
+
       </div>
     </div>
 
