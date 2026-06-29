@@ -8295,17 +8295,16 @@ function renderVentesHistory(){
     return true; // Fondateur voit tout
   });
 
-  // Calendrier jours — seulement si un mois est sélectionné
-  if(ysel && msel && msel.value){
-    var selYC=parseInt(ysel.value)||curY;
+  // Calendrier jours — mois sélectionné OU mois courant par défaut
+  var selYC=parseInt(ysel?ysel.value:curY)||curY;
+  var selMC;
+  if(msel && msel.value){
     var parts=msel.value.split('-');
-    var selMC=parts[1]?parseInt(parts[1]):parseInt(curM);
-    renderVDayPicker(selYC, String(selMC).padStart(2,'0'));
+    selMC=parts[1]?parseInt(parts[1]):parseInt(curM);
   } else {
-    // Pas de mois sélectionné → vider le calendrier
-    var dpEl=document.getElementById('v-day-picker');
-    if(dpEl) dpEl.innerHTML='';
+    selMC=parseInt(curM); // Tous les mois → afficher calendrier du mois courant
   }
+  renderVDayPicker(selYC, String(selMC).padStart(2,'0'));
 
   // Stats
   var tCA=filtered.reduce(function(s,v){return s+(v.total||0);},0);
