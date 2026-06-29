@@ -11542,6 +11542,31 @@ function agvBlobPrint(css, body, titre){
   }
   setTimeout(function(){ if(win){win.focus();} URL.revokeObjectURL(url); }, 800);
 }
+
+
+// ==================== SWITCH ONGLETS FOURNISSEURS ====================
+function switchFournTab(tab){
+  // Panels
+  var panels = {fourn:'panel-fourn-list', cmds:'panel-fourn-cmds', bilan:'panel-fourn-bilan'};
+  Object.keys(panels).forEach(function(t){
+    var el = document.getElementById(panels[t]);
+    if(el) el.style.display = (t===tab) ? '' : 'none';
+  });
+  // Boutons onglets
+  var tabs = {fourn:'tab-fourn-list', cmds:'tab-fourn-cmds', bilan:'tab-fourn-bilan'};
+  Object.keys(tabs).forEach(function(t){
+    var btn = document.getElementById(tabs[t]);
+    if(btn){
+      btn.style.background = (t===tab) ? 'var(--accent)' : 'transparent';
+      btn.style.color      = (t===tab) ? '#fff' : 'var(--text3)';
+    }
+  });
+  // Rendre le contenu
+  if(tab==='fourn')  renderFournisseurs();
+  if(tab==='cmds')   { peupleFiltreCommandes(); renderCommandesList(); }
+  if(tab==='bilan')  { peupleSelFourn(); renderBilanFournisseur(); }
+}
+
 </script>
 <!-- ========== MODAL VENTE RAPIDE ========== -->
 <div class="overlay" id="vrapide-overlay" onclick="closeVenteRapide(event)">
