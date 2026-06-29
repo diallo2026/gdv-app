@@ -8459,18 +8459,47 @@ function onCmdFournChange(){
   var alertEl=document.getElementById('cmd-dette-alerte');
   if(fourn&&infoEl){
     infoEl.style.display='block';
-    infoEl.innerHTML='<strong>'+fourn.nom+'</strong>'+(fourn.adresse?' • 📍'+fourn.adresse:'')+(fourn.tel?' • 📞'+fourn.tel:'');
-    // Vérifier dettes
-    var dettes_fourn=getDettesSolde().filter(function(d){return d.type==='fournisseur'&&d.nom===fourn.nom&&d.solde>0;});
-    var totalDette=dettes_fourn.reduce(function(s,d){return s+d.solde;},0);
-    // Dernière commande non soldée
-    var lastCmd=commandes.filter(function(c){return c.fournisseurId===fourn.id&&!c.soldee;}).sort(function(a,b){return new Date(b.date)-new Date(a.date);})[0];
+    infoEl.innerHTML=(fourn.logo?'<img src="'+fourn.logo+'" style="width:28px;height:28px;object-fit:contain;border-radius:4px;float:left;margin-right:8px">':'')
+      +'<strong>'+fourn.nom+'</strong>'+(fourn.adresse?' • 📍'+fourn.adresse:'')+(fourn.tel?' • 📞'+fourn.tel:'')
+      +'<div style="clear:both"></div>';
+
+    // ── Dettes de l'onglet "Gestion des dettes" (array dettes) ──
+    var dettesGestion=getDettesSolde().filter(function(d){
+      return d.type==='fournisseur' && d.nom===fourn.nom && d.solde>0;
+    });
+    var totalDettesGestion=dettesGestion.reduce(function(s,d){return s+d.solde;},0);
+
+    // ── Dettes des commandes (soldeRestant) ──
+    var cmdsImpayees=commandes.filter(function(cm){
+      return String(cm.fournisseurId)===String(fourn.id) && (cm.soldeRestant||0)>0;
+    });
+    var totalDettesCommandes=cmdsImpayees.reduce(function(s,cm){return s+(cm.soldeRestant||0);},0);
+
+    var totalDetteTotal=totalDettesGestion+totalDettesCommandes;
+
     if(alertEl){
       var html='';
-      if(totalDette>0) html+='⚠️ Solde restant dû à ce fournisseur : <strong>'+fmtGNF(totalDette)+'</strong><br>';
-      if(lastCmd) html+='📋 Dernière commande non soldée ('+new Date(lastCmd.date).toLocaleDateString('fr-FR')+') : <strong>'+fmtGNF(lastCmd.total||0)+'</strong>';
-      alertEl.style.display=html?'block':'none';
-      alertEl.innerHTML=html;
+      if(totalDetteTotal>0){
+        html='<div style="font-weight:700;font-size:13px;color:var(--red);margin-bottom:6px">⚠️ Dette totale : '+fmtGNF(totalDetteTotal)+'</div>';
+        if(totalDettesCommandes>0){
+          html+='<div style="font-size:12px;margin-bottom:3px">📋 Commandes impayées ('+cmdsImpayees.length+') : <strong>'+fmtGNF(totalDettesCommandes)+'</strong></div>';
+          cmdsImpayees.slice(0,3).forEach(function(cm){
+            html+='<div style="font-size:11px;color:var(--text3);padding-left:12px">• Cmd du '+new Date(cm.date).toLocaleDateString('fr-FR')+' — Solde: '+fmtGNF(cm.soldeRestant)+'</div>';
+          });
+          if(cmdsImpayees.length>3) html+='<div style="font-size:11px;color:var(--text3);padding-left:12px">... et '+(cmdsImpayees.length-3)+' autre(s)</div>';
+        }
+        if(totalDettesGestion>0){
+          html+='<div style="font-size:12px;margin-top:4px">🏦 Dettes enregistrées ('+dettesGestion.length+') : <strong>'+fmtGNF(totalDettesGestion)+'</strong></div>';
+          dettesGestion.slice(0,2).forEach(function(d){
+            html+='<div style="font-size:11px;color:var(--text3);padding-left:12px">• '+(d.desc||d.nom)+' — Solde: '+fmtGNF(d.solde)+'</div>';
+          });
+        }
+        alertEl.style.display='block';
+        alertEl.innerHTML=html;
+      } else {
+        alertEl.style.display='none';
+        alertEl.innerHTML='';
+      }
     }
   } else {
     if(infoEl) infoEl.style.display='none';
@@ -10056,12 +10085,16 @@ function renderCommandesList(){
       // Historique paiements
       +(cmd.paiements&&cmd.paiements.length?
         '<div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border)">'
-        +'<div style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;margin-bottom:6px">Historique paiements</div>'
-        +cmd.paiements.map(function(p){
-          return '<div style="display:flex;justify-content:space-between;font-size:12px;padding:3px 0;border-bottom:1px solid var(--border)">'
-            +'<span>'+new Date(p.date).toLocaleDateString('fr-FR')+'</span>'
-            +(p.note?'<span style="color:var(--text3)">'+p.note+'</span>':'')
-            +'<span style="font-weight:700;color:var(--green)">'+fmtGNF(p.montant)+'</span>'
+        +'<div style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;margin-bottom:6px">💳 Historique paiements</div>'
+        +cmd.paiements.map(function(p,pi){
+          // S'assurer que chaque paiement a un id unique
+          if(!p.id) p.id='pmt_'+cmd.id+'_'+pi;
+          return '<div style="display:flex;align-items:center;gap:6px;font-size:12px;padding:5px 0;border-bottom:1px solid var(--border)">'
+            +'<span style="min-width:80px">'+new Date(p.date).toLocaleDateString('fr-FR')+'</span>'
+            +(p.note?'<span style="flex:1;color:var(--text3);font-style:italic">'+p.note+'</span>':'<span style="flex:1"></span>')
+            +'<span style="font-weight:700;color:var(--green);min-width:80px;text-align:right">'+fmtGNF(p.montant)+'</span>'
+            +'<button onclick="editPaiementFourn(\''+cmd.id+'\',\''+p.id+'\')" style="padding:2px 7px;border:1px solid var(--border);border-radius:5px;background:var(--surface2);color:var(--text);font-size:11px;cursor:pointer">✏️</button>'
+            +'<button onclick="deletePaiementFourn(\''+cmd.id+'\',\''+p.id+'\')" style="padding:2px 7px;border:none;border-radius:5px;background:var(--red-bg);color:var(--red);font-size:11px;cursor:pointer">🗑️</button>'
             +'</div>';
         }).join('')
         +'</div>':''
@@ -11567,6 +11600,77 @@ function switchFournTab(tab){
   if(tab==='bilan')  { peupleSelFourn(); renderBilanFournisseur(); }
 }
 
+
+// ==================== PAIEMENTS FOURNISSEURS MODIFIABLES ====================
+
+function editPaiementFourn(cmdId, pmtId){
+  var cmd=commandes.find(function(c){ return String(c.id)===String(cmdId); });
+  if(!cmd) return;
+  var pmt=cmd.paiements.find(function(p){ return String(p.id)===String(pmtId); });
+  if(!pmt) return;
+  var ov=document.getElementById('edit-pmt-fourn-overlay');
+  if(!ov) return;
+  ov.style.display='flex';
+  var fourn=fournisseurs.find(function(f){ return String(f.id)===String(cmd.fournisseurId); });
+  var info=document.getElementById('edit-pmt-fourn-info');
+  if(info) info.innerHTML='<strong>'+(fourn?fourn.nom:cmd.fournisseurNom)+'</strong>'
+    +' — Commande du '+new Date(cmd.date).toLocaleDateString('fr-FR')
+    +'<br>Solde actuel: <strong style="color:var(--red)">'+fmtGNF(cmd.soldeRestant||0)+'</strong>';
+  document.getElementById('edit-pmt-montant').value = pmt.montant||'';
+  document.getElementById('edit-pmt-date').value    = pmt.date||new Date().toISOString().slice(0,10);
+  document.getElementById('edit-pmt-note').value    = pmt.note||'';
+  document.getElementById('edit-pmt-cmd-id').value  = cmdId;
+  document.getElementById('edit-pmt-pmt-id').value  = pmtId;
+}
+
+function closeEditPmtFourn(){
+  var ov=document.getElementById('edit-pmt-fourn-overlay');
+  if(ov) ov.style.display='none';
+}
+
+function saveEditPmtFourn(){
+  var cmdId = document.getElementById('edit-pmt-cmd-id').value;
+  var pmtId = document.getElementById('edit-pmt-pmt-id').value;
+  var cmd = commandes.find(function(c){ return String(c.id)===String(cmdId); });
+  if(!cmd) return;
+  var pmt = cmd.paiements.find(function(p){ return String(p.id)===String(pmtId); });
+  if(!pmt){ showToast('Paiement introuvable'); return; }
+
+  var montant = parseFloat(document.getElementById('edit-pmt-montant').value)||0;
+  if(!montant){ showToast('Montant requis'); return; }
+
+  var oldMontant = pmt.montant||0;
+  pmt.montant = montant;
+  pmt.date    = document.getElementById('edit-pmt-date').value||pmt.date;
+  pmt.note    = document.getElementById('edit-pmt-note').value||'';
+
+  // Recalculer montantPaye et soldeRestant
+  cmd.montantPaye = cmd.paiements.reduce(function(s,p){ return s+(p.montant||0); },0);
+  cmd.soldeRestant = Math.max(0,(cmd.montantTotal||0) - cmd.montantPaye);
+
+  if(typeof sauvegarderFirebase==='function') sauvegarderFirebase();
+  closeEditPmtFourn();
+  renderCommandesList();
+  showToast('✅ Paiement modifié — Solde: '+fmtGNF(cmd.soldeRestant));
+}
+
+function deletePaiementFourn(cmdId, pmtId){
+  if(!confirm('Supprimer ce paiement ?')) return;
+  var cmd = commandes.find(function(c){ return String(c.id)===String(cmdId); });
+  if(!cmd) return;
+  var idx = cmd.paiements.findIndex(function(p){ return String(p.id)===String(pmtId); });
+  if(idx<0){ showToast('Paiement introuvable'); return; }
+
+  cmd.paiements.splice(idx, 1);
+
+  // Recalculer
+  cmd.montantPaye   = cmd.paiements.reduce(function(s,p){ return s+(p.montant||0); },0);
+  cmd.soldeRestant  = Math.max(0,(cmd.montantTotal||0) - cmd.montantPaye);
+
+  if(typeof sauvegarderFirebase==='function') sauvegarderFirebase();
+  renderCommandesList();
+  showToast('🗑️ Paiement supprimé — Nouveau solde: '+fmtGNF(cmd.soldeRestant));
+}
 </script>
 <!-- ========== MODAL VENTE RAPIDE ========== -->
 <div class="overlay" id="vrapide-overlay" onclick="closeVenteRapide(event)">
@@ -11790,4 +11894,25 @@ function switchFournTab(tab){
     </div>
   </div>
 </div>
+    <!-- MODAL ÉDITION PAIEMENT FOURNISSEUR -->
+    <div class="overlay" id="edit-pmt-fourn-overlay" onclick="if(event.target===this)closeEditPmtFourn()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:1000;align-items:center;justify-content:center">
+      <div class="modal" style="max-width:420px;width:95%">
+        <div class="modal-head">
+          <h2>✏️ Modifier le paiement</h2>
+          <button class="modal-close" onclick="closeEditPmtFourn()">✕</button>
+        </div>
+        <div id="edit-pmt-fourn-info" style="padding:8px;background:var(--surface2);border-radius:8px;font-size:12px;margin-bottom:12px"></div>
+        <div class="form-group"><label class="form-label">Montant (GNF) *</label><input type="number" class="form-input" id="edit-pmt-montant" min="0"></div>
+        <div class="form-group"><label class="form-label">Date</label><input type="date" class="form-input" id="edit-pmt-date"></div>
+        <div class="form-group"><label class="form-label">Note</label><input class="form-input" id="edit-pmt-note" placeholder="Espèces, virement..."></div>
+        <input type="hidden" id="edit-pmt-cmd-id">
+        <input type="hidden" id="edit-pmt-pmt-id">
+        <div style="display:flex;gap:8px;margin-top:16px">
+          <button onclick="saveEditPmtFourn()" class="btn btn-primary" style="flex:1">💾 Enregistrer</button>
+          <button onclick="closeEditPmtFourn()" class="btn" style="flex:1">Annuler</button>
+        </div>
+      </div>
+    </div>
+
+
 </body></html>
