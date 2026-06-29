@@ -8254,7 +8254,7 @@ function renderVentesHistory(){
     var selY=parseInt(ysel.value)||curY;
     var prevM=msel.value;
     var mNames=['Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
-    var opM='';
+    var opM='<option value="">-- Tous les mois --</option>';
     for(var m=1;m<=12;m++){
       var mv=selY+'-'+String(m).padStart(2,'0');
       opM+='<option value="'+mv+'">'+mNames[m-1]+' '+selY+'</option>';
@@ -8263,7 +8263,7 @@ function renderVentesHistory(){
     var targetM=selY+'-'+curM;
     if(prevM && msel.querySelector('option[value="'+prevM+'"]')) msel.value=prevM;
     else if(msel.querySelector('option[value="'+targetM+'"]')) msel.value=targetM;
-    else msel.value=msel.options[0].value;
+    else msel.value=targetM;
   }
 
   var mk=msel?msel.value:'';
@@ -9825,11 +9825,16 @@ function printVentesJourPDF(){
   var ifr=document.createElement('iframe');
   ifr.id='_agv_pf';
   ifr.style.cssText='position:fixed;top:0;left:0;width:100%;height:100%;z-index:99999;border:none;background:#fff';
+  ifr.srcdoc = fullHtml;
   document.body.appendChild(ifr);
-  ifr.contentDocument.open();
-  ifr.contentDocument.write(fullHtml);
-  ifr.contentDocument.close();
-  setTimeout(function(){ try{ ifr.contentWindow.print(); }catch(e){} }, 800);
+  ifr.onload = function(){
+    try{ ifr.contentWindow.focus(); ifr.contentWindow.print(); }catch(e){
+      var blob=new Blob([fullHtml],{type:'text/html'});
+      var url=URL.createObjectURL(blob);
+      window.open(url,'_blank');
+      setTimeout(function(){URL.revokeObjectURL(url);},3000);
+    }
+  };
 }
 
 // ── Commandes ──
