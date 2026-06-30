@@ -11601,6 +11601,7 @@ function agvBlobPrint(css, body, titre){
     +'a.download="'+titre.replace(/[^a-z0-9]/gi,"_")+'.jpg";'
     +'a.click();});'
     +'}else{alert("Cliquez PDF puis Enregistrer comme image dans les options d\'impression");}}'
+    +'window.onload=function(){setTimeout(function(){try{window.focus();window.print();}catch(e){}},400);};'
     +'<\/script>';
   var fullHtml='<!DOCTYPE html><html><head><meta charset="UTF-8"><title>'+titre+'</title>'
     +'<style>'+css+'</style>'
