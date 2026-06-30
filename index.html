@@ -1068,9 +1068,12 @@ function agvLaunchApp(shop){
   ref.on('value', function(snap){
     var data = snap.val();
     if(data) try{ localStorage.setItem(cacheKey, JSON.stringify(data)); }catch(e){}
-    // Reset + rechargement uniquement si les données ont changé
-    products=[]; ventes=[]; depenses=[]; gerants=[];
-    entrees=[]; appros=[]; repConfig=[]; dettes=[]; clients=[]; factureVentes=[];
+    // CORRECTIF DÉFINITIF : ne JAMAIS vider les tableaux avant applyData.
+    // applyData() met déjà à jour chaque champ individuellement (if(data.X) X=...).
+    // Vider ici créait une fenêtre où, si Firebase renvoyait un snapshot partiel
+    // ou en cours de propagation (ventes temporairement absent du snapshot),
+    // les ventes restaient vides DÉFINITIVEMENT car rien ne les remplissait plus.
+    // C'était la cause des disparitions de ventes signalées par les boutiques.
     applyData(data);
     window._AGV_READY = true;
     agvSetOnlineStatus(true);
@@ -4607,29 +4610,13 @@ window._boutique = {
 };
 
 // ===== SAUVEGARDE FIREBASE =====
-window.sauvegarderFirebase = function() {
-  if(!window._AGV_READY) return; // Protection contre l'écrasement avant chargement
-  try {
-    var data = {
-      products: products,
-      ventes:   ventes,
-      depenses: depenses,
-      gerants:  gerants,
-      entrees:  entrees,
-      appros:   appros,
-      repConfig:     repConfig,
-      dettes:        dettes,
-      clients:       clients,
-      factureVentes: factureVentes
-    };
-    db.ref('boutique').set(data).then(function(){
-      console.log('✅ Firebase boutique OK');
-      var ind = document.getElementById('syncIndicator');
-      if(ind){ ind.textContent='🟢 Synchronisé'; ind.style.color='#1a7a4a';
-        setTimeout(function(){ ind.textContent='☁️ Cloud actif'; ind.style.color='#2563eb'; },2000); }
-    }).catch(function(e){ console.error('❌ Firebase erreur:', e); });
-  } catch(e){ console.error('Firebase save error:', e); }
-};
+// CORRECTIF DÉFINITIF : cette redéfinition pointait vers db.ref('boutique'),
+// un chemin Firebase générique sans lien avec la boutique réelle, alors que
+// TOUT le reste de l'application (lecture, listener temps réel) utilise
+// gdv_shops/{uid}/data. Résultat : chaque vente enregistrée via saveAll()
+// partait dans le vide et disparaissait au rechargement.
+// La VRAIE fonction sauvegarderFirebase (qui écrit au bon endroit) est déjà
+// définie plus haut dans le fichier — on ne la redéfinit plus ici.
 
 // Convertit un objet Firebase en vrai Array
 function toArray(val) {
@@ -4679,23 +4666,12 @@ function appliquerDonneesFirebase(data) {
 }
 
 // ===== ECOUTE TEMPS REEL =====
-db.ref('boutique').on('value', function(snapshot) {
-  var data = snapshot.val();
-  console.log('🔥 Firebase boutique reçu:', data ? 'OUI' : 'VIDE');
-  if (!data) { return; }
-  // Toujours stocker les dernières données
-  window._firebaseData = data;
-  // Appliquer si l'app est ouverte
-  appliquerDonneesFirebase(data);
-  // Si on est sur la page de login et que le rôle gérant est sélectionné, rafraîchir la liste
-  var loginScreen = document.getElementById('login-screen');
-  var gerantWrap = document.getElementById('gerant-select-wrap');
-  if (loginScreen && loginScreen.style.display !== 'none' &&
-      gerantWrap && gerantWrap.style.display !== 'none') {
-    preloadGerantsForLogin();
-    buildGerantLoginList();
-  }
-});
+// CORRECTIF DÉFINITIF : ce listener écoutait db.ref('boutique'), un chemin
+// générique sans rapport avec la boutique connectée. Il pouvait écraser
+// silencieusement les données (products, ventes, etc.) avec un snapshot vide
+// ou obsolète de ce mauvais chemin. Le VRAI listener temps réel, qui écoute
+// gdv_shops/{uid}/data (le bon chemin par boutique), est déjà actif plus haut
+// dans le fichier — celui-ci est retiré pour éviter tout conflit.
 let catFilter = 'ALL';
 let stockFilter = 'all';
 let sortField = 'designation';
@@ -4711,9 +4687,15 @@ const RAW_DATA = [{"reference":"VENTGG","designation":"VENTILO GRAND GRAND","cat
 // ==================== INIT ====================
 function init(){
   if(window._currentShop){
-    // Mode AGV: données vides, on attend Firebase
-    products=[];ventes=[];depenses=[];gerants=[];
-    entrees=[];appros=[];repConfig=[];dettes=[];clients=[];factureVentes=[];
+    // CORRECTIF DÉFINITIF : cette fonction est appelée à chaque connexion (startApp).
+    // Elle vidait products/ventes/... même si le vrai listener Firebase temps réel
+    // avait déjà chargé les données (depuis le cache local ou Firebase), sans jamais
+    // les recharger ensuite. Comme le listener ne se redéclenche qu'au PROCHAIN
+    // changement de données, les ventes restaient vides jusqu'à la prochaine vente
+    // enregistrée par quelqu'un — d'où la disparition après chaque connexion.
+    // Le chargement réel est entièrement géré par le listener Firebase
+    // (db.ref('gdv_shops/'+shop.uid+'/data').on('value', ...)) : on ne touche
+    // plus aux tableaux ici, on se contente de rafraîchir l'affichage.
     if(typeof applyRoleUI==='function') applyRoleUI();
     if(typeof renderDashboard==='function') renderDashboard();
     return;
