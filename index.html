@@ -1,6 +1,10 @@
 <!DOCTYPE html>
 <html lang="fr">
 <head>
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <!-- AGV-BUILD: 20260630-0150 -->
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <meta name="mobile-web-app-capable" content="yes">
@@ -9733,6 +9737,7 @@ function printVentesJour(){
 }
 
 function printVentesJourPDF(){
+  if(typeof showToast==='function') showToast('⏳ Préparation du rapport...');
   var dk = (typeof _vFilterDay!=='undefined' && _vFilterDay)
     ? _vFilterDay
     : new Date().toISOString().slice(0,10);
@@ -11603,13 +11608,23 @@ function agvBlobPrint(css, body, titre){
     +'</head><body>'+body+btnBar+jpegScript+'</body></html>';
   var blob=new Blob([fullHtml],{type:'text/html'});
   var url=URL.createObjectURL(blob);
-  var win=window.open(url,'_blank');
-  if(!win){
-    var ifr=document.getElementById('_agv_print_frame');
-    if(!ifr){ ifr=document.createElement('iframe'); ifr.id='_agv_print_frame'; ifr.style.cssText='position:fixed;top:0;left:0;width:100%;height:100%;z-index:9999;border:none;background:#fff'; document.body.appendChild(ifr); }
-    ifr.src=url;
+  // Essai 1: window.open (peut être bloqué)
+  var win=null;
+  try{ win=window.open(url,'_blank'); }catch(e){}
+  if(win){
+    win.focus();
+    setTimeout(function(){ URL.revokeObjectURL(url); }, 3000);
+    return;
   }
-  setTimeout(function(){ if(win){win.focus();} URL.revokeObjectURL(url); }, 800);
+  // Essai 2: <a> avec target=_blank (jamais bloqué)
+  var a=document.createElement('a');
+  a.href=url;
+  a.target='_blank';
+  a.rel='noopener';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(function(){ URL.revokeObjectURL(url); }, 3000);
 }
 
 
