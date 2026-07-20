@@ -11,6 +11,14 @@
 <meta name="theme-color" content="#1a3a8f">
 <title>App AGV — Gestions de Vente</title>
 <link rel="manifest" href="manifest.json">
+<meta name="description" content="App AGV — Application de Gestions de Vente. Stocks, ventes, factures, dettes, salaires.">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="App AGV">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" sizes="192x192" href="icons/icon-192.png">
+<link rel="apple-touch-icon" sizes="512x512" href="icons/icon-512.png">
+<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js" crossorigin="anonymous"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js" crossorigin="anonymous"></script>
@@ -498,6 +506,69 @@ body{font-family:'DM Sans',sans-serif;background:#060d24;color:#e2e8f0;min-heigh
   .btn-whatsapp{background:#25D366;color:#fff;border-color:#25D366;display:flex;align-items:center;gap:5px}
   .btn-whatsapp:hover{background:#1ebe5d}
 
+</style>
+
+<style id="agv-responsive-plus">
+/* ===== AGV RESPONSIVE+ — Android / iPhone / Tablette / PC ===== */
+html,body{overflow-x:hidden;max-width:100vw;-webkit-text-size-adjust:100%}
+body{min-height:100vh;min-height:100dvh}
+img,svg,video,canvas{max-width:100%}
+*{-webkit-tap-highlight-color:transparent}
+.table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+input,select,textarea,button{max-width:100%}
+
+/* --- TABLETTE (481px – 1024px) --- */
+@media(min-width:481px) and (max-width:1024px){
+  .main{padding:18px 16px !important}
+  .stats{grid-template-columns:repeat(2,1fr) !important;gap:12px !important}
+  .modal{max-width:min(640px,94vw) !important}
+  .card{padding:16px !important}
+  table{font-size:13px}
+  .topbar h1{font-size:18px !important}
+}
+
+/* --- SMARTPHONE : compléments (≤480px) --- */
+@media(max-width:480px){
+  /* Empêche le zoom automatique iOS sur les champs */
+  input,select,textarea{font-size:16px !important}
+  /* Encoche / barre de gestes (iPhone & Android) */
+  .sidebar{padding-bottom:env(safe-area-inset-bottom) !important}
+  .main{padding-bottom:calc(84px + env(safe-area-inset-bottom)) !important}
+  .overlay .modal{padding-bottom:calc(16px + env(safe-area-inset-bottom))}
+  /* Boutons plus faciles à toucher */
+  .fb,.btn{min-height:44px}
+  /* Grilles multi-colonnes -> 1 colonne */
+  [style*="grid-template-columns:1fr 1fr 1fr"]{grid-template-columns:1fr 1fr !important}
+  /* Sync indicator plus discret */
+  #syncIndicator{top:6px;right:8px;padding:4px 10px}
+  /* Titres de landing */
+  h1{word-break:break-word}
+}
+
+/* --- TRÈS PETITS ÉCRANS (≤360px) --- */
+@media(max-width:360px){
+  .stats{grid-template-columns:1fr !important}
+  .fg2{grid-template-columns:1fr !important}
+  .nav-item{min-width:48px !important;padding:5px 7px !important}
+}
+
+/* --- MODE PWA INSTALLÉ (standalone) --- */
+@media all and (display-mode: standalone){
+  body{padding-top:env(safe-area-inset-top)}
+}
+
+/* ===== COMPTES ENREGISTRÉS (multi-comptes) ===== */
+.agv-accounts-wrap{width:100%;max-width:420px;margin:0 auto 18px}
+.agv-accounts-title{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#475569;margin-bottom:8px;text-align:left}
+.agv-account-chip{display:flex;align-items:center;gap:10px;width:100%;background:rgba(10,22,40,0.85);border:1px solid rgba(37,99,235,0.28);border-radius:12px;padding:10px 12px;margin-bottom:8px;cursor:pointer;transition:.15s;text-align:left}
+.agv-account-chip:hover{border-color:#2563eb;background:rgba(37,99,235,0.1)}
+.agv-account-ava{width:38px;height:38px;border-radius:10px;background:rgba(37,99,235,0.15);display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;overflow:hidden}
+.agv-account-ava img{width:100%;height:100%;object-fit:cover}
+.agv-account-info{flex:1;min-width:0}
+.agv-account-name{font-size:13px;font-weight:700;color:#e2e8f0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.agv-account-sub{font-size:11px;color:#64748b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.agv-account-del{flex-shrink:0;width:28px;height:28px;border:none;border-radius:8px;background:rgba(239,68,68,0.1);color:#ef4444;font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-family:inherit}
+.agv-account-del:hover{background:rgba(239,68,68,0.25)}
 </style>
 </head>
 <body>
@@ -1915,7 +1986,7 @@ function agvInstall(){if(_pwaP){_pwaP.prompt();_pwaP.userChoice.then(function(){
 if('serviceWorker' in navigator){
   navigator.serviceWorker.getRegistrations().then(function(r){
     Promise.all(r.map(function(x){return x.unregister();})).then(function(){
-      navigator.serviceWorker.register('./sw.js?v=12');
+      navigator.serviceWorker.register('./sw.js?v=13');
     });
   });
 }
@@ -12225,4 +12296,313 @@ function saveReglerDette(){
 
 
     
+
+<!-- ============================================================
+     MODULE AGV : SESSION AUTOMATIQUE + MULTI-COMPTES + PWA
+     (Ajouté sans modifier la logique métier existante)
+     ============================================================ -->
+<script>
+(function(){
+'use strict';
+var SESSION_KEY  = 'agv_session_v1';
+var ACCOUNTS_KEY = 'agv_accounts_v1';
+var SESSION_DAYS = 30; // durée de validité d'une session
+
+/* ---------- Hachage sécurisé (aucun mot de passe en clair) ---------- */
+function fnv(str){ // repli si crypto.subtle indisponible (http)
+  var h=0x811c9dc5;
+  for(var i=0;i<str.length;i++){h^=str.charCodeAt(i);h=(h*0x01000193)>>>0;}
+  return 'f'+h.toString(16);
+}
+function agvHash(str){
+  try{
+    if(window.crypto && crypto.subtle && window.TextEncoder){
+      return crypto.subtle.digest('SHA-256', new TextEncoder().encode(str)).then(function(buf){
+        var a=Array.prototype.slice.call(new Uint8Array(buf));
+        return 's'+a.map(function(b){return ('0'+b.toString(16)).slice(-2);}).join('');
+      }).catch(function(){ return fnv(str); });
+    }
+  }catch(e){}
+  return Promise.resolve(fnv(str));
+}
+function secretPayload(code, role, gid, secret){
+  return 'AGV|'+String(code||'').toUpperCase()+'|'+role+'|'+(gid||'')+'|'+String(secret||'');
+}
+
+/* ---------- Stockage ---------- */
+function getSession(){ try{return JSON.parse(localStorage.getItem(SESSION_KEY)||'null');}catch(e){return null;} }
+function setSession(s){ try{localStorage.setItem(SESSION_KEY, JSON.stringify(s));}catch(e){} }
+function clearSession(){ try{localStorage.removeItem(SESSION_KEY);}catch(e){} }
+function getAccounts(){ try{return JSON.parse(localStorage.getItem(ACCOUNTS_KEY)||'[]');}catch(e){return [];} }
+function setAccounts(a){ try{localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(a));}catch(e){} }
+window.agvDeleteAccount = function(key, ev){
+  if(ev){ev.stopPropagation();ev.preventDefault();}
+  var accts = getAccounts().filter(function(a){return a.key!==key;});
+  setAccounts(accts);
+  var s = getSession();
+  if(s && s.key===key) clearSession();
+  renderAccountLists();
+};
+
+/* ---------- Récupérer le code secret courant d'un compte ---------- */
+function findGerantCode(shop, gerantId, cb){
+  // 1) tableau global en mémoire
+  try{
+    if(window.gerants && window.gerants.length){
+      var g = window.gerants.find(function(x){return x.id===gerantId;});
+      if(g){ cb(g.code||null, g.nom||null); return; }
+    }
+  }catch(e){}
+  // 2) cache localStorage de la boutique
+  try{
+    var raw = localStorage.getItem('agv_'+shop.uid+'_gerants');
+    if(raw){
+      var arr = JSON.parse(raw)||[];
+      var g2 = arr.find(function(x){return x.id===gerantId;});
+      if(g2){ cb(g2.code||null, g2.nom||null); return; }
+    }
+  }catch(e){}
+  // 3) Firebase
+  try{
+    db.ref('gdv_shops/'+shop.uid+'/data/gerants').once('value',function(snap){
+      var v = snap.val(); var arr = v ? (Array.isArray(v)?v:Object.values(v)) : [];
+      var g3 = arr.find(function(x){return x.id===gerantId;});
+      cb(g3?(g3.code||null):null, g3?(g3.nom||null):null);
+    }, function(){ cb(null,null); });
+  }catch(e){ cb(null,null); }
+}
+
+/* ---------- Sauvegarde de session + compte à chaque connexion réussie ---------- */
+function persistLogin(shop){
+  try{
+    var role = window.currentRole;
+    if(role!=='fondateur' && role!=='gerant') return; // rôle non encore choisi : ne pas mémoriser
+    var gid  = window.currentGerantId || null;
+    var code = (shop.codeAcces || shop.code_acces || window._lastShopCode || '').toUpperCase();
+    if(!code || !shop.uid) return;
+    var key  = code+'|'+role+'|'+(gid||'');
+
+    function save(secret, gerantNom){
+      function done(vh){
+        var now = Date.now();
+        var sess = {key:key, code:code, uid:shop.uid, role:role, gerantId:gid,
+                    gerantNom:gerantNom||null, vh:vh||null,
+                    exp: now + SESSION_DAYS*24*60*60*1000};
+        setSession(sess);
+        // Liste des comptes de l'appareil
+        var accts = getAccounts().filter(function(a){return a.key!==key;});
+        accts.unshift({key:key, code:code, uid:shop.uid, role:role, gerantId:gid,
+                       gerantNom:gerantNom||null, name:shop.entreprise||code,
+                       ville:shop.ville||'', logo:shop.logo||null, vh:vh||null, last:now});
+        if(accts.length>8) accts = accts.slice(0,8); // max 8 comptes
+        setAccounts(accts);
+        renderAccountLists();
+      }
+      if(secret){ agvHash(secretPayload(code, role, gid, secret)).then(done); }
+      else done(null);
+    }
+
+    if(role==='fondateur'){
+      save(shop.codeFondateur||null, null);
+    } else {
+      // essayer de lire le nom depuis le select de la page de connexion
+      var nom=null;
+      try{
+        var sel=document.getElementById('sl-gerant-select');
+        var opt=sel?sel.querySelector('option[value="'+gid+'"]'):null;
+        if(opt){ nom=(opt.textContent||'').split('—')[0].trim(); if(opt.dataset.code){ save(opt.dataset.code, nom); return; } }
+      }catch(e){}
+      findGerantCode(shop, gid, function(codeG, nomG){ save(codeG, nom||nomG); });
+    }
+  }catch(e){}
+}
+
+/* ---------- Wrapping des fonctions existantes (aucune logique modifiée) ---------- */
+var _origLaunch = window.agvLaunchApp;
+window.agvLaunchApp = function(shop){
+  var r = _origLaunch.apply(this, arguments);
+  try{ if(shop && !window._agvAutoLoginInProgress) persistLogin(shop); }catch(e){}
+  window._agvAutoLoginInProgress = false;
+  return r;
+};
+var _origStartApp = window.startApp;
+if(typeof _origStartApp==='function'){
+  window.startApp = function(){
+    var r = _origStartApp.apply(this, arguments);
+    try{ if(window._currentShop) persistLogin(window._currentShop); }catch(e){}
+    return r;
+  };
+}
+var _origLogout = window.doLogout;
+window.doLogout = function(){
+  clearSession(); // la session active est supprimée, la liste des comptes est conservée
+  var r = _origLogout.apply(this, arguments);
+  renderAccountLists();
+  return r;
+};
+
+/* ---------- Vérification d'un compte / d'une session ---------- */
+function verifyAndLogin(entry, onFail){
+  var code = entry.code;
+  function proceed(shop){
+    if(!shop){ if(onFail)onFail('Boutique introuvable'); return; }
+    shop.uid = shop.uid || entry.uid;
+    if(shop.blocked){ clearSession(); if(onFail)onFail('Accès suspendu'); return; }
+    if(shop.dateExpiration && shop.licenceStatut!=='actif'){
+      try{ if(new Date() > new Date(shop.dateExpiration)){ clearSession(); if(onFail)onFail('Licence expirée'); return; } }catch(e){}
+    }
+    function launch(){
+      window._currentShop = shop;
+      window.currentRole = entry.role;
+      window.currentGerantId = entry.gerantId || null;
+      window._lastShopCode = code;
+      window._shopLoginData = shop;
+      window._agvAutoLoginInProgress = true;
+      // rafraîchir la session (glissante)
+      var s = getSession()||{};
+      if(s.key===entry.key){ s.exp = Date.now()+SESSION_DAYS*24*60*60*1000; setSession(s); }
+      agvLaunchApp(shop);
+    }
+    if(!entry.vh){ if(onFail)onFail(null); return; } // pas de jeton -> demander le code
+    if(entry.role==='fondateur'){
+      agvHash(secretPayload(code,'fondateur',null,shop.codeFondateur||'')).then(function(h){
+        if(h===entry.vh) launch(); else { clearSession(); if(onFail)onFail('Le code a changé'); }
+      });
+    } else {
+      findGerantCode(shop, entry.gerantId, function(codeG){
+        if(!codeG){ if(onFail)onFail('Gérant introuvable'); return; }
+        agvHash(secretPayload(code,'gerant',entry.gerantId,codeG)).then(function(h){
+          if(h===entry.vh) launch(); else { clearSession(); if(onFail)onFail('Le code a changé'); }
+        });
+      });
+    }
+  }
+  // Cache d'abord (instantané + hors ligne), Firebase sinon
+  var cached=null;
+  try{ cached=JSON.parse(localStorage.getItem('agv_shop_'+code)||'null'); }catch(e){}
+  if(cached){ proceed(cached); return; }
+  try{
+    db.ref('gdv_codes/'+code).once('value',function(sc){
+      var uid=sc.val()||entry.uid;
+      if(!uid){ if(onFail)onFail('Code introuvable'); return; }
+      db.ref('gdv_shops/'+uid+'/info').once('value',function(si){
+        var shop=si.val(); if(shop){shop.uid=uid; try{localStorage.setItem('agv_shop_'+code,JSON.stringify(shop));}catch(e){}}
+        proceed(shop);
+      });
+    });
+  }catch(e){ if(onFail)onFail('Hors ligne'); }
+}
+
+/* ---------- Sélection d'un compte depuis la liste ---------- */
+window.agvUseAccount = function(key){
+  var entry = getAccounts().find(function(a){return a.key===key;});
+  if(!entry) return;
+  verifyAndLogin(entry, function(reason){
+    // Repli : ouvrir la page de connexion de la boutique (code à ressaisir)
+    window._lastShopCode = entry.code;
+    agvShow('agv-shop-login');
+    agvLoadShopLogin(entry.code);
+    if(reason){
+      setTimeout(function(){ if(typeof agvShopLoginMsg==='function') agvShopLoginMsg(reason+'. Veuillez vous reconnecter.', false); }, 600);
+    }
+  });
+};
+
+/* ---------- Rendu de la liste des comptes ---------- */
+function accountChipHTML(a){
+  var ava = a.logo ? '<img src="'+a.logo+'" alt="">' : (a.role==='fondateur' ? '&#x1F451;' : '&#x1F9D1;&#x200D;&#x1F4BC;');
+  var roleTxt = a.role==='fondateur' ? 'Fondateur' : ('G&#233;rant'+(a.gerantNom?' &middot; '+String(a.gerantNom).replace(/</g,'&lt;'):''));
+  var name = String(a.name||a.code).replace(/</g,'&lt;');
+  return '<div class="agv-account-chip" role="button" tabindex="0" onclick="agvUseAccount(\''+a.key.replace(/'/g,"\\'")+'\')" onkeydown="if(event.key===\'Enter\')agvUseAccount(\''+a.key.replace(/'/g,"\\'")+'\')">'
+    + '<div class="agv-account-ava">'+ava+'</div>'
+    + '<div class="agv-account-info"><div class="agv-account-name">'+name+'</div>'
+    + '<div class="agv-account-sub">'+roleTxt+' &middot; '+a.code+'</div></div>'
+    + '<button class="agv-account-del" title="Retirer ce compte de cet appareil" onclick="agvDeleteAccount(\''+a.key.replace(/'/g,"\\'")+'\',event)">&#x2715;</button>'
+    + '</div>';
+}
+function renderAccountLists(){
+  var accts = getAccounts();
+  // 1) Page d'accueil (sous le champ code)
+  var landing = document.getElementById('agv-landing');
+  var host = document.getElementById('agv-accounts-landing');
+  if(landing){
+    if(!host){
+      var anchor = document.getElementById('landing-code-msg');
+      if(anchor && anchor.parentElement){
+        host = document.createElement('div');
+        host.id='agv-accounts-landing';
+        anchor.parentElement.appendChild(host);
+      }
+    }
+    if(host){
+      host.innerHTML = accts.length
+        ? '<div class="agv-accounts-wrap" style="margin-top:16px"><div class="agv-accounts-title">Comptes utilis&#233;s sur cet appareil</div>'
+          + accts.map(accountChipHTML).join('') + '</div>'
+        : '';
+    }
+  }
+  // 2) Page de connexion boutique (comptes de CETTE boutique)
+  var slMsg = document.getElementById('shop-login-msg');
+  var host2 = document.getElementById('agv-accounts-shoplogin');
+  if(slMsg && slMsg.parentElement){
+    var code = (window._lastShopCode||'').toUpperCase();
+    var mine = accts.filter(function(a){return a.code===code;});
+    if(!host2){
+      host2 = document.createElement('div');
+      host2.id='agv-accounts-shoplogin';
+      slMsg.parentElement.insertBefore(host2, slMsg.nextSibling);
+    }
+    host2.innerHTML = mine.length
+      ? '<div class="agv-accounts-wrap" style="max-width:none;margin-bottom:16px"><div class="agv-accounts-title">Connexion rapide</div>'
+        + mine.map(accountChipHTML).join('') + '</div>'
+      : '';
+  }
+}
+window._agvRenderAccounts = renderAccountLists;
+
+/* La page de connexion boutique est régénérée dynamiquement : ré-injecter la liste */
+if(typeof window.agvRenderShopLogin==='function'){
+  var _origRender = window.agvRenderShopLogin;
+  window.agvRenderShopLogin = function(){
+    var r = _origRender.apply(this, arguments);
+    setTimeout(renderAccountLists, 250);
+    return r;
+  };
+}
+
+/* ---------- Connexion automatique au démarrage ---------- */
+function tryAutoLogin(){
+  var s = getSession();
+  if(!s) { renderAccountLists(); return; }
+  if(!s.exp || Date.now() > s.exp){ clearSession(); renderAccountLists(); return; }
+  // Respecter un lien direct ?shop=AUTRECODE
+  try{
+    var p = new URLSearchParams(window.location.search).get('shop');
+    if(p && p.toUpperCase() !== s.code){ renderAccountLists(); return; }
+  }catch(e){}
+  verifyAndLogin(s, function(){ clearSession(); renderAccountLists(); });
+}
+
+/* S'exécute APRÈS le DOMContentLoaded existant (ordre d'enregistrement) */
+if(document.readyState==='loading'){
+  window.addEventListener('DOMContentLoaded', function(){ setTimeout(tryAutoLogin, 50); });
+} else {
+  setTimeout(tryAutoLogin, 50);
+}
+
+/* ---------- Indicateur en ligne / hors ligne ---------- */
+window.addEventListener('online',  function(){ if(typeof agvSetOnlineStatus==='function' && window._currentShop) agvSetOnlineStatus(true); });
+window.addEventListener('offline', function(){ if(typeof agvSetOnlineStatus==='function' && window._currentShop) agvSetOnlineStatus(false); });
+
+/* ---------- Mise à jour PWA : recharger quand un nouveau SW prend la main ---------- */
+if('serviceWorker' in navigator){
+  var _reloaded=false;
+  navigator.serviceWorker.addEventListener('controllerchange', function(){
+    if(_reloaded) return; _reloaded=true;
+    // pas de rechargement forcé pendant une saisie : uniquement si aucune boutique ouverte
+    if(!window._currentShop) window.location.reload();
+  });
+}
+})();
+</script>
 </body></html>
