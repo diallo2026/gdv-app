@@ -1,24 +1,12 @@
 <!DOCTYPE html>
 <html lang="fr">
 <head>
-  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
-  <meta http-equiv="Pragma" content="no-cache">
-  <meta http-equiv="Expires" content="0">
-  <!-- AGV-BUILD: 20260630-0150 -->
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#1a3a8f">
 <title>App AGV — Gestions de Vente</title>
 <link rel="manifest" href="manifest.json">
-<meta name="description" content="App AGV — Application de Gestions de Vente. Stocks, ventes, factures, dettes, salaires.">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="App AGV">
-<link rel="apple-touch-icon" href="icons/icon-192.png">
-<link rel="apple-touch-icon" sizes="192x192" href="icons/icon-192.png">
-<link rel="apple-touch-icon" sizes="512x512" href="icons/icon-512.png">
-<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js" crossorigin="anonymous"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js" crossorigin="anonymous"></script>
@@ -161,7 +149,7 @@ body{font-family:'DM Sans',sans-serif;background:#060d24;color:#e2e8f0;min-heigh
 
   *{margin:0;padding:0;box-sizing:border-box}
   :root{
-    --bg:#f5f3ef;--surface:#ffffff;--surface2:#f9f8f6;--bg2:#f9f8f6;--border:#e8e4dc;
+    --bg:#f5f3ef;--surface:#ffffff;--surface2:#f9f8f6;--border:#e8e4dc;
     --text:#1a1714;--text2:#5c574f;--text3:#9b9590;
     --green:#1a7a4a;--green-bg:#eaf5ef;--green-border:#b6dfc8;
     --red:#c0392b;--red-bg:#fdf0ee;--red-border:#f5b8b0;
@@ -507,79 +495,8 @@ body{font-family:'DM Sans',sans-serif;background:#060d24;color:#e2e8f0;min-heigh
   .btn-whatsapp:hover{background:#1ebe5d}
 
 </style>
-
-<style id="agv-responsive-plus">
-/* ===== AGV RESPONSIVE+ — Android / iPhone / Tablette / PC ===== */
-html,body{overflow-x:hidden;max-width:100vw;-webkit-text-size-adjust:100%}
-body{min-height:100vh;min-height:100dvh}
-img,svg,video,canvas{max-width:100%}
-*{-webkit-tap-highlight-color:transparent}
-.table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
-input,select,textarea,button{max-width:100%}
-
-/* --- TABLETTE (481px – 1024px) --- */
-@media(min-width:481px) and (max-width:1024px){
-  .main{padding:18px 16px !important}
-  .stats{grid-template-columns:repeat(2,1fr) !important;gap:12px !important}
-  .modal{max-width:min(640px,94vw) !important}
-  .card{padding:16px !important}
-  table{font-size:13px}
-  .topbar h1{font-size:18px !important}
-}
-
-/* --- SMARTPHONE : compléments (≤480px) --- */
-@media(max-width:480px){
-  /* Empêche le zoom automatique iOS sur les champs */
-  input,select,textarea{font-size:16px !important}
-  /* Encoche / barre de gestes (iPhone & Android) */
-  .sidebar{padding-bottom:env(safe-area-inset-bottom) !important}
-  .main{padding-bottom:calc(84px + env(safe-area-inset-bottom)) !important}
-  .overlay .modal{padding-bottom:calc(16px + env(safe-area-inset-bottom))}
-  /* Boutons plus faciles à toucher */
-  .fb,.btn{min-height:44px}
-  /* Grilles multi-colonnes -> 1 colonne */
-  [style*="grid-template-columns:1fr 1fr 1fr"]{grid-template-columns:1fr 1fr !important}
-  /* Sync indicator plus discret */
-  #syncIndicator{top:6px;right:8px;padding:4px 10px}
-  /* Titres de landing */
-  h1{word-break:break-word}
-}
-
-/* --- TRÈS PETITS ÉCRANS (≤360px) --- */
-@media(max-width:360px){
-  .stats{grid-template-columns:1fr !important}
-  .fg2{grid-template-columns:1fr !important}
-  .nav-item{min-width:48px !important;padding:5px 7px !important}
-}
-
-/* --- MODE PWA INSTALLÉ (standalone) --- */
-@media all and (display-mode: standalone){
-  body{padding-top:env(safe-area-inset-top)}
-}
-
-/* ===== COMPTES ENREGISTRÉS (multi-comptes) ===== */
-.agv-accounts-wrap{width:100%;max-width:420px;margin:0 auto 18px}
-.agv-accounts-title{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#475569;margin-bottom:8px;text-align:left}
-.agv-account-chip{display:flex;align-items:center;gap:10px;width:100%;background:rgba(10,22,40,0.85);border:1px solid rgba(37,99,235,0.28);border-radius:12px;padding:10px 12px;margin-bottom:8px;cursor:pointer;transition:.15s;text-align:left}
-.agv-account-chip:hover{border-color:#2563eb;background:rgba(37,99,235,0.1)}
-.agv-account-ava{width:38px;height:38px;border-radius:10px;background:rgba(37,99,235,0.15);display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;overflow:hidden}
-.agv-account-ava img{width:100%;height:100%;object-fit:cover}
-.agv-account-info{flex:1;min-width:0}
-.agv-account-name{font-size:13px;font-weight:700;color:#e2e8f0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.agv-account-sub{font-size:11px;color:#64748b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.agv-account-del{flex-shrink:0;width:28px;height:28px;border:none;border-radius:8px;background:rgba(239,68,68,0.1);color:#ef4444;font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-family:inherit}
-.agv-account-del:hover{background:rgba(239,68,68,0.25)}
-</style>
-
 </head>
 <body>
-<!-- Voile de chargement initial : masque tout flash "page d'accueil" pendant
-     la vérification de la session. Retiré automatiquement par le script de
-     session (succès, échec, ou après 4s au plus tard — jamais bloquant). -->
-<div id="agv-boot-cover" style="position:fixed;inset:0;z-index:9999;background:#060d24;display:flex;align-items:center;justify-content:center;font-family:'DM Sans',sans-serif">
-  <div style="width:34px;height:34px;border-radius:50%;border:3px solid rgba(96,165,250,0.25);border-top-color:#60a5fa;animation:agvBootSpin .8s linear infinite"></div>
-</div>
-<style>@keyframes agvBootSpin{to{transform:rotate(360deg)}}</style>
 <div id="syncIndicator"><span id="syncDot"></span><span id="syncText">En ligne</span></div>
 
 <!-- ==================== AGV SCRIPT ==================== -->
@@ -776,7 +693,7 @@ function agvRegister(){
   if(fondCode.length<3){agvMsg('Le code fondateur doit faire au moins 3 caractères',false);return;}
   var btn=document.getElementById('r-btn');
   if(btn){btn.disabled=true;btn.textContent='Creation...';}
-  db.ref('gdv_shops').orderByChild('info/email').equalTo(email).once('value',function(snap){ // [AUDIT] chemin corrigé : l'email est sous info/email — l'anti-doublon fonctionne désormais (+ .indexOn côté règles)
+  db.ref('gdv_shops').orderByChild('email').equalTo(email).once('value',function(snap){
     if(snap.exists()){
       agvMsg('Cet email est deja utilise. Connectez-vous.',false);
       if(btn){btn.disabled=false;btn.textContent='Creer mon compte';}
@@ -797,22 +714,8 @@ function agvRegister(){
         licenceStatut:'essai',
         licencePeriode:'essai_60j'};
       // Sauvegarder la boutique ET l'index code->uid pour recherche rapide
-      // [AUDIT] anti-collision : le code est réservé ATOMIQUEMENT (transaction).
-      // Si le code généré existe déjà, on en régénère un — impossible d'écraser
-      // l'index d'une autre boutique (corruption relationnelle éliminée).
-      (function agvClaimCode(attempt){
-        db.ref('gdv_codes/'+code).transaction(function(cur){
-          if(cur===null || cur===uid) return uid;
-          return; // abandon : code déjà attribué à une autre boutique
-        }, function(err, committed){
-          if(err || !committed){
-            if(attempt < 5){ code = agvGenCode(); shop.codeAcces = code; agvClaimCode(attempt+1); return; }
-            // repli ultime (probabilité ~0) : écriture directe pour ne pas bloquer l'inscription
-            db.ref('gdv_codes/'+code).set(uid);
-          }
-          db.ref('gdv_shops/'+uid+'/info').set(shop);
-        });
-      })(0);
+      db.ref('gdv_shops/'+uid+'/info').set(shop);
+      db.ref('gdv_codes/'+code).set(uid); // Index pour recherche instantanée
       window._lastCreatedShop = shop; // Disponible immédiatement
       db.ref('gdv_shops/'+uid+'/info').once('value').then(function(){
         // Envoyer email
@@ -1088,60 +991,20 @@ function agvLaunchApp(shop){
   var appEl=document.getElementById('app'); if(appEl)appEl.classList.add('visible');
 
   // Firebase sync pour cette boutique
-  // [AUDIT] Sauvegarde renforcée :
-  //  - update() au lieu de set() : n'écrase plus les clés non listées du nœud
-  //    /data (une future collection ou une clé écrite par un autre appareil
-  //    n'est plus supprimée) — même résultat pour les collections existantes.
-  //  - _meta.updatedAt (horloge serveur) : traçabilité des écritures concurrentes.
-  //  - échecs d'écriture désormais VISIBLES (avant : promesse sans catch,
-  //    l'utilisateur croyait ses données sauvegardées).
-  //  - anti-rafale : 1ʳᵉ écriture immédiate, les appels rapprochés (<600 ms)
-  //    sont fusionnés en une écriture de queue — moins de bande passante,
-  //    moins de conflits, aucun changement de comportement perçu.
-  //  - rejeu automatique de l'écriture en attente au retour du réseau.
-  window.sauvegarderFirebase=(function(){
-    var GAP=600, timer=null, lastWrite=0, pendingQueue=false;
-    function buildPayload(){
-      var p={products:products,ventes:ventes,depenses:depenses,gerants:gerants,
-        entrees:entrees,appros:appros,repConfig:repConfig,
-        dettes:dettes,clients:clients,factureVentes:factureVentes,
-        fournisseurs:fournisseurs||[],commandes:commandes||[]};
-      try{ p._meta={updatedAt:firebase.database.ServerValue.TIMESTAMP,
-                    by:(currentRole||'inconnu')+(currentGerantId?(':'+currentGerantId):'')}; }catch(e){}
-      return p;
-    }
-    function okUI(){
+  window.sauvegarderFirebase=function(){
+    // Protection: ne jamais écraser Firebase avant que les données soient chargées
+    if(!window._AGV_READY) return;
+    db.ref('gdv_shops/'+shop.uid+'/data').set({
+      products:products,ventes:ventes,depenses:depenses,gerants:gerants,
+      entrees:entrees,appros:appros,repConfig:repConfig,
+      dettes:dettes,clients:clients,factureVentes:factureVentes,
+      fournisseurs:fournisseurs||[],commandes:commandes||[]
+    }).then(function(){
       var ind=document.getElementById('syncIndicator');
       if(ind){ind.textContent='Sauvegarde ✓';ind.style.color='#22c55e';
         setTimeout(function(){ind.textContent='Cloud actif';ind.style.color='#2563eb';},2000);}
-    }
-    function failUI(){
-      pendingQueue=true;
-      agvSetOnlineStatus(false);
-      try{ showToast('⚠️ Sauvegarde en attente — reconnexion en cours'); }catch(e){}
-    }
-    function writeNow(){
-      lastWrite=Date.now(); timer=null;
-      db.ref('gdv_shops/'+shop.uid+'/data').update(buildPayload())
-        .then(function(){ pendingQueue=false; okUI(); })
-        .catch(failUI);
-    }
-    function save(){
-      if(!window._AGV_READY) return;
-      var since=Date.now()-lastWrite;
-      if(since>=GAP && !timer){ writeNow(); }                 // écriture immédiate
-      else if(!timer){ timer=setTimeout(writeNow, GAP-Math.max(0,since)); } // fusion de queue
-      pendingQueue=true;
-    }
-    save.flush=function(){ if(timer){clearTimeout(timer);} if(pendingQueue&&window._AGV_READY) writeNow(); };
-    // rejeu à la reconnexion + avant mise en veille de l'onglet (une seule fois)
-    if(!window._agvSaveHooks){
-      window._agvSaveHooks=true;
-      window.addEventListener('online', function(){ if(window.sauvegarderFirebase&&window.sauvegarderFirebase.flush) window.sauvegarderFirebase.flush(); });
-      document.addEventListener('visibilitychange', function(){ if(document.visibilityState==='hidden'&&window.sauvegarderFirebase&&window.sauvegarderFirebase.flush) window.sauvegarderFirebase.flush(); });
-    }
-    return save;
-  })();
+    });
+  };
 
   // Cache localStorage pour affichage INSTANTANE
   var cacheKey = 'agv_cache_' + shop.uid;
@@ -1201,12 +1064,9 @@ function agvLaunchApp(shop){
   ref.on('value', function(snap){
     var data = snap.val();
     if(data) try{ localStorage.setItem(cacheKey, JSON.stringify(data)); }catch(e){}
-    // CORRECTIF DÉFINITIF : ne JAMAIS vider les tableaux avant applyData.
-    // applyData() met déjà à jour chaque champ individuellement (if(data.X) X=...).
-    // Vider ici créait une fenêtre où, si Firebase renvoyait un snapshot partiel
-    // ou en cours de propagation (ventes temporairement absent du snapshot),
-    // les ventes restaient vides DÉFINITIVEMENT car rien ne les remplissait plus.
-    // C'était la cause des disparitions de ventes signalées par les boutiques.
+    // Reset + rechargement uniquement si les données ont changé
+    products=[]; ventes=[]; depenses=[]; gerants=[];
+    entrees=[]; appros=[]; repConfig=[]; dettes=[]; clients=[]; factureVentes=[];
     applyData(data);
     window._AGV_READY = true;
     agvSetOnlineStatus(true);
@@ -2048,7 +1908,7 @@ function agvInstall(){if(_pwaP){_pwaP.prompt();_pwaP.userChoice.then(function(){
 if('serviceWorker' in navigator){
   navigator.serviceWorker.getRegistrations().then(function(r){
     Promise.all(r.map(function(x){return x.unregister();})).then(function(){
-      navigator.serviceWorker.register('./sw.js?v=13');
+      navigator.serviceWorker.register('./sw.js?v=12');
     });
   });
 }
@@ -2065,11 +1925,7 @@ window.addEventListener('DOMContentLoaded',function(){
     if(devCached) window._devShopsCache=devCached;
   }catch(e){}
   // Syncer Firebase en arrière-plan après 3s (pas bloquant)
-  // [AUDIT] uniquement sur un poste concepteur : évite de télécharger la base
-  // ENTIÈRE (toutes boutiques, ventes, clients...) chez chaque visiteur —
-  // fuite de données et gaspillage de bande passante corrigés.
   setTimeout(function(){
-    if(!localStorage.getItem('agv_dev_shops')) return;
     db.ref('gdv_shops').once('value',function(snap){
       var shops=[];
       snap.forEach(function(c){var info=c.val()&&c.val().info;if(info)shops.push(info);});
@@ -4747,13 +4603,29 @@ window._boutique = {
 };
 
 // ===== SAUVEGARDE FIREBASE =====
-// CORRECTIF DÉFINITIF : cette redéfinition pointait vers db.ref('boutique'),
-// un chemin Firebase générique sans lien avec la boutique réelle, alors que
-// TOUT le reste de l'application (lecture, listener temps réel) utilise
-// gdv_shops/{uid}/data. Résultat : chaque vente enregistrée via saveAll()
-// partait dans le vide et disparaissait au rechargement.
-// La VRAIE fonction sauvegarderFirebase (qui écrit au bon endroit) est déjà
-// définie plus haut dans le fichier — on ne la redéfinit plus ici.
+window.sauvegarderFirebase = function() {
+  if(!window._AGV_READY) return; // Protection contre l'écrasement avant chargement
+  try {
+    var data = {
+      products: products,
+      ventes:   ventes,
+      depenses: depenses,
+      gerants:  gerants,
+      entrees:  entrees,
+      appros:   appros,
+      repConfig:     repConfig,
+      dettes:        dettes,
+      clients:       clients,
+      factureVentes: factureVentes
+    };
+    db.ref('boutique').set(data).then(function(){
+      console.log('✅ Firebase boutique OK');
+      var ind = document.getElementById('syncIndicator');
+      if(ind){ ind.textContent='🟢 Synchronisé'; ind.style.color='#1a7a4a';
+        setTimeout(function(){ ind.textContent='☁️ Cloud actif'; ind.style.color='#2563eb'; },2000); }
+    }).catch(function(e){ console.error('❌ Firebase erreur:', e); });
+  } catch(e){ console.error('Firebase save error:', e); }
+};
 
 // Convertit un objet Firebase en vrai Array
 function toArray(val) {
@@ -4803,12 +4675,23 @@ function appliquerDonneesFirebase(data) {
 }
 
 // ===== ECOUTE TEMPS REEL =====
-// CORRECTIF DÉFINITIF : ce listener écoutait db.ref('boutique'), un chemin
-// générique sans rapport avec la boutique connectée. Il pouvait écraser
-// silencieusement les données (products, ventes, etc.) avec un snapshot vide
-// ou obsolète de ce mauvais chemin. Le VRAI listener temps réel, qui écoute
-// gdv_shops/{uid}/data (le bon chemin par boutique), est déjà actif plus haut
-// dans le fichier — celui-ci est retiré pour éviter tout conflit.
+db.ref('boutique').on('value', function(snapshot) {
+  var data = snapshot.val();
+  console.log('🔥 Firebase boutique reçu:', data ? 'OUI' : 'VIDE');
+  if (!data) { return; }
+  // Toujours stocker les dernières données
+  window._firebaseData = data;
+  // Appliquer si l'app est ouverte
+  appliquerDonneesFirebase(data);
+  // Si on est sur la page de login et que le rôle gérant est sélectionné, rafraîchir la liste
+  var loginScreen = document.getElementById('login-screen');
+  var gerantWrap = document.getElementById('gerant-select-wrap');
+  if (loginScreen && loginScreen.style.display !== 'none' &&
+      gerantWrap && gerantWrap.style.display !== 'none') {
+    preloadGerantsForLogin();
+    buildGerantLoginList();
+  }
+});
 let catFilter = 'ALL';
 let stockFilter = 'all';
 let sortField = 'designation';
@@ -4824,15 +4707,9 @@ const RAW_DATA = [{"reference":"VENTGG","designation":"VENTILO GRAND GRAND","cat
 // ==================== INIT ====================
 function init(){
   if(window._currentShop){
-    // CORRECTIF DÉFINITIF : cette fonction est appelée à chaque connexion (startApp).
-    // Elle vidait products/ventes/... même si le vrai listener Firebase temps réel
-    // avait déjà chargé les données (depuis le cache local ou Firebase), sans jamais
-    // les recharger ensuite. Comme le listener ne se redéclenche qu'au PROCHAIN
-    // changement de données, les ventes restaient vides jusqu'à la prochaine vente
-    // enregistrée par quelqu'un — d'où la disparition après chaque connexion.
-    // Le chargement réel est entièrement géré par le listener Firebase
-    // (db.ref('gdv_shops/'+shop.uid+'/data').on('value', ...)) : on ne touche
-    // plus aux tableaux ici, on se contente de rafraîchir l'affichage.
+    // Mode AGV: données vides, on attend Firebase
+    products=[];ventes=[];depenses=[];gerants=[];
+    entrees=[];appros=[];repConfig=[];dettes=[];clients=[];factureVentes=[];
     if(typeof applyRoleUI==='function') applyRoleUI();
     if(typeof renderDashboard==='function') renderDashboard();
     return;
@@ -9856,7 +9733,6 @@ function printVentesJour(){
 }
 
 function printVentesJourPDF(){
-  if(typeof showToast==='function') showToast('⏳ Préparation du rapport...');
   var dk = (typeof _vFilterDay!=='undefined' && _vFilterDay)
     ? _vFilterDay
     : new Date().toISOString().slice(0,10);
@@ -11720,7 +11596,6 @@ function agvBlobPrint(css, body, titre){
     +'a.download="'+titre.replace(/[^a-z0-9]/gi,"_")+'.jpg";'
     +'a.click();});'
     +'}else{alert("Cliquez PDF puis Enregistrer comme image dans les options d\'impression");}}'
-    +'window.onload=function(){setTimeout(function(){try{window.focus();window.print();}catch(e){}},400);};'
     +'<\/script>';
   var fullHtml='<!DOCTYPE html><html><head><meta charset="UTF-8"><title>'+titre+'</title>'
     +'<style>'+css+'</style>'
@@ -11728,23 +11603,13 @@ function agvBlobPrint(css, body, titre){
     +'</head><body>'+body+btnBar+jpegScript+'</body></html>';
   var blob=new Blob([fullHtml],{type:'text/html'});
   var url=URL.createObjectURL(blob);
-  // Essai 1: window.open (peut être bloqué)
-  var win=null;
-  try{ win=window.open(url,'_blank'); }catch(e){}
-  if(win){
-    win.focus();
-    setTimeout(function(){ URL.revokeObjectURL(url); }, 3000);
-    return;
+  var win=window.open(url,'_blank');
+  if(!win){
+    var ifr=document.getElementById('_agv_print_frame');
+    if(!ifr){ ifr=document.createElement('iframe'); ifr.id='_agv_print_frame'; ifr.style.cssText='position:fixed;top:0;left:0;width:100%;height:100%;z-index:9999;border:none;background:#fff'; document.body.appendChild(ifr); }
+    ifr.src=url;
   }
-  // Essai 2: <a> avec target=_blank (jamais bloqué)
-  var a=document.createElement('a');
-  a.href=url;
-  a.target='_blank';
-  a.rel='noopener';
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  setTimeout(function(){ URL.revokeObjectURL(url); }, 3000);
+  setTimeout(function(){ if(win){win.focus();} URL.revokeObjectURL(url); }, 800);
 }
 
 
@@ -12362,354 +12227,4 @@ function saveReglerDette(){
 
 
     
-
-<!-- ============================================================
-     MODULE AGV : SESSION AUTOMATIQUE + MULTI-COMPTES + PWA
-     (Ajouté sans modifier la logique métier existante)
-     ============================================================ -->
-<script>
-(function(){
-'use strict';
-var SESSION_KEY  = 'agv_session_v1';
-var ACCOUNTS_KEY = 'agv_accounts_v1';
-var SESSION_DAYS = 30; // durée de validité d'une session
-
-/* ---------- Hachage sécurisé (aucun mot de passe en clair) ---------- */
-function fnv(str){ // repli si crypto.subtle indisponible (http)
-  var h=0x811c9dc5;
-  for(var i=0;i<str.length;i++){h^=str.charCodeAt(i);h=(h*0x01000193)>>>0;}
-  return 'f'+h.toString(16);
-}
-function agvHash(str){
-  try{
-    if(window.crypto && crypto.subtle && window.TextEncoder){
-      return crypto.subtle.digest('SHA-256', new TextEncoder().encode(str)).then(function(buf){
-        var a=Array.prototype.slice.call(new Uint8Array(buf));
-        return 's'+a.map(function(b){return ('0'+b.toString(16)).slice(-2);}).join('');
-      }).catch(function(){ return fnv(str); });
-    }
-  }catch(e){}
-  return Promise.resolve(fnv(str));
-}
-function secretPayload(code, role, gid, secret){
-  return 'AGV|'+String(code||'').toUpperCase()+'|'+role+'|'+(gid||'')+'|'+String(secret||'');
-}
-
-/* ---------- Stockage ---------- */
-function getSession(){ try{return JSON.parse(localStorage.getItem(SESSION_KEY)||'null');}catch(e){return null;} }
-function setSession(s){ try{localStorage.setItem(SESSION_KEY, JSON.stringify(s));}catch(e){} }
-function clearSession(){ try{localStorage.removeItem(SESSION_KEY);}catch(e){} }
-function getAccounts(){ try{return JSON.parse(localStorage.getItem(ACCOUNTS_KEY)||'[]');}catch(e){return [];} }
-function setAccounts(a){ try{localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(a));}catch(e){} }
-window.agvDeleteAccount = function(key, ev){
-  if(ev){ev.stopPropagation();ev.preventDefault();}
-  var accts = getAccounts().filter(function(a){return a.key!==key;});
-  setAccounts(accts);
-  var s = getSession();
-  if(s && s.key===key) clearSession();
-  renderAccountLists();
-};
-
-/* ---------- Récupérer le code secret courant d'un compte ---------- */
-function findGerantCode(shop, gerantId, cb){
-  // 1) tableau global en mémoire
-  try{
-    if(window.gerants && window.gerants.length){
-      var g = window.gerants.find(function(x){return x.id===gerantId;});
-      if(g){ cb(g.code||null, g.nom||null); return; }
-    }
-  }catch(e){}
-  // 2) cache localStorage de la boutique
-  try{
-    var raw = localStorage.getItem('agv_'+shop.uid+'_gerants');
-    if(raw){
-      var arr = JSON.parse(raw)||[];
-      var g2 = arr.find(function(x){return x.id===gerantId;});
-      if(g2){ cb(g2.code||null, g2.nom||null); return; }
-    }
-  }catch(e){}
-  // 3) Firebase
-  try{
-    db.ref('gdv_shops/'+shop.uid+'/data/gerants').once('value',function(snap){
-      var v = snap.val(); var arr = v ? (Array.isArray(v)?v:Object.values(v)) : [];
-      var g3 = arr.find(function(x){return x.id===gerantId;});
-      cb(g3?(g3.code||null):null, g3?(g3.nom||null):null);
-    }, function(){ cb(null,null); });
-  }catch(e){ cb(null,null); }
-}
-
-/* ---------- Sauvegarde de session + compte à chaque connexion réussie ---------- */
-function persistLogin(shop){
-  try{
-    var role = window.currentRole;
-    if(role!=='fondateur' && role!=='gerant') return; // rôle non encore choisi : ne pas mémoriser
-    var gid  = window.currentGerantId || null;
-    var code = (shop.codeAcces || shop.code_acces || window._lastShopCode || '').toUpperCase();
-    if(!code || !shop.uid) return;
-    var key  = code+'|'+role+'|'+(gid||'');
-
-    function save(secret, gerantNom){
-      function done(vh){
-        var now = Date.now();
-        var sess = {key:key, code:code, uid:shop.uid, role:role, gerantId:gid,
-                    gerantNom:gerantNom||null, vh:vh||null,
-                    exp: now + SESSION_DAYS*24*60*60*1000};
-        setSession(sess);
-        // Liste des comptes de l'appareil
-        var accts = getAccounts().filter(function(a){return a.key!==key;});
-        accts.unshift({key:key, code:code, uid:shop.uid, role:role, gerantId:gid,
-                       gerantNom:gerantNom||null, name:shop.entreprise||code,
-                       ville:shop.ville||'', logo:shop.logo||null, vh:vh||null, last:now});
-        if(accts.length>8) accts = accts.slice(0,8); // max 8 comptes
-        setAccounts(accts);
-        renderAccountLists();
-      }
-      if(secret){ agvHash(secretPayload(code, role, gid, secret)).then(done); }
-      else done(null);
-    }
-
-    if(role==='fondateur'){
-      save(shop.codeFondateur||null, null);
-    } else {
-      // essayer de lire le nom depuis le select de la page de connexion
-      var nom=null;
-      try{
-        var sel=document.getElementById('sl-gerant-select');
-        var opt=sel?sel.querySelector('option[value="'+gid+'"]'):null;
-        if(opt){ nom=(opt.textContent||'').split('—')[0].trim(); if(opt.dataset.code){ save(opt.dataset.code, nom); return; } }
-      }catch(e){}
-      findGerantCode(shop, gid, function(codeG, nomG){ save(codeG, nom||nomG); });
-    }
-  }catch(e){}
-}
-
-/* ---------- Wrapping des fonctions existantes (aucune logique modifiée) ---------- */
-var _origLaunch = window.agvLaunchApp;
-window.agvLaunchApp = function(shop){
-  var wasAutoLogin = !!window._agvAutoLoginInProgress;
-  var r = _origLaunch.apply(this, arguments);
-  try{ if(shop && !wasAutoLogin) persistLogin(shop); }catch(e){}
-  window._agvAutoLoginInProgress = false;
-  if(wasAutoLogin){
-    // Connexion automatique réussie au chargement/rafraîchissement de la page :
-    // on retombe sur l'écran d'accueil habituel selon le rôle, exactement
-    // selon la même convention que la connexion manuelle (voir applyRoleUI :
-    // manipulation directe des classes .view/.nav-item, sans passer par
-    // showView() qui dépend de l'objet global "event" — indisponible hors
-    // d'un clic réel sur certains navigateurs mobiles), puis on retire le
-    // voile de chargement.
-    try{
-      var target = (window.currentRole==='fondateur') ? 'dashboard' : 'ventes';
-      document.querySelectorAll('.view').forEach(function(el){ el.classList.remove('active'); });
-      var vel = document.getElementById('view-'+target);
-      if(vel) vel.classList.add('active');
-      document.querySelectorAll('.nav-item').forEach(function(el){
-        var oc = el.getAttribute('onclick')||'';
-        el.classList.toggle('active', oc.indexOf("'"+target+"'")>=0);
-      });
-      window.currentView = target;
-      if(target==='produits' && typeof window.renderTable==='function'){ window.renderTable(); }
-    }catch(e){}
-    if(typeof window._agvAutoLoginFinish==='function'){ window._agvAutoLoginFinish(); }
-  }
-  return r;
-};
-var _origStartApp = window.startApp;
-if(typeof _origStartApp==='function'){
-  window.startApp = function(){
-    var r = _origStartApp.apply(this, arguments);
-    try{ if(window._currentShop) persistLogin(window._currentShop); }catch(e){}
-    return r;
-  };
-}
-var _origLogout = window.doLogout;
-window.doLogout = function(){
-  clearSession(); // la session active est supprimée, la liste des comptes est conservée
-  var r = _origLogout.apply(this, arguments);
-  renderAccountLists();
-  return r;
-};
-
-/* ---------- Vérification d'un compte / d'une session ---------- */
-function verifyAndLogin(entry, onFail){
-  var code = entry.code;
-  function proceed(shop){
-    if(!shop){ if(onFail)onFail('Boutique introuvable'); return; }
-    shop.uid = shop.uid || entry.uid;
-    if(shop.blocked){ clearSession(); if(onFail)onFail('Accès suspendu'); return; }
-    if(shop.dateExpiration && shop.licenceStatut!=='actif'){
-      try{ if(new Date() > new Date(shop.dateExpiration)){ clearSession(); if(onFail)onFail('Licence expirée'); return; } }catch(e){}
-    }
-    function launch(){
-      window._currentShop = shop;
-      window.currentRole = entry.role;
-      window.currentGerantId = entry.gerantId || null;
-      window._lastShopCode = code;
-      window._shopLoginData = shop;
-      window._agvAutoLoginInProgress = true;
-      // rafraîchir la session (glissante)
-      var s = getSession()||{};
-      if(s.key===entry.key){ s.exp = Date.now()+SESSION_DAYS*24*60*60*1000; setSession(s); }
-      agvLaunchApp(shop);
-    }
-    if(!entry.vh){ if(onFail)onFail(null); return; } // pas de jeton -> demander le code
-    if(entry.role==='fondateur'){
-      agvHash(secretPayload(code,'fondateur',null,shop.codeFondateur||'')).then(function(h){
-        if(h===entry.vh) launch(); else { clearSession(); if(onFail)onFail('Le code a changé'); }
-      });
-    } else {
-      findGerantCode(shop, entry.gerantId, function(codeG){
-        if(!codeG){ if(onFail)onFail('Gérant introuvable'); return; }
-        agvHash(secretPayload(code,'gerant',entry.gerantId,codeG)).then(function(h){
-          if(h===entry.vh) launch(); else { clearSession(); if(onFail)onFail('Le code a changé'); }
-        });
-      });
-    }
-  }
-  // Cache d'abord (instantané + hors ligne), Firebase sinon
-  var cached=null;
-  try{ cached=JSON.parse(localStorage.getItem('agv_shop_'+code)||'null'); }catch(e){}
-  if(cached){ proceed(cached); return; }
-  try{
-    db.ref('gdv_codes/'+code).once('value',function(sc){
-      var uid=sc.val()||entry.uid;
-      if(!uid){ if(onFail)onFail('Code introuvable'); return; }
-      db.ref('gdv_shops/'+uid+'/info').once('value',function(si){
-        var shop=si.val(); if(shop){shop.uid=uid; try{localStorage.setItem('agv_shop_'+code,JSON.stringify(shop));}catch(e){}}
-        proceed(shop);
-      });
-    });
-  }catch(e){ if(onFail)onFail('Hors ligne'); }
-}
-
-/* ---------- Sélection d'un compte depuis la liste ---------- */
-window.agvUseAccount = function(key){
-  var entry = getAccounts().find(function(a){return a.key===key;});
-  if(!entry) return;
-  verifyAndLogin(entry, function(reason){
-    // Repli : ouvrir la page de connexion de la boutique (code à ressaisir)
-    window._lastShopCode = entry.code;
-    agvShow('agv-shop-login');
-    agvLoadShopLogin(entry.code);
-    if(reason){
-      setTimeout(function(){ if(typeof agvShopLoginMsg==='function') agvShopLoginMsg(reason+'. Veuillez vous reconnecter.', false); }, 600);
-    }
-  });
-};
-
-/* ---------- Rendu de la liste des comptes ---------- */
-function accountChipHTML(a){
-  var ava = a.logo ? '<img src="'+a.logo+'" alt="">' : (a.role==='fondateur' ? '&#x1F451;' : '&#x1F9D1;&#x200D;&#x1F4BC;');
-  var roleTxt = a.role==='fondateur' ? 'Fondateur' : ('G&#233;rant'+(a.gerantNom?' &middot; '+String(a.gerantNom).replace(/</g,'&lt;'):''));
-  var name = String(a.name||a.code).replace(/</g,'&lt;');
-  return '<div class="agv-account-chip" role="button" tabindex="0" onclick="agvUseAccount(\''+a.key.replace(/'/g,"\\'")+'\')" onkeydown="if(event.key===\'Enter\')agvUseAccount(\''+a.key.replace(/'/g,"\\'")+'\')">'
-    + '<div class="agv-account-ava">'+ava+'</div>'
-    + '<div class="agv-account-info"><div class="agv-account-name">'+name+'</div>'
-    + '<div class="agv-account-sub">'+roleTxt+' &middot; '+a.code+'</div></div>'
-    + '<button class="agv-account-del" title="Retirer ce compte de cet appareil" onclick="agvDeleteAccount(\''+a.key.replace(/'/g,"\\'")+'\',event)">&#x2715;</button>'
-    + '</div>';
-}
-function renderAccountLists(){
-  var accts = getAccounts();
-  // 1) Page d'accueil (sous le champ code)
-  var landing = document.getElementById('agv-landing');
-  var host = document.getElementById('agv-accounts-landing');
-  if(landing){
-    if(!host){
-      var anchor = document.getElementById('landing-code-msg');
-      if(anchor && anchor.parentElement){
-        host = document.createElement('div');
-        host.id='agv-accounts-landing';
-        anchor.parentElement.appendChild(host);
-      }
-    }
-    if(host){
-      host.innerHTML = accts.length
-        ? '<div class="agv-accounts-wrap" style="margin-top:16px"><div class="agv-accounts-title">Comptes utilis&#233;s sur cet appareil</div>'
-          + accts.map(accountChipHTML).join('') + '</div>'
-        : '';
-    }
-  }
-  // 2) Page de connexion boutique (comptes de CETTE boutique)
-  var slMsg = document.getElementById('shop-login-msg');
-  var host2 = document.getElementById('agv-accounts-shoplogin');
-  if(slMsg && slMsg.parentElement){
-    var code = (window._lastShopCode||'').toUpperCase();
-    var mine = accts.filter(function(a){return a.code===code;});
-    if(!host2){
-      host2 = document.createElement('div');
-      host2.id='agv-accounts-shoplogin';
-      slMsg.parentElement.insertBefore(host2, slMsg.nextSibling);
-    }
-    host2.innerHTML = mine.length
-      ? '<div class="agv-accounts-wrap" style="max-width:none;margin-bottom:16px"><div class="agv-accounts-title">Connexion rapide</div>'
-        + mine.map(accountChipHTML).join('') + '</div>'
-      : '';
-  }
-}
-window._agvRenderAccounts = renderAccountLists;
-
-/* La page de connexion boutique est régénérée dynamiquement : ré-injecter la liste */
-if(typeof window.agvRenderShopLogin==='function'){
-  var _origRender = window.agvRenderShopLogin;
-  window.agvRenderShopLogin = function(){
-    var r = _origRender.apply(this, arguments);
-    setTimeout(renderAccountLists, 250);
-    return r;
-  };
-}
-
-/* ---------- Connexion automatique au démarrage ---------- */
-function agvHideBootCover(){
-  var c = document.getElementById('agv-boot-cover');
-  if(!c) return;
-  c.style.transition='opacity .15s ease';
-  c.style.opacity='0';
-  setTimeout(function(){ if(c.parentNode) c.parentNode.removeChild(c); }, 180);
-}
-function tryAutoLogin(){
-  var s = getSession();
-  if(!s) { renderAccountLists(); agvHideBootCover(); return; }
-  if(!s.exp || Date.now() > s.exp){ clearSession(); renderAccountLists(); agvHideBootCover(); return; }
-  // Respecter un lien direct ?shop=AUTRECODE
-  try{
-    var p = new URLSearchParams(window.location.search).get('shop');
-    if(p && p.toUpperCase() !== s.code){ renderAccountLists(); agvHideBootCover(); return; }
-  }catch(e){}
-  // Filet de sécurité : ne jamais laisser le voile de chargement bloqué
-  // indéfiniment (réseau lent, Firebase hors ligne sans réponse...).
-  var settled=false;
-  var safety=setTimeout(function(){ if(!settled){ settled=true; agvHideBootCover(); } }, 4000);
-  function finish(){ if(settled) return; settled=true; clearTimeout(safety); agvHideBootCover(); }
-  verifyAndLogin(s, function(){ clearSession(); renderAccountLists(); finish(); });
-  // Succès : verifyAndLogin appelle agvLaunchApp(shop), intercepté ci-dessous
-  // pour revenir systématiquement à l'écran d'accueil (Dashboard pour le
-  // Fondateur, Ventes pour un Gérant — même convention que la connexion
-  // manuelle existante) et retirer le voile de chargement.
-  window._agvAutoLoginFinish = finish;
-}
-
-/* S'exécute APRÈS le DOMContentLoaded existant (ordre d'enregistrement) */
-if(document.readyState==='loading'){
-  window.addEventListener('DOMContentLoaded', function(){ setTimeout(tryAutoLogin, 0); });
-} else {
-  setTimeout(tryAutoLogin, 0);
-}
-
-/* ---------- Indicateur en ligne / hors ligne ---------- */
-window.addEventListener('online',  function(){ if(typeof agvSetOnlineStatus==='function' && window._currentShop) agvSetOnlineStatus(true); });
-window.addEventListener('offline', function(){ if(typeof agvSetOnlineStatus==='function' && window._currentShop) agvSetOnlineStatus(false); });
-
-/* ---------- Mise à jour PWA : recharger quand un nouveau SW prend la main ---------- */
-if('serviceWorker' in navigator){
-  var _reloaded=false;
-  navigator.serviceWorker.addEventListener('controllerchange', function(){
-    if(_reloaded) return; _reloaded=true;
-    // pas de rechargement forcé pendant une saisie : uniquement si aucune boutique ouverte
-    if(!window._currentShop) window.location.reload();
-  });
-}
-})();
-</script>
-
 </body></html>
