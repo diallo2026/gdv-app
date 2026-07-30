@@ -4,7 +4,16 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <meta name="mobile-web-app-capable" content="yes">
-<meta name="theme-color" content="#1a3a8f">
+<meta name="theme-color" content="#060d24">
+<!-- [PWA] Application installable sur iPhone, iPad, Android, tablette et ordinateur -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="App AGV">
+<meta name="application-name" content="App AGV">
+<meta name="msapplication-TileColor" content="#060d24">
+<meta name="format-detection" content="telephone=no">
+<link rel="apple-touch-icon" id="agv-apple-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="192x192" id="agv-fav-icon" href="icons/icon-192.png">
 <title>App AGV — Gestions de Vente</title>
 <link rel="manifest" href="manifest.json">
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -528,6 +537,7 @@ function agvInitFirebase(){
     }
     window.db = firebase.database();
     window._firebaseReady = true;
+    try{ db = window.db; }catch(e){}
   } catch(e){ console.error('Firebase init error:', e); }
 }
 agvInitFirebase();
@@ -1905,13 +1915,10 @@ function agvShopLogin(role){
 var _pwaP=null;
 window.addEventListener('beforeinstallprompt',function(e){e.preventDefault();_pwaP=e;var b=document.getElementById('agv-install-btn');if(b)b.style.display='inline-flex';});
 function agvInstall(){if(_pwaP){_pwaP.prompt();_pwaP.userChoice.then(function(){_pwaP=null;});}}
-if('serviceWorker' in navigator){
-  navigator.serviceWorker.getRegistrations().then(function(r){
-    Promise.all(r.map(function(x){return x.unregister();})).then(function(){
-      navigator.serviceWorker.register('./sw.js?v=12');
-    });
-  });
-}
+// [PWA] Enregistrement du service worker deplace dans le module
+// application mobile (fin de page) : l'ancien code desinscrivait tous
+// les service workers a chaque ouverture, ce qui empechait Chrome de
+// proposer l'installation de l'application.
 
 window.addEventListener('DOMContentLoaded',function(){
   // Supprimer les clés neindi_ au démarrage
@@ -1924,17 +1931,9 @@ window.addEventListener('DOMContentLoaded',function(){
     var devCached=JSON.parse(localStorage.getItem('agv_dev_shops')||'null');
     if(devCached) window._devShopsCache=devCached;
   }catch(e){}
-  // Syncer Firebase en arrière-plan après 3s (pas bloquant)
-  setTimeout(function(){
-    db.ref('gdv_shops').once('value',function(snap){
-      var shops=[];
-      snap.forEach(function(c){var info=c.val()&&c.val().info;if(info)shops.push(info);});
-      if(shops.length > 0){
-        window._devShopsCache=shops;
-        try{localStorage.setItem('agv_dev_shops',JSON.stringify(shops));}catch(e){}
-      }
-    });
-  }, 3000);
+  // [CORRECTIF] Lecture globale de gdv_shops supprimee : elle telechargeait
+  // les donnees completes de TOUTES les boutiques chez chaque utilisateur.
+  // Remplacee par le prechargement leger du module correctif (fin de page).
 
   // Sauvegarder le HTML de l'auth
   setTimeout(function(){
@@ -12227,4 +12226,1331 @@ function saveReglerDette(){
 
 
     
+
+<!-- ============================================================
+     MODULE CORRECTIF — ESPACE CONCEPTEUR (v3)
+     Redefinit UNIQUEMENT les fonctions du panneau concepteur.
+     Aucune modification de la structure Firebase.
+     Ecritures autorisees : gdv_shops/<uid>/info/blocked
+                            gdv_shops/<uid>/info/licence*
+                            gdv_shops/<uid>/info/dateExpiration
+     Lecture : uniquement les champs texte de info (jamais logo
+     ni fondateurPhoto, qui pesent plusieurs Mo par boutique).
+
+     >>> MOT DE PASSE PAR DEFAUT : modifiable ligne ci-dessous.
+     >>> Oubli du mot de passe : ouvrir l'application avec
+     >>>   ?resetconcepteur=1  a la fin de l'adresse.
+     ============================================================ -->
+<script>
+(function(){
+'use strict';
+
+var PWD_DEFAUT = 'AGVDev2026#';
+
+var CFG = {
+  ROOT: 'gdv_shops',
+  INDEX: 'gdv_codes',
+  PAR_LOT: 6,
+  T_LIST: 10000,
+  T_CHAMP: 9000,
+  T_FULL: 25000,
+  CACHE: 'agv_dev_shops',
+  K_PWD: 'agv_dev_empreinte',
+  K_ESSAIS: 'agv_dev_essais',
+  K_ACTIF: 'agv_dev_appareil',
+  MAX_ESSAIS: 5,
+  BLOCAGE_MS: 60000
+};
+
+/* Champs texte lus pour la liste : le logo et la photo du fondateur
+   sont volontairement exclus (ce sont eux qui rendaient le chargement
+   interminable : images non redimensionnees, plusieurs Mo chacune). */
+var CHAMPS = ['entreprise','nom','email','tel','ville','codeAcces','codeFondateur',
+              'blocked','dateCreation','dateExpiration','licenceStatut',
+              'dateDernierPaiement','licencePeriode'];
+
+/* ---------- utilitaires ---------- */
+function DB(){ return (window.db && typeof window.db.ref === 'function') ? window.db : null; }
+function dbURL(){
+  try{ var u = firebase.app().options.databaseURL; return u ? String(u).replace(/\/+$/,'') : null; }
+  catch(e){ return null; }
+}
+function waitDB(cb, n){
+  n = n || 0;
+  if(DB()) return cb(null);
+  if(n > 60) return cb(new Error('Connexion Firebase indisponible (verifiez Internet).'));
+  setTimeout(function(){ waitDB(cb, n+1); }, 250);
+}
+function esc(v){
+  if(v === null || v === undefined) return '';
+  return String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+                  .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+function withTimeout(p, ms, label){
+  return new Promise(function(res, rej){
+    var d = false;
+    var t = setTimeout(function(){ if(!d){ d = true; rej(new Error('Delai depasse : ' + label)); } }, ms);
+    p.then(function(v){ if(!d){ d = true; clearTimeout(t); res(v); } },
+           function(e){ if(!d){ d = true; clearTimeout(t); rej(e); } });
+  });
+}
+function sortShops(a){
+  return a.sort(function(x,y){ return new Date(y.dateCreation||0) - new Date(x.dateCreation||0); });
+}
+var LS = {
+  get: function(k,d){ try{ var v=localStorage.getItem(k); return v===null?d:v; }catch(e){ return d; } },
+  set: function(k,v){ try{ localStorage.setItem(k,v); }catch(e){} },
+  del: function(k){ try{ localStorage.removeItem(k); }catch(e){} }
+};
+
+/* ============================================================
+   MOT DE PASSE CONCEPTEUR
+   Stocke sous forme d'empreinte SHA-256 sur CET appareil.
+   Le mot de passe lui-meme n'est jamais enregistre nulle part,
+   et rien n'est ecrit dans la base des boutiques.
+   ============================================================ */
+function empreinte(txt){
+  try{
+    if(window.crypto && window.crypto.subtle && window.isSecureContext){
+      var buf = new TextEncoder().encode('agv$' + txt);
+      return window.crypto.subtle.digest('SHA-256', buf).then(function(h){
+        var b = Array.prototype.slice.call(new Uint8Array(h));
+        return 's:' + b.map(function(x){ return ('0'+x.toString(16)).slice(-2); }).join('');
+      });
+    }
+  }catch(e){}
+  // repli simple si SHA-256 indisponible
+  var h1 = 5381, s = 'agv$' + txt;
+  for(var i=0;i<s.length;i++){ h1 = ((h1*33) ^ s.charCodeAt(i)) >>> 0; }
+  return Promise.resolve('f:' + h1.toString(16) + ':' + s.length);
+}
+
+function verifierMdp(saisi){
+  var stocke = LS.get(CFG.K_PWD, '');
+  if(!stocke) return Promise.resolve(saisi === PWD_DEFAUT);
+  return empreinte(saisi).then(function(e){ return e === stocke; });
+}
+function definirMdp(nouveau){
+  return empreinte(nouveau).then(function(e){ LS.set(CFG.K_PWD, e); return true; });
+}
+function reinitialiserMdp(){
+  LS.del(CFG.K_PWD); LS.del(CFG.K_ESSAIS);
+}
+window.agvResetConcepteur = function(){
+  reinitialiserMdp();
+  return 'Mot de passe concepteur reinitialise. Mot de passe actuel : ' + PWD_DEFAUT;
+};
+
+/* protection contre les essais repetes */
+function etatBlocage(){
+  try{
+    var o = JSON.parse(LS.get(CFG.K_ESSAIS, '{}') || '{}');
+    if(o.jusqua && Date.now() < o.jusqua) return Math.ceil((o.jusqua - Date.now())/1000);
+    return 0;
+  }catch(e){ return 0; }
+}
+function noterEchec(){
+  var o = {};
+  try{ o = JSON.parse(LS.get(CFG.K_ESSAIS, '{}') || '{}'); }catch(e){}
+  o.n = (o.n || 0) + 1;
+  if(o.n >= CFG.MAX_ESSAIS){ o.jusqua = Date.now() + CFG.BLOCAGE_MS; o.n = 0; }
+  LS.set(CFG.K_ESSAIS, JSON.stringify(o));
+}
+function noterSucces(){ LS.del(CFG.K_ESSAIS); LS.set(CFG.K_ACTIF, '1'); }
+
+/* reinitialisation par l'adresse : ...index.html?resetconcepteur=1 */
+(function resetParURL(){
+  try{
+    var p = new URLSearchParams(location.search);
+    if(p.get('resetconcepteur')){
+      reinitialiserMdp();
+      setTimeout(function(){
+        if(window.agvToast) window.agvToast('Mot de passe concepteur reinitialise : ' + PWD_DEFAUT, '#1d4ed8', 8000);
+        else alert('Mot de passe concepteur reinitialise.\nMot de passe actuel : ' + PWD_DEFAUT);
+      }, 1200);
+    }
+  }catch(e){}
+})();
+
+/* ---------- cache local ---------- */
+function readCache(){
+  try{ var c = JSON.parse(LS.get(CFG.CACHE,'null')); return (c && c.length) ? c : null; }catch(e){ return null; }
+}
+function writeCache(list){
+  try{
+    var light = list.map(function(s){
+      var o = {}; for(var k in s){ if(k !== 'logo' && k !== 'fondateurPhoto') o[k] = s[k]; }
+      return o;
+    });
+    LS.set(CFG.CACHE, JSON.stringify(light));
+  }catch(e){}
+}
+
+/* ============================================================
+   LECTURE : liste des identifiants
+   1. REST « shallow » (quelques octets)
+   2. index gdv_codes (petit)
+   3. en dernier recours seulement : lecture complete
+   ============================================================ */
+function listeParREST(){
+  var base = dbURL();
+  if(!base || typeof fetch !== 'function') return Promise.reject(new Error('REST indisponible'));
+  return withTimeout(
+    fetch(base + '/' + CFG.ROOT + '.json?shallow=true', { cache:'no-store' })
+      .then(function(r){
+        if(!r.ok){
+          if(r.status === 401 || r.status === 403) throw new Error('Lecture refusee par les regles de securite (HTTP ' + r.status + ')');
+          throw new Error('Reponse serveur HTTP ' + r.status);
+        }
+        return r.json();
+      })
+      .then(function(o){ return o ? Object.keys(o) : []; }),
+    CFG.T_LIST, 'liste des boutiques');
+}
+
+function listeParIndex(){
+  var d = DB();
+  if(!d) return Promise.reject(new Error('Firebase indisponible'));
+  return withTimeout(
+    d.ref(CFG.INDEX).once('value').then(function(s){
+      var v = s.val() || {}, uids = [], vus = {};
+      Object.keys(v).forEach(function(code){
+        var u = v[code];
+        if(u && !vus[u]){ vus[u] = 1; uids.push(u); }
+      });
+      if(!uids.length) throw new Error('index vide');
+      return uids;
+    }),
+    CFG.T_LIST, 'index des codes');
+}
+
+function listeIdentifiants(){
+  return listeParREST().catch(function(e1){
+    return listeParIndex().catch(function(){ throw e1; });
+  });
+}
+
+/* lecture des champs texte d'une boutique, sans les images */
+function ficheLegere(uid){
+  var d = DB();
+  if(!d) return Promise.reject(new Error('Firebase indisponible'));
+  var lectures = CHAMPS.map(function(f){
+    return d.ref(CFG.ROOT + '/' + uid + '/info/' + f).once('value')
+      .then(function(s){ return s.val(); }, function(){ return null; });
+  });
+  return withTimeout(Promise.all(lectures).then(function(vals){
+    var o = { uid: uid }, vide = true;
+    CHAMPS.forEach(function(f,i){ o[f] = vals[i]; if(vals[i] !== null && vals[i] !== undefined) vide = false; });
+    return vide ? null : o;
+  }), CFG.T_CHAMP, 'boutique ' + uid);
+}
+
+function lectureComplete(cb){
+  var d = DB();
+  if(!d) return cb([], new Error('Firebase indisponible'));
+  var fini = false;
+  var to = setTimeout(function(){
+    if(!fini){ fini = true; cb([], new Error('Lecture complete trop longue (base volumineuse).')); }
+  }, CFG.T_FULL);
+  d.ref(CFG.ROOT).once('value', function(snap){
+    if(fini) return; fini = true; clearTimeout(to);
+    var shops = [];
+    snap.forEach(function(c){
+      var v = c.val(), info = v && v.info;
+      if(info){
+        var o = { uid: info.uid || c.key };
+        CHAMPS.forEach(function(f){ o[f] = info[f]; });
+        shops.push(o);
+      }
+    });
+    cb(shops, null);
+  }, function(err){
+    if(fini) return; fini = true; clearTimeout(to); cb([], err);
+  });
+}
+
+/* ============================================================
+   AFFICHAGE
+   ============================================================ */
+function panelBody(){ return document.getElementById('agv-dev-body'); }
+function setStatus(html, color){
+  var el = document.getElementById('agv-dev-status');
+  if(el){ el.innerHTML = html; el.style.color = color || '#64748b'; }
+}
+function btnActualiser(){
+  return ' <button onclick="agvDevRefresh()" style="margin-left:6px;padding:2px 9px;border:1px solid rgba(37,99,235,0.35);border-radius:5px;background:transparent;color:#60a5fa;font-size:11px;cursor:pointer;font-family:inherit">Actualiser</button>';
+}
+
+function stats(list){
+  var now = new Date(), s = { total:list.length, actives:0, bloquees:0, payees:0, essai:0, expirees:0, semaine:0 };
+  list.forEach(function(x){
+    if(x.blocked === true) s.bloquees++; else s.actives++;
+    if(x.licenceStatut === 'actif') s.payees++;
+    else if(x.licenceStatut === 'essai') s.essai++;
+    if(x.dateExpiration && new Date(x.dateExpiration) < now && x.licenceStatut !== 'actif') s.expirees++;
+    if(x.dateCreation && (now - new Date(x.dateCreation)) < 7*24*3600*1000) s.semaine++;
+  });
+  return s;
+}
+function statsHTML(list){
+  var s = stats(list);
+  function b(l,v,c){
+    return '<div style="flex:1;min-width:70px;background:#060d24;border:1px solid rgba(37,99,235,0.15);border-radius:9px;padding:8px 5px;text-align:center">'
+      + '<div style="font-size:19px;font-weight:800;color:'+c+';line-height:1.1">'+v+'</div>'
+      + '<div style="font-size:9px;color:#64748b;text-transform:uppercase;letter-spacing:.05em;margin-top:2px">'+l+'</div></div>';
+  }
+  return '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">'
+    + b('Total',s.total,'#e2e8f0') + b('Actives',s.actives,'#22c55e') + b('Bloquees',s.bloquees,'#ef4444')
+    + b('Payees',s.payees,'#38bdf8') + b('Essai',s.essai,'#f59e0b') + b('Expirees',s.expirees,'#f97316')
+    + b('7 jours',s.semaine,'#a78bfa') + '</div>';
+}
+
+function initiales(nom){
+  var n = (nom || '?').trim().split(/\s+/);
+  return ((n[0]||'?')[0] + (n[1] ? n[1][0] : '')).toUpperCase();
+}
+
+function shopCard(s){
+  var bloque = s.blocked === true;
+  var col = bloque ? '#ef4444' : '#22c55e';
+  var tgl = bloque ? 'Debloquer' : 'Bloquer';
+  var bg  = bloque ? '#22c55e' : '#ef4444';
+  var fond = s.codeFondateur || '-';
+  var rech = ((s.entreprise||'')+' '+(s.email||'')+' '+(s.nom||'')+' '+(s.codeAcces||'')+' '+(s.tel||'')).toLowerCase();
+  var dcre = s.dateCreation ? new Date(s.dateCreation).toLocaleString('fr-FR') : 'date inconnue';
+  var lien = window.location.href.split('?')[0] + '?shop=' + (s.codeAcces || '');
+  var lic = '';
+  try{ lic = (typeof agvLicenceCard === 'function') ? agvLicenceCard(s) : ''; }catch(e){}
+
+  return '<div class="dev-shop-item" data-uid="'+esc(s.uid)+'" data-search="'+esc(rech)+'" '
+    + 'style="background:#060d24;border:1px solid '+(bloque?'rgba(239,68,68,0.35)':'rgba(37,99,235,0.15)')+';border-radius:10px;padding:13px;margin-bottom:10px">'
+    + '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap">'
+      + '<div style="flex:1;min-width:150px">'
+        + '<div style="display:flex;align-items:center;gap:9px;margin-bottom:5px">'
+          + '<div class="dev-logo" style="width:32px;height:32px;border-radius:8px;background:rgba(37,99,235,0.15);color:#60a5fa;'
+          + 'font-size:12px;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0;overflow:hidden">'
+          + esc(initiales(s.entreprise)) + '</div>'
+          + '<div style="min-width:0">'
+            + '<div style="font-weight:700;color:#e2e8f0;font-size:14px;display:flex;align-items:center;gap:7px;flex-wrap:wrap">'
+              + esc(s.entreprise || 'Sans nom')
+              + '<span style="font-size:10px;font-weight:800;color:'+col+';border:1px solid '+col+';border-radius:20px;padding:1px 8px">'+(bloque?'Bloque':'Actif')+'</span>'
+            + '</div>'
+            + '<div style="font-size:12px;color:#64748b">'+esc(s.nom||'')+(s.email?' - '+esc(s.email):'')+'</div>'
+          + '</div>'
+        + '</div>'
+        + (s.tel ? '<div style="font-size:11px;color:#475569">'+esc(s.tel)+(s.ville?' - '+esc(s.ville):'')+'</div>' : '')
+        + '<div style="font-size:10px;color:#334155;margin-top:4px">'+esc(dcre)+'</div>'
+      + '</div>'
+      + '<div style="text-align:right;flex-shrink:0;display:flex;flex-direction:column;gap:6px;min-width:150px">'
+        + '<div><div style="font-size:9px;color:#475569;text-transform:uppercase;margin-bottom:2px">Code boutique</div>'
+          + '<div style="font-family:monospace;font-size:12px;font-weight:800;color:#60a5fa;background:rgba(37,99,235,0.12);padding:5px 10px;border-radius:7px;letter-spacing:.1em">'+esc(s.codeAcces||'-')+'</div></div>'
+        + '<div><div style="font-size:9px;color:#a16207;text-transform:uppercase;margin-bottom:2px">Code fondateur</div>'
+          + '<div style="font-family:monospace;font-size:12px;font-weight:800;color:#fbbf24;background:rgba(251,191,36,0.1);padding:5px 10px;border-radius:7px;letter-spacing:.1em">'+esc(fond)+'</div></div>'
+        + '<div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end">'
+          + '<button data-code="'+esc(s.codeAcces||'')+'" onclick="agvDevCopy(this)" style="padding:5px 8px;border:none;border-radius:6px;background:#2563eb;color:#fff;font-size:10px;font-weight:700;cursor:pointer;font-family:inherit">Copier code</button>'
+          + '<button data-code="'+esc(fond)+'" onclick="agvDevCopy(this)" style="padding:5px 8px;border:none;border-radius:6px;background:#d97706;color:#fff;font-size:10px;font-weight:700;cursor:pointer;font-family:inherit">Copier fondateur</button>'
+          + '<button data-code="'+esc(lien)+'" onclick="agvDevCopy(this)" style="padding:5px 8px;border:none;border-radius:6px;background:#22c55e;color:#fff;font-size:10px;font-weight:700;cursor:pointer;font-family:inherit">Copier lien</button>'
+        + '</div>'
+        + '<button data-uid="'+esc(s.uid)+'" data-blocked="'+(bloque?'1':'0')+'" onclick="agvToggleBlock(this)" style="padding:6px 10px;border:none;border-radius:6px;background:'+bg+';color:#fff;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit">'+tgl+'</button>'
+        + '<button data-uid="'+esc(s.uid)+'" data-name="'+esc(s.entreprise||'')+'" onclick="agvDeleteShop(this)" style="padding:5px 10px;border:1px solid rgba(239,68,68,0.4);border-radius:6px;background:transparent;color:#ef4444;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit">Supprimer</button>'
+        + lic
+      + '</div>'
+    + '</div></div>';
+}
+
+/* logos charges seulement pour les cartes visibles a l'ecran */
+var logosEnMemoire = {};
+var observateur = null;
+function brancherLogos(){
+  var body = panelBody();
+  if(!body || !window.IntersectionObserver) return;
+  if(observateur) observateur.disconnect();
+  observateur = new IntersectionObserver(function(entrees){
+    entrees.forEach(function(en){
+      if(!en.isIntersecting) return;
+      var carte = en.target;
+      observateur.unobserve(carte);
+      var uid = carte.getAttribute('data-uid');
+      var slot = carte.querySelector('.dev-logo');
+      if(!slot || !uid) return;
+      if(logosEnMemoire[uid]){ poserLogo(slot, logosEnMemoire[uid]); return; }
+      var d = DB(); if(!d) return;
+      d.ref(CFG.ROOT + '/' + uid + '/info/logo').once('value').then(function(s){
+        var v = s.val();
+        if(!v) return;
+        logosEnMemoire[uid] = v;
+        poserLogo(slot, v);
+      }).catch(function(){});
+    });
+  }, { root: body, rootMargin: '150px' });
+  var cartes = body.querySelectorAll('.dev-shop-item');
+  Array.prototype.forEach.call(cartes, function(c){ observateur.observe(c); });
+}
+function poserLogo(slot, src){
+  slot.innerHTML = '<img src="' + src + '" alt="" style="width:100%;height:100%;object-fit:cover">';
+}
+
+function renderList(list){
+  window._devShopsCache = list;
+  var body = panelBody();
+  if(!body) return;
+  var head = document.getElementById('agv-dev-stats');
+  if(head) head.innerHTML = statsHTML(list);
+  if(!list.length){
+    body.innerHTML = '<div style="text-align:center;color:#475569;padding:26px;font-size:13px">Aucune boutique trouvee.</div>';
+    return;
+  }
+  var h = '';
+  sortShops(list).forEach(function(s){ h += shopCard(s); });
+  body.innerHTML = h;
+  var f = document.getElementById('agv-dev-search');
+  if(f && f.value) agvDevFilter(f.value);
+  brancherLogos();
+}
+
+/* ============================================================
+   CHARGEUR
+   ============================================================ */
+window.agvDevLoadShops = function(opts){
+  opts = opts || {};
+  var cache = readCache();
+  var t0 = Date.now();
+
+  if(cache && cache.length){
+    renderList(cache);
+    setStatus('Liste enregistree affichee - mise a jour en cours...', '#f59e0b');
+  }else{
+    var b = panelBody();
+    if(b) b.innerHTML = '<div style="text-align:center;color:#64748b;padding:26px;font-size:13px">Lecture de la liste...</div>';
+    setStatus('Connexion a la base...', '#64748b');
+  }
+
+  function fini(list, err, note){
+    if(err){
+      var m = (err && err.message) ? err.message : String(err);
+      if(list && list.length){
+        setStatus('Liste partielle - ' + esc(m) + btnActualiser(), '#f97316');
+      }else{
+        setStatus('Echec : ' + esc(m) + btnActualiser(), '#ef4444');
+        var bb = panelBody();
+        if(bb && !(cache && cache.length)){
+          bb.innerHTML = '<div style="text-align:center;padding:22px;font-size:13px;color:#94a3b8">'
+            + '<div style="font-size:30px;margin-bottom:8px">&#9888;</div>'
+            + 'Impossible de lire la liste des boutiques.<br><span style="color:#ef4444;font-size:12px">' + esc(m) + '</span>'
+            + '<div style="margin-top:10px;font-size:11px;color:#475569">Aucune donnee n\'a ete modifiee.</div></div>';
+        }
+      }
+      return;
+    }
+    renderList(list);
+    writeCache(list);
+    var sec = ((Date.now()-t0)/1000).toFixed(1);
+    setStatus(list.length + ' boutique(s) en ' + sec + ' s' + (note ? ' (' + esc(note) + ')' : '') + btnActualiser(), '#22c55e');
+  }
+
+  waitDB(function(err){
+    if(err){ fini(cache || [], err); return; }
+
+    listeIdentifiants().then(function(uids){
+      if(!uids.length){ fini([], null); return; }
+      var res = [], i = 0, actifs = 0, faits = 0, rates = 0;
+      function pomper(){
+        while(actifs < CFG.PAR_LOT && i < uids.length){
+          var u = uids[i]; i++; actifs++;
+          (function(uid){
+            ficheLegere(uid).then(function(o){ if(o) res.push(o); })
+              .catch(function(){ rates++; })
+              .then(function(){
+                actifs--; faits++;
+                setStatus('Lecture ' + faits + ' / ' + uids.length + '...', '#60a5fa');
+                if(faits % 5 === 0 && faits < uids.length) renderList(res.slice());
+                if(faits === uids.length) fini(res, null, rates ? rates + ' illisible(s)' : '');
+                else pomper();
+              });
+          })(u);
+        }
+      }
+      pomper();
+    }).catch(function(e1){
+      setStatus('Methodes rapides indisponibles - lecture complete (lente)...', '#f59e0b');
+      lectureComplete(function(shops, e2){
+        if(e2) fini(cache || [], e2);
+        else fini(shops, null, 'lecture complete');
+      });
+    });
+  });
+};
+
+window.agvDevRefresh = function(){ window.agvDevLoadShops({ silent:true }); };
+
+/* ============================================================
+   DIAGNOSTIC
+   ============================================================ */
+window.agvDevDiagnostic = function(){
+  var body = panelBody();
+  if(!body) return;
+  body.innerHTML = '<div style="color:#64748b;font-size:13px;padding:18px;text-align:center">Test en cours...</div>';
+  setStatus('Diagnostic...', '#60a5fa');
+
+  var lignes = [];
+  function ligne(t, v, ok){
+    lignes.push('<div style="display:flex;justify-content:space-between;gap:10px;padding:9px 11px;background:#060d24;border-radius:8px;margin-bottom:7px">'
+      + '<span style="font-size:12px;color:#94a3b8">' + t + '</span>'
+      + '<span style="font-size:12px;font-weight:700;color:' + (ok===false?'#ef4444':ok===true?'#22c55e':'#e2e8f0') + ';text-align:right">' + v + '</span></div>');
+  }
+  function montrer(){
+    body.innerHTML = lignes.join('')
+      + '<button onclick="agvDevRefresh()" style="width:100%;margin-top:8px;padding:11px;border:none;border-radius:9px;background:#2563eb;color:#fff;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit">Revenir a la liste</button>';
+    setStatus('Diagnostic termine' + btnActualiser(), '#22c55e');
+  }
+
+  var t0 = Date.now();
+  ligne('Firebase charge', DB() ? 'oui' : 'non', !!DB());
+  ligne('Adresse de la base', dbURL() ? 'trouvee' : 'introuvable', !!dbURL());
+  ligne('Connexion securisee', location.protocol === 'https:' ? 'HTTPS' : location.protocol, location.protocol === 'https:');
+
+  listeIdentifiants().then(function(uids){
+    ligne('Liste des boutiques', uids.length + ' en ' + (Date.now()-t0) + ' ms', true);
+    var t1 = Date.now();
+    if(!uids.length){ montrer(); return; }
+    return ficheLegere(uids[0]).then(function(){
+      ligne('Lecture d\'une fiche (13 champs)', (Date.now()-t1) + ' ms', true);
+      // poids des images stockees
+      var t2 = Date.now();
+      var ech = uids.slice(0, 3);
+      return Promise.all(ech.map(function(u){
+        var d = DB();
+        return Promise.all([
+          d.ref(CFG.ROOT+'/'+u+'/info/logo').once('value').then(function(s){ var v=s.val(); return v?String(v).length:0; },function(){return 0;}),
+          d.ref(CFG.ROOT+'/'+u+'/info/fondateurPhoto').once('value').then(function(s){ var v=s.val(); return v?String(v).length:0; },function(){return 0;})
+        ]).then(function(p){ return p[0]+p[1]; });
+      })).then(function(tailles){
+        var moy = tailles.reduce(function(a,b){return a+b;},0) / (tailles.length||1);
+        var ko = Math.round(moy/1024);
+        ligne('Images par boutique (moyenne)', ko + ' ko', ko < 300);
+        ligne('Poids evite par la correction', Math.round(ko*uids.length/1024*10)/10 + ' Mo', true);
+        ligne('Temps de lecture des images', (Date.now()-t2) + ' ms sur ' + ech.length + ' boutiques');
+        montrer();
+      });
+    });
+  }).catch(function(e){
+    ligne('Erreur', esc(e.message || e), false);
+    montrer();
+  });
+};
+
+/* ============================================================
+   MODALE D'ACCES
+   ============================================================ */
+window.agvConcepteurAccess = function(){
+  if(window._devOverlay){ try{ window._devOverlay.remove(); }catch(e){} }
+  var ov = document.createElement('div');
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:99999;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(6px);padding:12px';
+  var d = document.createElement('div');
+  d.id = 'agv-dev-panel';
+  d.style.cssText = 'background:#0a1628;border:1px solid rgba(37,99,235,0.3);border-radius:16px;padding:24px;max-width:420px;width:100%;max-height:88vh;display:flex;flex-direction:column';
+  d.innerHTML =
+    '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px">'
+    + '<h3 style="color:#fff;font-size:16px;font-weight:700">&#128295; Acces Concepteur</h3>'
+    + '<button onclick="agvCloseDevModal()" style="background:none;border:none;color:#64748b;font-size:20px;cursor:pointer;line-height:1">&#10005;</button></div>'
+    + '<label style="display:block;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:#475569;margin-bottom:6px">Mot de passe</label>'
+    + '<input id="dev-pwd" type="password" autocomplete="current-password" placeholder="........" style="width:100%;padding:11px 14px;background:#060d24;border:1px solid rgba(37,99,235,0.3);border-radius:9px;color:#e2e8f0;font-size:14px;font-family:inherit;outline:none;margin-bottom:12px;box-sizing:border-box" onkeydown="agvDevOnEnter(event)">'
+    + '<button id="dev-go" onclick="agvDevVerify()" style="width:100%;padding:12px;border:none;border-radius:9px;background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#fff;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit">Acceder</button>'
+    + '<div id="dev-msg" style="display:none;margin-top:10px;padding:9px 12px;border-radius:7px;font-size:12px;color:#ef4444;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.2)"></div>'
+    + '<div style="margin-top:14px;font-size:10.5px;color:#334155;line-height:1.5">Mot de passe oublie : ouvrez l\'application en ajoutant <b style="color:#475569">?resetconcepteur=1</b> a la fin de l\'adresse.</div>';
+  ov.appendChild(d);
+  document.body.appendChild(ov);
+  ov.onclick = function(e){ if(e.target === ov) ov.remove(); };
+  setTimeout(function(){ var i = document.getElementById('dev-pwd'); if(i) i.focus(); }, 120);
+  window._devOverlay = ov;
+};
+
+window.agvCloseDevModal = function(){
+  if(observateur){ try{ observateur.disconnect(); }catch(e){} observateur = null; }
+  if(window._devOverlay){ try{ window._devOverlay.remove(); }catch(e){} window._devOverlay = null; }
+};
+
+window.agvDevOnEnter = function(e){ if(e.key === 'Enter') agvDevVerify(); };
+
+window.agvDevVerify = function(){
+  var pwd = document.getElementById('dev-pwd');
+  var msg = document.getElementById('dev-msg');
+  if(!pwd){
+    if(document.getElementById('agv-dev-body')) window.agvDevRefresh();
+    return;
+  }
+  function erreur(txt){
+    if(msg){
+      msg.style.cssText = 'display:block;margin-top:10px;padding:9px 12px;border-radius:7px;font-size:12px;color:#ef4444;background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.2)';
+      msg.textContent = txt;
+    }
+    pwd.value = '';
+  }
+  var reste = etatBlocage();
+  if(reste){ erreur('Trop d\'essais. Reessayez dans ' + reste + ' secondes.'); return; }
+
+  var saisi = pwd.value;
+  var btn = document.getElementById('dev-go');
+  if(btn){ btn.disabled = true; btn.textContent = 'Verification...'; }
+
+  verifierMdp(saisi).then(function(ok){
+    if(btn){ btn.disabled = false; btn.textContent = 'Acceder'; }
+    if(!ok){ noterEchec(); erreur('Mot de passe incorrect.'); return; }
+    noterSucces();
+    pwd.value = '';
+    agvOpenDevPanel();
+  }).catch(function(){
+    if(btn){ btn.disabled = false; btn.textContent = 'Acceder'; }
+    erreur('Verification impossible sur cet appareil.');
+  });
+};
+
+window.agvOpenDevPanel = function(){
+  var d = document.getElementById('agv-dev-panel');
+  if(!d){ agvConcepteurAccess(); d = document.getElementById('agv-dev-panel'); }
+  d.style.maxWidth = '660px';
+  d.innerHTML =
+    '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:8px;flex-wrap:wrap">'
+      + '<h3 style="color:#fff;font-size:15px;font-weight:700">Gestion des boutiques</h3>'
+      + '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">'
+        + '<button onclick="agvDevRefresh()" style="padding:5px 10px;border:1px solid rgba(37,99,235,0.35);border-radius:6px;background:rgba(37,99,235,0.08);color:#60a5fa;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit">Actualiser</button>'
+        + '<button onclick="agvDevDiagnostic()" style="padding:5px 10px;border:1px solid rgba(148,163,184,0.3);border-radius:6px;background:transparent;color:#94a3b8;font-size:11px;cursor:pointer;font-family:inherit">Diagnostic</button>'
+        + '<button onclick="agvInitLicences()" style="padding:5px 10px;border:1px solid rgba(249,115,22,0.4);border-radius:6px;background:rgba(249,115,22,0.08);color:#fb923c;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit">Init licences</button>'
+        + '<button onclick="agvChangeDevPwd()" style="padding:5px 10px;border:1px solid rgba(37,99,235,0.3);border-radius:6px;background:transparent;color:#60a5fa;font-size:11px;cursor:pointer;font-family:inherit">Mot de passe</button>'
+        + '<button onclick="agvCloseDevModal()" style="background:none;border:none;color:#64748b;font-size:20px;cursor:pointer;line-height:1">&#10005;</button>'
+      + '</div></div>'
+    + '<div id="agv-dev-stats"></div>'
+    + '<div id="agv-dev-status" style="font-size:11px;color:#64748b;margin-bottom:10px;min-height:16px"></div>'
+    + '<input id="agv-dev-search" oninput="agvDevFilter(this.value)" placeholder="Rechercher boutique / email / code..." style="width:100%;padding:10px 12px;background:#060d24;border:1px solid rgba(37,99,235,0.2);border-radius:8px;color:#e2e8f0;font-size:13px;font-family:inherit;outline:none;margin-bottom:12px;box-sizing:border-box">'
+    + '<div id="agv-dev-body" style="overflow-y:auto;flex:1;min-height:120px;-webkit-overflow-scrolling:touch"></div>';
+  window.agvDevLoadShops({});
+};
+
+window.agvRenderDevShops = function(shops){ renderList(shops || []); };
+
+window.agvDevFilter = function(q){
+  var items = document.querySelectorAll('.dev-shop-item');
+  var lq = (q || '').toLowerCase();
+  Array.prototype.forEach.call(items, function(el){
+    var s = el.getAttribute('data-search') || '';
+    el.style.display = (!lq || s.indexOf(lq) >= 0) ? 'block' : 'none';
+  });
+};
+
+/* ============================================================
+   CHANGER / REINITIALISER LE MOT DE PASSE
+   ============================================================ */
+window.agvChangeDevPwd = function(){
+  var ov = document.createElement('div');
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.88);z-index:9999999;display:flex;align-items:center;justify-content:center;padding:12px';
+  var d = document.createElement('div');
+  d.style.cssText = 'background:#0a1628;border:1px solid rgba(37,99,235,0.3);border-radius:14px;padding:24px;max-width:380px;width:100%';
+  var champ = 'width:100%;padding:10px 12px;background:#060d24;border:1px solid rgba(37,99,235,0.3);border-radius:8px;color:#e2e8f0;font-size:13px;font-family:inherit;outline:none;margin-bottom:10px;box-sizing:border-box';
+  d.innerHTML =
+    '<h3 style="color:#fff;font-size:15px;font-weight:700;margin-bottom:14px">Mot de passe concepteur</h3>'
+    + '<input id="cp-old" type="password" placeholder="Mot de passe actuel" style="'+champ+'">'
+    + '<input id="cp-new" type="password" placeholder="Nouveau mot de passe (6 caracteres min.)" style="'+champ+'">'
+    + '<input id="cp-conf" type="password" placeholder="Confirmer le nouveau" style="'+champ+'">'
+    + '<div id="cp-msg" style="display:none;font-size:12px;padding:8px 11px;border-radius:7px;margin-bottom:10px"></div>'
+    + '<div style="display:flex;gap:8px">'
+      + '<button id="cp-cancel" style="flex:1;padding:10px;border:1px solid rgba(255,255,255,0.1);border-radius:8px;background:transparent;color:#64748b;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit">Annuler</button>'
+      + '<button id="cp-save" style="flex:1;padding:10px;border:none;border-radius:8px;background:#2563eb;color:#fff;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit">Enregistrer</button>'
+    + '</div>'
+    + '<button id="cp-reset" style="width:100%;margin-top:10px;padding:9px;border:1px solid rgba(239,68,68,0.35);border-radius:8px;background:transparent;color:#ef4444;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit">Revenir au mot de passe par defaut</button>'
+    + '<div style="margin-top:12px;font-size:10.5px;color:#334155;line-height:1.5">Le mot de passe est enregistre sous forme chiffree sur cet appareil uniquement. Rien n\'est ecrit dans la base des boutiques.</div>';
+  ov.appendChild(d); document.body.appendChild(ov);
+  ov.onclick = function(e){ if(e.target === ov) ov.remove(); };
+  document.getElementById('cp-cancel').onclick = function(){ ov.remove(); };
+
+  function msg(t, ok){
+    var m = document.getElementById('cp-msg');
+    m.style.cssText = 'display:block;font-size:12px;padding:8px 11px;border-radius:7px;margin-bottom:10px;'
+      + (ok ? 'background:rgba(34,197,94,0.1);color:#22c55e' : 'background:rgba(239,68,68,0.1);color:#ef4444');
+    m.textContent = t;
+  }
+
+  document.getElementById('cp-save').onclick = function(){
+    var o = document.getElementById('cp-old').value;
+    var n = document.getElementById('cp-new').value;
+    var c = document.getElementById('cp-conf').value;
+    if(n.length < 6){ msg('Le nouveau mot de passe doit faire au moins 6 caracteres.', false); return; }
+    if(n !== c){ msg('La confirmation ne correspond pas.', false); return; }
+    verifierMdp(o).then(function(ok){
+      if(!ok){ msg('Mot de passe actuel incorrect.', false); return; }
+      return definirMdp(n).then(function(){
+        msg('Mot de passe modifie. Il reste valable apres redemarrage.', true);
+        setTimeout(function(){ ov.remove(); }, 1400);
+      });
+    }).catch(function(){ msg('Operation impossible sur cet appareil.', false); });
+  };
+
+  document.getElementById('cp-reset').onclick = function(){
+    var o = document.getElementById('cp-old').value;
+    verifierMdp(o).then(function(ok){
+      if(!ok){ msg('Saisissez d\'abord le mot de passe actuel.', false); return; }
+      reinitialiserMdp();
+      msg('Mot de passe remis par defaut.', true);
+      setTimeout(function(){ ov.remove(); }, 1400);
+    });
+  };
+};
+
+/* ============================================================
+   BLOQUER / DEBLOQUER
+   ============================================================ */
+window.agvToggleBlock = function(btn){
+  var uid = btn.getAttribute('data-uid');
+  var bloque = btn.getAttribute('data-blocked') === '1';
+  var suivant = !bloque;
+  var d = DB();
+  if(!d){ alert('Firebase indisponible.'); return; }
+  var av = btn.textContent;
+  btn.disabled = true; btn.textContent = '...';
+  var fait = false;
+  var to = setTimeout(function(){
+    if(fait) return; fait = true;
+    btn.disabled = false; btn.textContent = av;
+    setStatus('Delai depasse : operation non confirmee. Aucune donnee perdue.', '#f97316');
+  }, 12000);
+
+  d.ref(CFG.ROOT + '/' + uid + '/info/blocked').set(suivant).then(function(){
+    if(fait) return; fait = true; clearTimeout(to);
+    var l = window._devShopsCache || [];
+    l.forEach(function(s){ if(s.uid === uid) s.blocked = suivant; });
+    writeCache(l); renderList(l);
+    setStatus('Boutique ' + (suivant ? 'bloquee' : 'debloquee') + ' a ' + new Date().toLocaleTimeString('fr-FR') + btnActualiser(),
+      suivant ? '#ef4444' : '#22c55e');
+  }).catch(function(e){
+    if(fait) return; fait = true; clearTimeout(to);
+    btn.disabled = false; btn.textContent = av;
+    setStatus('Erreur : ' + esc(e.message || e), '#ef4444');
+  });
+};
+
+/* ============================================================
+   LICENCES
+   ============================================================ */
+window.agvDevPayer = function(btn){
+  var uid = btn.getAttribute('data-uid'), nom = btn.getAttribute('data-nom');
+  var d = DB(); if(!d){ alert('Firebase indisponible.'); return; }
+  var now = new Date(), exp = new Date(now.getTime() + 365*24*3600*1000);
+  var expStr = exp.toLocaleDateString('fr-FR');
+  if(!confirm('Confirmer le paiement pour ' + nom + ' ?\nLicence renouvelee 12 mois, jusqu\'au ' + expStr)) return;
+  btn.disabled = true; btn.textContent = '...';
+  d.ref(CFG.ROOT + '/' + uid + '/info').update({
+    licenceStatut:'actif', dateExpiration:exp.toISOString(), dateDernierPaiement:now.toISOString(),
+    licencePeriode: now.toLocaleDateString('fr-FR',{month:'long',year:'numeric'}), blocked:false
+  }).then(function(){
+    var l = window._devShopsCache || [];
+    l.forEach(function(s){ if(s.uid===uid){ s.licenceStatut='actif'; s.dateExpiration=exp.toISOString(); s.dateDernierPaiement=now.toISOString(); s.blocked=false; } });
+    writeCache(l); renderList(l);
+    setStatus('Paiement enregistre - licence active jusqu\'au ' + expStr, '#22c55e');
+  }).catch(function(e){
+    btn.disabled = false; btn.textContent = 'Payer';
+    setStatus('Erreur : ' + esc(e.message || e), '#ef4444');
+  });
+};
+
+window.agvDevImPayer = function(btn){
+  var uid = btn.getAttribute('data-uid'), nom = btn.getAttribute('data-nom');
+  var d = DB(); if(!d){ alert('Firebase indisponible.'); return; }
+  if(!confirm('Marquer ' + nom + ' comme impayee ?')) return;
+  btn.disabled = true;
+  d.ref(CFG.ROOT + '/' + uid + '/info/licenceStatut').set('impaye').then(function(){
+    var l = window._devShopsCache || [];
+    l.forEach(function(s){ if(s.uid===uid) s.licenceStatut='impaye'; });
+    writeCache(l); renderList(l);
+    setStatus('Boutique marquee comme impayee.', '#f97316');
+  }).catch(function(e){
+    btn.disabled = false; btn.textContent = 'Impaye';
+    setStatus('Erreur : ' + esc(e.message || e), '#ef4444');
+  });
+};
+
+window.agvInitLicences = function(){
+  var d = DB(); if(!d){ alert('Firebase indisponible.'); return; }
+  var l = window._devShopsCache || [];
+  var todo = l.filter(function(s){ return !s.dateExpiration; });
+  if(!l.length){ alert('Chargez d\'abord la liste des boutiques.'); return; }
+  if(!todo.length){ setStatus('Toutes les boutiques ont deja une licence. Rien a modifier.', '#22c55e'); return; }
+  if(!confirm('Initialiser la licence de ' + todo.length + ' boutique(s) sans date d\'expiration ?\n60 jours d\'essai depuis leur date de creation.\nAucune autre donnee ne sera touchee.')) return;
+  var i = 0, ok = 0, ko = 0;
+  setStatus('Initialisation 0 / ' + todo.length + '...', '#60a5fa');
+  function etape(){
+    if(i >= todo.length){
+      writeCache(l); renderList(l);
+      setStatus('Termine : ' + ok + ' mise(s) a jour' + (ko ? ', ' + ko + ' echec(s)' : '') + '.', ko ? '#f97316' : '#22c55e');
+      return;
+    }
+    var s = todo[i]; i++;
+    var base = s.dateCreation ? new Date(s.dateCreation) : new Date();
+    var exp = new Date(base.getTime() + 60*24*3600*1000);
+    d.ref(CFG.ROOT + '/' + s.uid + '/info').update({
+      dateExpiration: exp.toISOString(), licenceStatut:'essai', licencePeriode:'essai_60j'
+    }).then(function(){ ok++; s.dateExpiration = exp.toISOString(); s.licenceStatut = 'essai'; })
+      .catch(function(){ ko++; })
+      .then(function(){ setStatus('Initialisation ' + i + ' / ' + todo.length + '...', '#60a5fa'); etape(); });
+  }
+  etape();
+};
+
+/* ============================================================
+   SUPPRESSION PROTEGEE
+   ============================================================ */
+window.agvDeleteShop = function(btn){
+  var uid = btn.getAttribute('data-uid'), name = btn.getAttribute('data-name') || '';
+  var d = DB(); if(!d){ alert('Firebase indisponible.'); return; }
+  var ov = document.createElement('div');
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.88);z-index:999999;display:flex;align-items:center;justify-content:center;padding:12px';
+  var box = document.createElement('div');
+  box.style.cssText = 'background:#0a1628;border:2px solid rgba(239,68,68,0.5);border-radius:14px;padding:26px;max-width:400px;width:100%;text-align:center';
+  box.innerHTML =
+    '<div style="font-size:38px;margin-bottom:12px">&#128465;</div>'
+    + '<h3 style="color:#ef4444;font-size:17px;font-weight:700;margin-bottom:8px">Supprimer la boutique ?</h3>'
+    + '<p style="color:#fff;font-size:13px;margin-bottom:6px;font-weight:700">' + esc(name) + '</p>'
+    + '<p style="color:#64748b;font-size:12px;margin-bottom:14px">Action irreversible : produits, ventes, dettes, clients et factures seront definitivement effaces.</p>'
+    + '<p style="color:#94a3b8;font-size:12px;margin-bottom:8px">Tapez <b style="color:#ef4444">SUPPRIMER</b> pour confirmer :</p>'
+    + '<input id="del-typed" placeholder="SUPPRIMER" style="width:100%;padding:10px 12px;background:#060d24;border:1px solid rgba(239,68,68,0.4);border-radius:8px;color:#e2e8f0;font-size:14px;font-family:inherit;outline:none;margin-bottom:16px;box-sizing:border-box;text-align:center;letter-spacing:.15em">'
+    + '<div style="display:flex;gap:10px;justify-content:center">'
+      + '<button id="del-cancel" style="padding:10px 20px;border:1px solid rgba(255,255,255,0.12);border-radius:8px;background:transparent;color:#94a3b8;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit">Annuler</button>'
+      + '<button id="del-confirm" style="padding:10px 20px;border:none;border-radius:8px;background:#ef4444;color:#fff;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit">Supprimer</button>'
+    + '</div>'
+    + '<div id="del-msg" style="display:none;margin-top:12px;font-size:12px;color:#94a3b8"></div>';
+  ov.appendChild(box); document.body.appendChild(ov);
+  document.getElementById('del-cancel').onclick = function(){ ov.remove(); };
+  ov.onclick = function(e){ if(e.target === ov) ov.remove(); };
+  document.getElementById('del-confirm').onclick = function(){
+    var typed = (document.getElementById('del-typed').value || '').trim().toUpperCase();
+    var m = document.getElementById('del-msg');
+    m.style.display = 'block';
+    if(typed !== 'SUPPRIMER'){ m.style.color = '#ef4444'; m.textContent = 'Saisie incorrecte : rien n\'a ete supprime.'; return; }
+    var c = document.getElementById('del-confirm');
+    c.disabled = true; c.textContent = 'Suppression...';
+    m.style.color = '#94a3b8'; m.textContent = 'Suppression en cours...';
+    d.ref(CFG.ROOT + '/' + uid).remove().then(function(){
+      m.style.color = '#22c55e'; m.textContent = 'Boutique supprimee.';
+      var l = (window._devShopsCache || []).filter(function(s){ return s.uid !== uid; });
+      writeCache(l); renderList(l);
+      setTimeout(function(){ ov.remove(); }, 900);
+    }).catch(function(e){
+      m.style.color = '#ef4444'; m.textContent = 'Erreur : ' + (e.message || e);
+      c.disabled = false; c.textContent = 'Reessayer';
+    });
+  };
+};
+
+/* ============================================================
+   PRECHARGEMENT : uniquement sur l'appareil du concepteur
+   (les gerants de boutique ne lisent jamais la liste complete)
+   ============================================================ */
+setTimeout(function(){
+  if(LS.get(CFG.K_ACTIF) !== '1') return;
+  waitDB(function(err){
+    if(err) return;
+    listeIdentifiants().then(function(uids){
+      if(!uids.length) return;
+      var out = [], i = 0;
+      function suite(){
+        if(i >= uids.length){ if(out.length){ window._devShopsCache = out; writeCache(out); } return; }
+        var u = uids[i]; i++;
+        ficheLegere(u).then(function(o){ if(o) out.push(o); }).catch(function(){}).then(suite);
+      }
+      suite();
+    }).catch(function(){});
+  });
+}, 5000);
+
+})();
+</script>
+<!-- ============================================================
+     MODULE APPLICATION MOBILE (PWA) — App AGV
+     Installation sur Android / iOS / iPadOS / Windows,
+     comportement d'application native, mode hors ligne.
+     Aucune modification de la base ni des donnees des boutiques.
+     ============================================================ -->
+<script>
+(function(){
+'use strict';
+
+/* ---------- detection d'environnement ---------- */
+var UA = navigator.userAgent || '';
+var isIOS = /iPad|iPhone|iPod/.test(UA) ||
+            (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+var isAndroid = /Android/i.test(UA);
+var isSafari = /^((?!chrome|android|crios|fxios|edgios).)*safari/i.test(UA);
+var isFirefox = /Firefox|FxiOS/i.test(UA);
+var isSamsung = /SamsungBrowser/i.test(UA);
+
+function isStandalone(){
+  try{
+    return (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches)
+        || (window.matchMedia && window.matchMedia('(display-mode: fullscreen)').matches)
+        || window.navigator.standalone === true
+        || document.referrer.indexOf('android-app://') === 0;
+  }catch(e){ return false; }
+}
+
+var LS = {
+  get: function(k, d){ try{ var v = localStorage.getItem(k); return v === null ? d : v; }catch(e){ return d; } },
+  set: function(k, v){ try{ localStorage.setItem(k, v); }catch(e){} },
+  del: function(k){ try{ localStorage.removeItem(k); }catch(e){} }
+};
+
+var K_DISMISS = 'agv_pwa_reporte';     // date du dernier "plus tard"
+var K_INSTALLED = 'agv_pwa_installee';
+var K_LASTSHOP = 'agv_derniere_boutique';
+var REPORT_JOURS = 7;
+
+/* ---------- styles application ---------- */
+(function injectCSS(){
+  var css = document.createElement('style');
+  css.textContent =
+    'html{-webkit-text-size-adjust:100%;text-size-adjust:100%}' +
+    'body{-webkit-tap-highlight-color:transparent;overscroll-behavior-y:contain}' +
+    'button,a,.fb,[onclick]{touch-action:manipulation;-webkit-user-select:none;user-select:none}' +
+    'input,textarea,select{-webkit-user-select:auto;user-select:auto}' +
+    '@keyframes agvUp{from{opacity:0;transform:translateY(26px)}to{opacity:1;transform:translateY(0)}}' +
+    '@keyframes agvFade{from{opacity:0}to{opacity:1}}' +
+    '.agv-pwa-ov{position:fixed;inset:0;background:rgba(2,6,20,0.88);z-index:2147483000;display:flex;' +
+      'align-items:flex-end;justify-content:center;backdrop-filter:blur(7px);animation:agvFade .2s ease}' +
+    '@media(min-width:640px){.agv-pwa-ov{align-items:center}}' +
+    '.agv-pwa-card{background:#0a1628;border:1px solid rgba(37,99,235,0.35);border-radius:22px 22px 0 0;' +
+      'padding:24px 22px calc(24px + env(safe-area-inset-bottom,0px));width:100%;max-width:440px;' +
+      'animation:agvUp .28s cubic-bezier(.2,.8,.3,1);max-height:92vh;overflow-y:auto}' +
+    '@media(min-width:640px){.agv-pwa-card{border-radius:20px}}' +
+    '.agv-pwa-bar{position:fixed;left:0;right:0;bottom:0;z-index:2147482000;padding:9px 14px;' +
+      'padding-bottom:calc(9px + env(safe-area-inset-bottom,0px));font-size:12.5px;font-weight:700;' +
+      'text-align:center;font-family:inherit;color:#fff}' +
+    '.agv-standalone #agv-install-btn{display:none !important}';
+  document.head.appendChild(css);
+})();
+
+if(isStandalone()) document.documentElement.classList.add('agv-standalone');
+
+/* ============================================================
+   1. MANIFESTE — repli embarque si manifest.json est absent
+   ============================================================ */
+var ICONS = {"i192": "data:image/png;base64,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", "i512": "data:image/png;base64,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", "m192": "data:image/png;base64,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", "m512": "data:image/png;base64,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", "apple": "data:image/png;base64,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", "fav": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAC4UlEQVR42uWbzXLTMBSFjzzMsOMBIKFOAtMXygApnQGerU0pyz4PY7skZZhu2bG6LPwT25JsxfqxLWmRTOw4yXd1dI90HTGc0d59eyYAAFUPxWPRiDuC5puIO04QnCPhxYKPJuFXZndLpsrElKEFkFOEb3949v1tJ2PkMzwArHYHOlsBHPhM4dvHs/sL1qsAX+EBYPXpF3UGwGf48tK4FYTOHOAbfGcS9CHhKcETIf74SI0AhARftjIIUTCyJ1KYBwQGDwBsLtNb4/DF8RdjwCc3b4S/aXP95BQ+V8DXZ3IFn9y8VlqgrD8/OYEvFOAefnP9Wyj79HYBAEj3i1oQ7MFXSXAK8KBmz6f7hXV4AIimAi+Sf7pfWoUnqtug5WyvAn8KwlE+NzcID1ARANtWh3GtTgaf5wCL8KXdNXtfDX59lasgvVtagy+S4NR7HtbgAYBtvvwh1z6v21a7gxF4yVpg2vBFoRPZ/YU2PHgXmD58IxD1IAyAPynA2ph31AbC5zYYMHwtB8wUvjMmau4WmV/Pzwde6AIhwXMuEBp8wwVChK9cQLeGZ6O9fPW+8WwDvlUP0ChgWoKXve7tAEV4EtqgkertmONBHZ63QcfwqjK3BS9ZC7iFV5O5HXjBWiAM2dffFoUMf6oJasGT23Gu4gSK8Oh3AY0ylo1xbhi+xwX04KcwHPrgO1wgDHiJC4QDL3ABs/D//v6Uvh56ziQ8Xw8YesdGIQgiiKHnZL/hXHjOBnVvV42p/yHwDRvUgV/vDqOgx9tEC75wAXt/QhxvIqgGf6oHGIBfOVRBvE0QbxNteALAVldHMtLzhu7V6c7tz4EXuEBY8C0XCA++pYDw4EFAlG8wChP++HDJIii6gG/wkCfBcOCrADS3loUBf3y4ZA0F5EEIC54fAoHIXrocLvfV+Qxf731AsnGy2lrmObw0AFUgarurfBnznUOg3R5/xMxn+F4FcIr4kNFcZniqTP8BZv0KQ5M6Sd8AAAAASUVORK5CYII="};
+
+function manifestDeSecours(){
+  var base = location.href.split('?')[0].split('#')[0];
+  var m = {
+    id: base + '?app=agv',
+    name: 'App AGV \u2014 Gestion de Vente',
+    short_name: 'App AGV',
+    description: 'Gestion de boutique : stock, ventes, depenses, dettes, clients, gerants et paie.',
+    lang: 'fr',
+    start_url: base + '?source=pwa',
+    scope: base.replace(/[^\/]*$/, ''),
+    display: 'standalone',
+    display_override: ['standalone', 'minimal-ui', 'browser'],
+    orientation: 'any',
+    background_color: '#060d24',
+    theme_color: '#060d24',
+    categories: ['business', 'productivity', 'finance'],
+    prefer_related_applications: false,
+    icons: [
+      { src: ICONS.i192, sizes: '192x192', type: 'image/png', purpose: 'any' },
+      { src: ICONS.i512, sizes: '512x512', type: 'image/png', purpose: 'any' },
+      { src: ICONS.m192, sizes: '192x192', type: 'image/png', purpose: 'maskable' },
+      { src: ICONS.m512, sizes: '512x512', type: 'image/png', purpose: 'maskable' }
+    ]
+  };
+  return 'data:application/manifest+json;charset=utf-8,' + encodeURIComponent(JSON.stringify(m));
+}
+
+(function verifierManifeste(){
+  var lien = document.querySelector('link[rel="manifest"]');
+  if(!lien){
+    lien = document.createElement('link');
+    lien.rel = 'manifest';
+    document.head.appendChild(lien);
+    lien.href = manifestDeSecours();
+    return;
+  }
+  if(typeof fetch !== 'function') return;
+  fetch(lien.href, { cache: 'no-store' })
+    .then(function(r){ if(!r.ok) throw new Error('absent'); return r.json(); })
+    .then(function(j){
+      if(!j || !j.icons || !j.icons.length) throw new Error('incomplet');
+      // manifest.json valide : on le garde tel quel
+    })
+    .catch(function(){
+      lien.href = manifestDeSecours();   // repli autonome
+      console.info('[AGV] manifest.json introuvable — manifeste embarque utilise.');
+    });
+})();
+
+
+/* verification des icones : repli embarque si le dossier icons/ est absent */
+(function verifierIcones(){
+  [['agv-apple-icon','apple'],['agv-fav-icon','i192']].forEach(function(p){
+    var el = document.getElementById(p[0]);
+    if(!el) return;
+    var t = new Image();
+    t.onerror = function(){ el.href = ICONS[p[1]]; };
+    t.src = el.href;
+  });
+})();
+
+/* ============================================================
+   2. INVITATION A INSTALLER
+   ============================================================ */
+var promptDiffere = null;
+var invitationOuverte = false;
+
+window.addEventListener('beforeinstallprompt', function(e){
+  e.preventDefault();
+  promptDiffere = e;
+  window._pwaP = e;                       // compatibilite bouton existant
+  var b = document.getElementById('agv-install-btn');
+  if(b && !isStandalone()) b.style.display = 'inline-flex';
+});
+
+window.addEventListener('appinstalled', function(){
+  promptDiffere = null; window._pwaP = null;
+  LS.set(K_INSTALLED, '1'); LS.del(K_DISMISS);
+  fermerInvitation();
+  toast('Application installee. Retrouvez-la sur votre ecran d\'accueil.', '#22c55e', 4500);
+});
+
+function reporteRecemment(){
+  var t = parseInt(LS.get(K_DISMISS, '0'), 10);
+  if(!t) return false;
+  return (Date.now() - t) < REPORT_JOURS * 24 * 3600 * 1000;
+}
+
+function peutProposer(){
+  if(isStandalone()) return false;
+  if(LS.get(K_INSTALLED) === '1' && !promptDiffere) return false;
+  if(reporteRecemment()) return false;
+  return true;
+}
+
+function fermerInvitation(){
+  var el = document.getElementById('agv-pwa-invite');
+  if(el) el.remove();
+  invitationOuverte = false;
+}
+
+function etapesManuelles(){
+  if(isIOS && !isSafari){
+    return { titre: 'Ouvrez cette page dans Safari',
+      pas: ['Sur iPhone et iPad, seul <b>Safari</b> peut installer une application.',
+            'Copiez l\'adresse de cette page, ouvrez Safari, collez-la.',
+            'Puis touchez <b>Partager</b> puis <b>Sur l\'ecran d\'accueil</b>.'] };
+  }
+  if(isIOS){
+    return { titre: 'Installer sur iPhone / iPad',
+      pas: ['Touchez le bouton <b>Partager</b> en bas de Safari (le carre avec une fleche vers le haut).',
+            'Faites defiler puis choisissez <b>Sur l\'ecran d\'accueil</b>.',
+            'Touchez <b>Ajouter</b> en haut a droite. L\'icone apparait avec vos autres applications.'] };
+  }
+  if(isFirefox){
+    return { titre: 'Installer avec Firefox',
+      pas: ['Touchez le menu <b>&#8942;</b> en haut a droite.',
+            'Choisissez <b>Installer</b> ou <b>Ajouter a l\'ecran d\'accueil</b>.'] };
+  }
+  if(isSamsung){
+    return { titre: 'Installer avec Samsung Internet',
+      pas: ['Touchez le menu <b>&#8801;</b> en bas a droite.',
+            'Choisissez <b>Ajouter la page a</b> puis <b>Ecran d\'accueil</b>.'] };
+  }
+  if(isAndroid){
+    return { titre: 'Installer sur Android',
+      pas: ['Touchez le menu <b>&#8942;</b> en haut a droite du navigateur.',
+            'Choisissez <b>Installer l\'application</b> ou <b>Ajouter a l\'ecran d\'accueil</b>.',
+            'Confirmez avec <b>Installer</b>.'] };
+  }
+  return { titre: 'Installer sur cet ordinateur',
+    pas: ['Cliquez sur l\'icone d\'installation a droite de la barre d\'adresse.',
+          'Ou ouvrez le menu du navigateur puis <b>Installer App AGV</b>.'] };
+}
+
+window.agvShowInstallPrompt = function(force){
+  if(invitationOuverte) return;
+  if(!force && !peutProposer()) return;
+  if(isStandalone()){ toast('L\'application est deja installee sur cet appareil.', '#2563eb', 3000); return; }
+
+  invitationOuverte = true;
+  var natif = !!promptDiffere || !!window._pwaP;
+  var man = etapesManuelles();
+
+  var ov = document.createElement('div');
+  ov.id = 'agv-pwa-invite';
+  ov.className = 'agv-pwa-ov';
+
+  var corps;
+  if(natif){
+    corps = '<button id="agv-pwa-go" style="width:100%;padding:15px;border:none;border-radius:13px;'
+      + 'background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#fff;font-size:15px;font-weight:800;'
+      + 'cursor:pointer;font-family:inherit;box-shadow:0 8px 22px rgba(37,99,235,0.4)">Installer maintenant</button>';
+  }else{
+    corps = '<div style="background:#060d24;border:1px solid rgba(37,99,235,0.2);border-radius:13px;padding:15px;margin-bottom:14px">'
+      + '<div style="font-size:12px;font-weight:800;color:#60a5fa;text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px">'
+      + man.titre + '</div>';
+    man.pas.forEach(function(p, i){
+      corps += '<div style="display:flex;gap:9px;align-items:flex-start;margin-bottom:9px">'
+        + '<div style="flex-shrink:0;width:20px;height:20px;border-radius:50%;background:rgba(37,99,235,0.2);'
+        + 'color:#60a5fa;font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center">'
+        + (i+1) + '</div>'
+        + '<div style="font-size:13px;color:#cbd5e1;line-height:1.5">' + p + '</div></div>';
+    });
+    corps += '</div>';
+  }
+
+  ov.innerHTML =
+    '<div class="agv-pwa-card">'
+      + '<div style="display:flex;align-items:center;gap:13px;margin-bottom:16px">'
+        + '<img src="' + ICONS.i192 + '" alt="" style="width:56px;height:56px;border-radius:14px;flex-shrink:0;box-shadow:0 6px 18px rgba(37,99,235,0.35)">'
+        + '<div style="flex:1;min-width:0">'
+          + '<div style="font-size:17px;font-weight:800;color:#fff;line-height:1.2">Installer App AGV</div>'
+          + '<div style="font-size:12.5px;color:#64748b;margin-top:3px">Votre gestion, comme une vraie application</div>'
+        + '</div>'
+        + '<button id="agv-pwa-x" aria-label="Fermer" style="background:none;border:none;color:#475569;font-size:22px;cursor:pointer;line-height:1;padding:4px">&#10005;</button>'
+      + '</div>'
+      + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px">'
+        + avantage('&#9889;', 'Ouverture instantanee')
+        + avantage('&#128241;', 'Plein ecran, sans navigateur')
+        + avantage('&#128246;', 'Consultable hors connexion')
+        + avantage('&#128273;', 'Icone sur l\'ecran d\'accueil')
+      + '</div>'
+      + corps
+      + '<button id="agv-pwa-later" style="width:100%;margin-top:10px;padding:12px;border:none;border-radius:11px;'
+      + 'background:transparent;color:#64748b;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit">Plus tard</button>'
+    + '</div>';
+
+  document.body.appendChild(ov);
+  ov.addEventListener('click', function(e){ if(e.target === ov) reporter(); });
+  document.getElementById('agv-pwa-x').onclick = reporter;
+  document.getElementById('agv-pwa-later').onclick = reporter;
+
+  var go = document.getElementById('agv-pwa-go');
+  if(go) go.onclick = lancerInstallation;
+
+  function reporter(){
+    LS.set(K_DISMISS, String(Date.now()));
+    fermerInvitation();
+  }
+};
+
+function avantage(emoji, texte){
+  return '<div style="background:#060d24;border:1px solid rgba(37,99,235,0.15);border-radius:11px;padding:10px 11px">'
+    + '<div style="font-size:16px;margin-bottom:3px">' + emoji + '</div>'
+    + '<div style="font-size:11.5px;color:#94a3b8;line-height:1.35">' + texte + '</div></div>';
+}
+
+function lancerInstallation(){
+  var p = promptDiffere || window._pwaP;
+  if(!p){ fermerInvitation(); window.agvShowInstallPrompt(true); return; }
+  var btn = document.getElementById('agv-pwa-go');
+  if(btn){ btn.disabled = true; btn.textContent = 'Ouverture...'; }
+  try{
+    p.prompt();
+    p.userChoice.then(function(res){
+      promptDiffere = null; window._pwaP = null;
+      if(res && res.outcome === 'accepted'){
+        fermerInvitation();
+        toast('Installation en cours...', '#2563eb', 3000);
+      }else{
+        LS.set(K_DISMISS, String(Date.now()));
+        fermerInvitation();
+      }
+    }).catch(function(){ fermerInvitation(); });
+  }catch(e){
+    if(btn){ btn.disabled = false; btn.textContent = 'Installer maintenant'; }
+  }
+}
+
+/* bouton "Installer" deja present dans la barre du site */
+window.agvInstall = function(){ window.agvShowInstallPrompt(true); };
+
+/* ============================================================
+   3. DECLENCHEUR : apres la connexion a une boutique
+   ============================================================ */
+(function surveillerConnexion(){
+  function armer(){
+    var app = document.getElementById('app');
+    if(!app){ setTimeout(armer, 500); return; }
+    var dejaFait = false;
+
+    function connecte(){
+      if(dejaFait) return;
+      if(app.className.indexOf('visible') < 0) return;
+      dejaFait = true;
+
+      // memoriser la boutique pour l'ouverture directe de l'application installee
+      try{
+        var s = window._currentShop;
+        if(s && s.codeAcces) LS.set(K_LASTSHOP, s.codeAcces);
+      }catch(e){}
+
+      setTimeout(function(){ window.agvShowInstallPrompt(false); }, 2500);
+    }
+
+    if(window.MutationObserver){
+      new MutationObserver(connecte).observe(app, { attributes: true, attributeFilter: ['class'] });
+    }
+    connecte();
+    setInterval(connecte, 3000);
+  }
+  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', armer);
+  else armer();
+})();
+
+/* ============================================================
+   4. LANCEMENT DE L'APPLICATION INSTALLEE
+      -> ouvre directement la page de connexion de la boutique
+   ============================================================ */
+(function ouvertureDirecte(){
+  if(!isStandalone()) return;
+  function go(){
+    try{
+      var p = new URLSearchParams(location.search);
+      if(p.get('shop')) return;                       // deja cible
+      var code = LS.get(K_LASTSHOP, '');
+      if(!code) return;
+      if(typeof agvShow !== 'function' || typeof agvLoadShopLogin !== 'function') return;
+      var landing = document.getElementById('agv-landing');
+      if(!landing || landing.style.display === 'none') { /* rien */ }
+      agvShow('agv-shop-login');
+      agvLoadShopLogin(String(code).toUpperCase());
+    }catch(e){}
+  }
+  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', function(){ setTimeout(go, 60); });
+  else setTimeout(go, 60);
+})();
+
+/* ============================================================
+   5. BOUTON RETOUR ANDROID (uniquement application installee)
+   ============================================================ */
+(function boutonRetour(){
+  if(!isStandalone()) return;
+  var dernierRetour = 0;
+
+  function couchesOuvertes(){
+    var out = [];
+    var enfants = document.body.children;
+    for(var i = 0; i < enfants.length; i++){
+      var el = enfants[i];
+      if(el.nodeType !== 1) continue;
+      if(el.id === 'agv-pwa-invite'){ out.push(el); continue; }
+      var st;
+      try{ st = window.getComputedStyle(el); }catch(e){ continue; }
+      if(st.position !== 'fixed') continue;
+      if(st.display === 'none' || st.visibility === 'hidden') continue;
+      var z = parseInt(st.zIndex, 10) || 0;
+      if(z >= 9000 && el.offsetHeight > 0) out.push(el);
+    }
+    return out;
+  }
+
+  try{ history.pushState({ agv: 1 }, ''); }catch(e){}
+
+  window.addEventListener('popstate', function(){
+    var c = couchesOuvertes();
+    if(c.length){
+      try{ c[c.length - 1].remove(); }catch(e){}
+      try{ history.pushState({ agv: 1 }, ''); }catch(e){}
+      return;
+    }
+    var now = Date.now();
+    if(now - dernierRetour < 2200){ return; }   // deuxieme appui : on quitte
+    dernierRetour = now;
+    toast('Appuyez a nouveau pour quitter', '#334155', 2000);
+    try{ history.pushState({ agv: 1 }, ''); }catch(e){}
+  });
+})();
+
+/* ============================================================
+   6. ETAT DE LA CONNEXION
+   ============================================================ */
+(function reseau(){
+  var bar = null;
+  function afficher(){
+    if(bar) return;
+    bar = document.createElement('div');
+    bar.className = 'agv-pwa-bar';
+    bar.style.background = '#b45309';
+    bar.textContent = 'Hors connexion \u2014 les modifications seront envoyees au retour du reseau';
+    document.body.appendChild(bar);
+  }
+  function cacher(){
+    if(!bar) return;
+    bar.style.background = '#15803d';
+    bar.textContent = 'Connexion retablie';
+    var b = bar; bar = null;
+    setTimeout(function(){ if(b) b.remove(); }, 2200);
+  }
+  window.addEventListener('offline', afficher);
+  window.addEventListener('online', cacher);
+  if(navigator.onLine === false) afficher();
+})();
+
+/* ============================================================
+   7. MESSAGE COURT
+   ============================================================ */
+function toast(txt, couleur, duree){
+  var t = document.createElement('div');
+  t.className = 'agv-pwa-bar';
+  t.style.background = couleur || '#334155';
+  t.style.animation = 'agvUp .25s ease';
+  t.textContent = txt;
+  document.body.appendChild(t);
+  setTimeout(function(){ if(t.parentNode) t.remove(); }, duree || 3000);
+}
+window.agvToast = toast;
+
+/* ============================================================
+   8. SERVICE WORKER : mise a jour propre
+   ============================================================ */
+(function serviceWorker(){
+  if(!('serviceWorker' in navigator)) return;
+  if(location.protocol !== 'https:' && location.hostname !== 'localhost') return;
+
+  var rechargement = false;
+  navigator.serviceWorker.addEventListener('controllerchange', function(){
+    if(rechargement) return;
+    rechargement = true;
+    location.reload();
+  });
+
+  window.addEventListener('load', function(){
+    navigator.serviceWorker.register('./sw.js').then(function(reg){
+
+      function proposerMaj(sw){
+        var t = document.createElement('div');
+        t.className = 'agv-pwa-bar';
+        t.style.background = '#1d4ed8';
+        t.style.cursor = 'pointer';
+        t.innerHTML = 'Nouvelle version disponible &mdash; toucher pour mettre a jour';
+        t.onclick = function(){
+          t.textContent = 'Mise a jour...';
+          try{ sw.postMessage({ type: 'SKIP_WAITING' }); }catch(e){ location.reload(); }
+        };
+        document.body.appendChild(t);
+        setTimeout(function(){ if(t.parentNode) t.remove(); }, 12000);
+      }
+
+      if(reg.waiting && navigator.serviceWorker.controller) proposerMaj(reg.waiting);
+
+      reg.addEventListener('updatefound', function(){
+        var sw = reg.installing;
+        if(!sw) return;
+        sw.addEventListener('statechange', function(){
+          if(sw.state === 'installed' && navigator.serviceWorker.controller) proposerMaj(sw);
+        });
+      });
+
+      setInterval(function(){ try{ reg.update(); }catch(e){} }, 30 * 60 * 1000);
+
+    }).catch(function(err){
+      console.warn('[AGV] Service worker non enregistre :', err && err.message);
+    });
+  });
+})();
+
+})();
+</script>
+
 </body></html>
