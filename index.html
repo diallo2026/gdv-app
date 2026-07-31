@@ -12952,165 +12952,222 @@ setTimeout(function(){
 })();
 </script>
 <!-- ============================================================
-     MODULE APP NATIVE — App AGV
+     MODULE APP NATIVE v2 — App AGV
      Drawer sidebar, hamburger 3 traits, plein écran garanti,
      zéro zoom, souleymane = accès espace concepteur.
+     CORRECTION : plus de position:fixed sur body (causait page blanche).
      Aucune modification des données ni de la structure Firebase.
      ============================================================ -->
 <style id="agv-native-css">
 
-/* BASE : plein écran, aucun zoom */
-html{height:100%;overflow:hidden;-webkit-text-size-adjust:100%;text-size-adjust:100%;touch-action:pan-x pan-y}
-body{height:100%;overflow:hidden;overscroll-behavior:none;-webkit-overflow-scrolling:touch;position:fixed;width:100%;top:0;left:0}
+/* ── BASE : anti-zoom uniquement ── */
+html { -webkit-text-size-adjust:100%; text-size-adjust:100%; }
+body { overscroll-behavior:none; }
 
-/* Sections niveau 1 */
-#agv-landing,#agv-auth,#agv-admin,#agv-app,#agv-shop-login{
-  height:100%;overflow-y:auto;-webkit-overflow-scrolling:touch}
+/* Empêcher le zoom pinch sur TOUTE la page */
+* { touch-action:pan-x pan-y; }
+input, select, textarea { touch-action:manipulation; }
 
-/* Page d'accueil */
-#agv-landing{position:fixed!important;inset:0!important;overflow-y:auto!important;z-index:1}
+/* ── SECTIONS PLEIN ÉCRAN ── */
+#agv-landing, #agv-shop-login, #agv-auth, #agv-admin {
+  position:fixed !important;
+  inset:0 !important;
+  overflow-y:auto !important;
+  -webkit-overflow-scrolling:touch !important;
+  background:var(--bg,#f5f3ef);
+}
+/* Par défaut cachées ; l'app les montre via agvShow() */
+#agv-landing  { z-index:5; }
+#agv-shop-login { z-index:10; background:#060d24; }
+#agv-auth     { z-index:8; }
+#agv-admin    { z-index:8; }
 
-/* Page de connexion */
-#agv-shop-login{position:fixed!important;inset:0!important;overflow-y:auto!important;z-index:10;background:var(--bg,#f5f3ef)}
-
-/* App principale */
-#agv-app{position:fixed!important;inset:0!important;display:flex!important;flex-direction:column!important;overflow:hidden!important}
-
-/* Grille app */
-#agv-app .app,.app{display:none;flex:1;overflow:hidden;position:relative}
-#agv-app .app.visible,.app.visible{display:flex!important;flex-direction:row}
+/* ── LAYOUT APP ── */
+#agv-app {
+  position:fixed !important;
+  inset:0 !important;
+  display:flex !important;
+  flex-direction:column !important;
+  overflow:hidden !important;
+  z-index:2;
+}
+#agv-app .app, .app {
+  display:none;
+  flex:1;
+  overflow:hidden;
+  position:relative;
+}
+#agv-app .app.visible, .app.visible {
+  display:flex !important;
+  flex-direction:row;
+}
 
 /* ── TOPBAR NATIVE ── */
-#agv-native-topbar{
-  display:none;align-items:center;gap:10px;
-  padding:0 14px;height:52px;min-height:52px;
+#agv-native-topbar {
+  display:none;
+  align-items:center;
+  gap:10px;
+  padding:0 14px;
+  padding-top:env(safe-area-inset-top,0px);
+  height:calc(52px + env(safe-area-inset-top,0px));
+  min-height:52px;
   background:var(--surface,#fff);
   border-bottom:1px solid var(--border,#e8e4dc);
-  flex-shrink:0;z-index:50;
-  padding-top:env(safe-area-inset-top,0px)}
-#agv-hamburger{
-  background:none;border:none;cursor:pointer;padding:8px;
-  border-radius:8px;color:var(--text,#1a1714);flex-shrink:0;
-  display:flex;align-items:center;justify-content:center;
-  min-width:40px;min-height:40px;-webkit-tap-highlight-color:transparent}
-#agv-hamburger:active{background:var(--surface2,#f9f8f6)}
-#agv-native-title{
-  font-size:15px;font-weight:700;color:var(--text,#1a1714);
-  flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-#agv-native-right{display:flex;align-items:center;gap:6px}
+  flex-shrink:0;
+  z-index:50;
+}
+#agv-hamburger {
+  background:none; border:none; cursor:pointer;
+  padding:8px; border-radius:8px;
+  color:var(--text,#1a1714);
+  flex-shrink:0;
+  display:flex; align-items:center; justify-content:center;
+  min-width:40px; min-height:40px;
+  -webkit-tap-highlight-color:transparent;
+}
+#agv-hamburger:active { background:var(--surface2,#f9f8f6); }
+#agv-native-title {
+  font-size:15px; font-weight:700;
+  color:var(--text,#1a1714);
+  flex:1; overflow:hidden;
+  text-overflow:ellipsis; white-space:nowrap;
+}
 
 /* ── SIDEBAR DRAWER ── */
-.app.visible .sidebar{
-  position:fixed!important;top:0!important;bottom:0!important;left:0!important;
-  width:280px!important;height:100%!important;
+.app.visible .sidebar {
+  position:fixed !important;
+  top:0 !important; bottom:0 !important; left:0 !important;
+  width:280px !important; height:100% !important;
   transform:translateX(-100%);
-  transition:transform .26s cubic-bezier(.4,0,.2,1),box-shadow .26s;
-  z-index:300!important;overflow-y:auto!important;overflow-x:hidden!important;
-  flex-direction:column!important;
-  border-right:1px solid var(--border,#e8e4dc)!important;
+  transition:transform .28s cubic-bezier(.4,0,.2,1), box-shadow .28s;
+  z-index:300 !important;
+  overflow-y:auto !important; overflow-x:hidden !important;
+  flex-direction:column !important;
+  border-right:1px solid var(--border,#e8e4dc) !important;
   padding-top:env(safe-area-inset-top,0px);
   padding-bottom:env(safe-area-inset-bottom,0px);
-  will-change:transform}
-.app.visible .sidebar.nav-open{
+  will-change:transform;
+}
+.app.visible .sidebar.nav-open {
   transform:translateX(0);
-  box-shadow:4px 0 28px rgba(0,0,0,.25)}
+  box-shadow:6px 0 30px rgba(0,0,0,.28);
+}
 
 /* Rideau */
-#agv-nav-backdrop{
-  display:none;position:fixed;inset:0;
-  background:rgba(0,0,0,.45);z-index:299;
-  -webkit-tap-highlight-color:transparent}
-#agv-nav-backdrop.open{display:block}
+#agv-nav-backdrop {
+  display:none; position:fixed; inset:0;
+  background:rgba(0,0,0,.48); z-index:299;
+  -webkit-tap-highlight-color:transparent;
+}
+#agv-nav-backdrop.open { display:block; }
 
 /* ── ZONE PRINCIPALE ── */
-.app.visible .main,#agv-app .main{
-  flex:1;min-width:0;
-  overflow-y:auto!important;overflow-x:hidden;
+.app.visible .main, #agv-app .main {
+  flex:1; min-width:0;
+  overflow-y:auto !important; overflow-x:hidden;
   -webkit-overflow-scrolling:touch;
-  padding:14px 12px 20px!important;
-  padding-bottom:calc(20px + env(safe-area-inset-bottom,0px))!important;
-  padding-left:calc(12px + env(safe-area-inset-left,0px))!important;
-  padding-right:calc(12px + env(safe-area-inset-right,0px))!important}
+  padding:14px 12px !important;
+  padding-bottom:calc(20px + env(safe-area-inset-bottom,0px)) !important;
+  padding-left:calc(12px + env(safe-area-inset-left,0px)) !important;
+  padding-right:calc(12px + env(safe-area-inset-right,0px)) !important;
+}
 
-/* ── VUES / ONGLETS ── */
-.view{display:none}
-.view.active{display:block;animation:agvSlideIn .18s ease}
-@keyframes agvSlideIn{from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:translateY(0)}}
+/* ── VUES (onglets) ── */
+.view { display:none; }
+.view.active { display:block; animation:agvIn .18s ease; }
+@keyframes agvIn {
+  from { opacity:0; transform:translateY(6px); }
+  to   { opacity:1; transform:translateY(0); }
+}
 
-/* ── ITEMS DE NAV ── */
-.nav-item{
-  min-height:48px!important;padding:10px 14px!important;
-  font-size:13px!important;display:flex!important;
-  align-items:center!important;gap:10px!important;
-  flex-direction:row!important;text-align:left!important;
-  border-radius:10px!important;margin-bottom:2px;
-  -webkit-tap-highlight-color:transparent;touch-action:manipulation}
-.nav-icon{width:20px!important;height:20px!important;flex-shrink:0}
+/* ── ITEMS NAV ── */
+.nav-item {
+  min-height:48px !important; padding:10px 14px !important;
+  font-size:13px !important; display:flex !important;
+  align-items:center !important; gap:10px !important;
+  flex-direction:row !important; text-align:left !important;
+  border-radius:10px !important; margin-bottom:2px;
+  -webkit-tap-highlight-color:transparent;
+  touch-action:manipulation;
+}
+.nav-icon { width:20px !important; height:20px !important; flex-shrink:0; }
 
-/* ── FORMULAIRES (pas de zoom iOS) ── */
-input,select,textarea,.form-input{font-size:16px!important;touch-action:manipulation}
+/* ── FORMULAIRES ── */
+input, select, textarea, .form-input { font-size:16px !important; }
 
 /* ── BOUTONS ── */
-.btn{min-height:46px!important;padding:11px 18px!important;font-size:14px!important;touch-action:manipulation}
-.btn-sm{min-height:38px!important;font-size:12px!important}
-button,[onclick],a{-webkit-tap-highlight-color:transparent}
+.btn     { min-height:46px !important; font-size:14px !important; touch-action:manipulation; }
+.btn-sm  { min-height:38px !important; font-size:12px !important; }
+button, [onclick], a { -webkit-tap-highlight-color:transparent; }
 
 /* ── MODALES ── */
-.overlay{align-items:flex-end!important;padding:0!important}
-.modal{
-  width:100%!important;max-width:100%!important;margin:0!important;
-  border-radius:20px 20px 0 0!important;max-height:90vh;overflow-y:auto;
-  padding-bottom:calc(24px + env(safe-area-inset-bottom,0px))!important}
+.overlay { align-items:flex-end !important; padding:0 !important; }
+.modal {
+  width:100% !important; max-width:100% !important; margin:0 !important;
+  border-radius:20px 20px 0 0 !important;
+  max-height:90vh; overflow-y:auto;
+  padding-bottom:calc(24px + env(safe-area-inset-bottom,0px)) !important;
+}
 
 /* ── TABLEAUX ── */
-.table-wrap{overflow-x:auto!important;-webkit-overflow-scrolling:touch!important;touch-action:pan-x pan-y}
-table{min-width:480px}
+.table-wrap { overflow-x:auto !important; -webkit-overflow-scrolling:touch !important; }
+table { min-width:480px; }
 
 /* ── CARTES / STATS ── */
-.stats{grid-template-columns:1fr 1fr!important;gap:8px!important}
-.card{padding:12px!important;border-radius:12px!important}
-.stat{padding:10px!important}.stat-val{font-size:20px!important}
-.topbar{margin-bottom:14px!important;flex-wrap:wrap;gap:8px}
-.topbar h1{font-size:17px!important;letter-spacing:-.3px}
-.fg2,.fg3{grid-template-columns:1fr!important}
+.stats { grid-template-columns:1fr 1fr !important; gap:8px !important; }
+.card  { padding:12px !important; border-radius:12px !important; }
+.stat  { padding:10px !important; } .stat-val { font-size:20px !important; }
+.topbar { margin-bottom:14px !important; flex-wrap:wrap; gap:8px; }
+.topbar h1 { font-size:17px !important; }
+.fg2, .fg3 { grid-template-columns:1fr !important; }
 
-/* ── SMARTPHONE (0-480px) ── */
+/* ── SMARTPHONE 0-480px ── */
 @media(max-width:480px){
-  #agv-native-topbar{display:flex}
-  .app.visible>.sidebar{width:270px!important}
-  .topbar{padding-top:4px!important}}
+  #agv-native-topbar { display:flex; }
+  .app.visible>.sidebar { width:270px !important; }
+  .topbar { padding-top:4px !important; }
+}
 
-/* ── TABLETTE (481-900px) ── */
+/* ── TABLETTE 481-900px ── */
 @media(min-width:481px) and (max-width:900px){
-  #agv-native-topbar{display:flex}
-  .app.visible>.sidebar{width:300px!important}
-  .stats{grid-template-columns:repeat(2,1fr)!important}}
+  #agv-native-topbar { display:flex; }
+  .app.visible>.sidebar { width:300px !important; }
+  .stats { grid-template-columns:repeat(2,1fr) !important; }
+}
 
 /* ── GRAND ÉCRAN >900px : sidebar fixe ── */
 @media(min-width:901px){
-  #agv-native-topbar{display:none!important}
-  #agv-nav-backdrop{display:none!important}
-  .app.visible>.sidebar{
-    position:sticky!important;transform:none!important;
-    box-shadow:none!important;transition:none!important;
-    width:230px!important;height:100vh!important;
-    top:0!important;z-index:10!important}
-  .app.visible>.main{padding:22px!important}
-  .stats{grid-template-columns:repeat(3,1fr)!important}
-  .fg2{grid-template-columns:1fr 1fr!important}
-  .fg3{grid-template-columns:1fr 1fr 1fr!important}}
+  #agv-native-topbar { display:none !important; }
+  #agv-nav-backdrop  { display:none !important; }
+  .app.visible>.sidebar {
+    position:sticky !important; transform:none !important;
+    box-shadow:none !important; transition:none !important;
+    width:230px !important; height:100vh !important;
+    top:0 !important; z-index:10 !important;
+  }
+  .app.visible>.main { padding:22px !important; }
+  .stats { grid-template-columns:repeat(3,1fr) !important; }
+  .fg2   { grid-template-columns:1fr 1fr !important; }
+  .fg3   { grid-template-columns:1fr 1fr 1fr !important; }
+}
 
 /* ── TRÈS GRAND ÉCRAN >1200px ── */
 @media(min-width:1200px){
-  .app.visible>.sidebar{width:250px!important}
-  .stats{grid-template-columns:repeat(4,1fr)!important}}
+  .app.visible>.sidebar { width:250px !important; }
+  .stats { grid-template-columns:repeat(4,1fr) !important; }
+}
 
 /* ── SOULEYMANE TRIGGER ── */
-#agv-dev-souleymane-trigger{
-  cursor:pointer;-webkit-tap-highlight-color:transparent;
-  user-select:none;transition:opacity .15s;text-decoration:underline;
-  text-decoration-style:dotted;text-underline-offset:2px}
-#agv-dev-souleymane-trigger:active{opacity:.65}
+#agv-dev-souleymane-trigger {
+  cursor:pointer !important;
+  -webkit-tap-highlight-color:transparent;
+  user-select:none;
+  text-decoration:underline;
+  text-decoration-style:dotted;
+  text-underline-offset:2px;
+  transition:opacity .15s;
+}
+#agv-dev-souleymane-trigger:active { opacity:.6; }
 
 </style>
 
@@ -13118,20 +13175,20 @@ table{min-width:480px}
 (function(){
 'use strict';
 
-/* ── 1. TOPBAR + HAMBURGER ── */
+/* ── TOPBAR + HAMBURGER ── */
 function creerTopbar(){
   if(document.getElementById('agv-native-topbar')) return;
 
   var bd=document.createElement('div');
-  bd.id='agv-nav-backdrop';
-  bd.onclick=agvFermerNav;
+  bd.id='agv-nav-backdrop'; bd.onclick=agvFermerNav;
   document.body.appendChild(bd);
 
   var tb=document.createElement('div');
   tb.id='agv-native-topbar';
   tb.innerHTML=
     '<button id="agv-hamburger" aria-label="Menu" onclick="agvToggleNav()">'
-    +'<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round">'
+    +'<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor"'
+    +' stroke-width="2.3" stroke-linecap="round">'
     +'<line x1="3" y1="6"  x2="21" y2="6"/>'
     +'<line x1="3" y1="12" x2="21" y2="12"/>'
     +'<line x1="3" y1="18" x2="21" y2="18"/>'
@@ -13139,15 +13196,14 @@ function creerTopbar(){
     +'<div id="agv-native-title">App AGV</div>'
     +'<div id="agv-native-right"></div>';
 
-  /* Insérer dans une enveloppe fixe qui contient topbar + #agv-app */
-  var agvApp=document.getElementById('agv-app');
-  if(agvApp && agvApp.parentNode){
-    var wrap=document.createElement('div');
-    wrap.id='agv-native-wrap';
-    wrap.style.cssText='position:fixed;inset:0;display:flex;flex-direction:column;overflow:hidden;z-index:1';
-    agvApp.parentNode.insertBefore(wrap,agvApp);
-    wrap.appendChild(tb);
-    wrap.appendChild(agvApp);
+  /* Enveloppe : topbar au-dessus de #agv-app */
+  var aa=document.getElementById('agv-app');
+  if(aa && aa.parentNode){
+    var w=document.createElement('div');
+    w.id='agv-native-wrap';
+    w.style.cssText='position:fixed;inset:0;display:flex;flex-direction:column;overflow:hidden;z-index:1';
+    aa.parentNode.insertBefore(w,aa);
+    w.appendChild(tb); w.appendChild(aa);
   }else{
     document.body.insertBefore(tb,document.body.firstChild);
   }
@@ -13157,15 +13213,13 @@ window.agvToggleNav=function(){
   var sb=document.querySelector('.app.visible .sidebar')||document.querySelector('.sidebar');
   var bd=document.getElementById('agv-nav-backdrop');
   if(!sb) return;
-  if(sb.classList.contains('nav-open')){
-    agvFermerNav();
-  }else{
+  if(sb.classList.contains('nav-open')){ agvFermerNav(); }
+  else{
     sb.classList.add('nav-open');
     if(bd) bd.classList.add('open');
-    try{history.pushState({agvNav:1},'');}catch(e){}
+    try{ history.pushState({agvNav:1},''); }catch(e){}
   }
 };
-
 window.agvFermerNav=function(){
   var sb=document.querySelector('.sidebar.nav-open');
   var bd=document.getElementById('agv-nav-backdrop');
@@ -13173,13 +13227,12 @@ window.agvFermerNav=function(){
   if(bd) bd.classList.remove('open');
 };
 
-/* Armer les boutons de nav : fermer drawer + mettre à jour le titre */
+/* Armer les boutons de nav */
 var _arme={};
 function armerNav(){
   document.querySelectorAll('.nav-item').forEach(function(btn){
-    var k=btn.id||btn.textContent.trim().slice(0,20);
-    if(_arme[k]) return;
-    _arme[k]=1;
+    var k=btn.id||(btn.textContent||'').trim().slice(0,20);
+    if(_arme[k]) return; _arme[k]=1;
     btn.addEventListener('click',function(){
       agvFermerNav();
       setTimeout(function(){
@@ -13189,76 +13242,61 @@ function armerNav(){
           if(txt) t.textContent=txt;
         }
       },50);
-    },{capture:false});
+    });
   });
 }
 
-/* Bouton retour Android : ferme le drawer */
+/* Bouton retour Android */
 window.addEventListener('popstate',function(){
   if(document.querySelector('.sidebar.nav-open')) agvFermerNav();
 });
 
-/* ── 2. PLEIN ÉCRAN ── */
-function forcerPleinEcran(){
-  ['agv-landing','agv-shop-login','agv-auth','agv-admin'].forEach(function(id){
-    var el=document.getElementById(id);
-    if(!el) return;
-    el.style.cssText='position:fixed!important;inset:0!important;overflow-y:auto!important;-webkit-overflow-scrolling:touch!important;z-index:10';
-  });
+/* ── PLEIN ÉCRAN des sections ── */
+function forcerSections(){
+  /* #agv-app est déjà fixed via CSS ; on s'assure que les autres sections
+     sont bien cachées sauf celle active */
   var aa=document.getElementById('agv-app');
-  if(aa) aa.style.cssText='position:fixed!important;inset:0!important;display:flex!important;flex-direction:column!important;overflow:hidden!important';
+  if(aa) aa.style.cssText='position:fixed!important;inset:0!important;display:flex!important;flex-direction:column!important;overflow:hidden!important;z-index:2';
 }
 
-/* ── 3. SOULEYMANE = ESPACE CONCEPTEUR ── */
+/* ── SOULEYMANE → ESPACE CONCEPTEUR ── */
 function activerSouleymane(){
   if(document.getElementById('agv-dev-souleymane-trigger')) return;
-  /* chercher le span "souleymane" dans le footer landing */
-  var cibles=[].slice.call(document.querySelectorAll('span,div,p'));
-  for(var i=0;i<cibles.length;i++){
-    var el=cibles[i];
-    if(el.id && el.id.indexOf('agv-dev')===0) continue;
-    if((el.textContent||'').trim().toLowerCase()==='souleymane' && el.children.length===0){
+  var els=[].slice.call(document.querySelectorAll('span,div,p,a'));
+  for(var i=0;i<els.length;i++){
+    var el=els[i];
+    if(el.id && /agv-dev/.test(el.id)) continue;
+    var txt=(el.textContent||'').trim();
+    if(/^souleymane$/i.test(txt) && el.children.length===0){
       el.id='agv-dev-souleymane-trigger';
-      el.setAttribute('role','button');
-      el.setAttribute('tabindex','0');
-      el.setAttribute('aria-label','Espace Concepteur');
+      el.setAttribute('role','button'); el.setAttribute('tabindex','0');
       el.onclick=function(e){
         e.stopPropagation();
         if(typeof agvConcepteurAccess==='function') agvConcepteurAccess();
       };
-      el.onkeydown=function(e){if(e.key==='Enter'||e.key===' ') el.onclick(e);};
+      el.onkeydown=function(e){ if(e.key==='Enter'||e.key===' ') el.onclick(e); };
       break;
     }
   }
 }
 
-/* ── 4. CACHER le bouton concepteur visible ── */
+/* ── CACHER bouton concepteur visible ── */
 function cacherBtnConcepteur(){
   var el=document.getElementById('agv-btn-concepteur');
   if(el) el.style.setProperty('display','none','important');
 }
 
-/* ── 5. HAUTEUR exacte sans barre navigateur (iOS Safari) ── */
-function fixVH(){
-  document.documentElement.style.setProperty('--vh',(window.innerHeight*.01)+'px');
-}
-fixVH();
-window.addEventListener('resize',fixVH);
-
 /* ── INIT ── */
 function init(){
-  forcerPleinEcran();
+  forcerSections();
   creerTopbar();
   activerSouleymane();
   cacherBtnConcepteur();
   armerNav();
-  /* Observer les mutations pour armer les boutons ajoutés dynamiquement */
   if(window.MutationObserver){
     new MutationObserver(function(){
-      forcerPleinEcran();
-      activerSouleymane();
-      cacherBtnConcepteur();
-      armerNav();
+      forcerSections(); activerSouleymane();
+      cacherBtnConcepteur(); armerNav();
     }).observe(document.body,{childList:true,subtree:true,
       attributes:true,attributeFilter:['class','style']});
   }
@@ -13269,6 +13307,7 @@ else init();
 
 })();
 </script>
+
 <!-- ============================================================
      MODULE APPLICATION MOBILE (PWA) — App AGV
      Installation sur Android / iOS / iPadOS / Windows,
