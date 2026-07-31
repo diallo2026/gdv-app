@@ -1801,7 +1801,7 @@ function agvRenderShopLogin(shop, container){
           '</div>',
         '</div>',
         '<div style="padding:16px 20px;border-top:1px solid rgba(37,99,235,0.08);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">',
-          '<p style="font-size:11px;color:#1e3a5f">App AGV &middot; D&#233;velopp&#233; par Neindig</p>',
+          '<p style="font-size:11px;color:#1e3a5f">App AGV &middot; D&#233;velopp&#233; par souleymane</p>',
           '<button id="sl-change-boutique" style="background:none;border:1px solid rgba(37,99,235,0.2);border-radius:7px;color:#475569;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit;padding:5px 12px">&#x21A9; Changer de boutique</button>',
         '</div>',
       '</div>'
@@ -1995,15 +1995,13 @@ window.addEventListener('DOMContentLoaded',function(){
     <!-- Ligne 1 -->
     <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:14px">
       <p style="font-size:11px;color:#1e3a5f">© 2026 App AGV — Concu pour les entrepreneurs africains</p>
-      <button onclick="agvConcepteurAccess()" style="display:inline-flex;align-items:center;gap:6px;background:rgba(37,99,235,0.1);border:1px solid rgba(37,99,235,0.3);border-radius:8px;color:#60a5fa;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;padding:7px 16px;transition:.2s" onmouseover="this.style.background='rgba(37,99,235,0.25)'" onmouseout="this.style.background='rgba(37,99,235,0.1)'">
-        🔧 Espace Concepteur
-      </button>
+      <span id="agv-btn-concepteur" style="display:none"><button onclick="agvConcepteurAccess()" style="display:inline-flex;align-items:center;gap:6px;background:rgba(37,99,235,0.1);border:1px solid rgba(37,99,235,0.3);border-radius:8px;color:#60a5fa;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;padding:7px 16px;transition:.2s" onmouseover="this.style.background='rgba(37,99,235,0.25)'" onmouseout="this.style.background='rgba(37,99,235,0.1)'">🔧 Espace Concepteur</button></span><script>(function(){try{var p=new URLSearchParams(location.search);if(p.get("souleymane")||p.get("espace")==="souleymane"){var b=document.getElementById("agv-btn-concepteur");if(b)b.style.display="inline-flex";}}catch(e){}})();</script>
     </div>
 
     <!-- Carte concepteur -->
     <div style="background:rgba(37,99,235,0.06);border:1px solid rgba(37,99,235,0.15);border-radius:12px;padding:16px 20px;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:14px">
       <div>
-        <div style="font-size:14px;font-weight:700;color:#94a3b8">Développé par <span style="color:#60a5fa;font-size:15px">Neindig</span></div>
+        <div style="font-size:14px;font-weight:700;color:#94a3b8">Développé par <span style="color:#60a5fa;font-size:15px">souleymane</span></div>
         <div style="font-size:11px;color:#334155;margin-top:3px">Contacter le concepteur pour toute assistance technique</div>
       </div>
       <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
@@ -13182,15 +13180,61 @@ function manifestDeSecours(){
 })();
 
 
-/* verification des icones : repli embarque si le dossier icons/ est absent */
+/* verification des icones : repli embarque si le dossier icons/ est absent ou mal televerse.
+   On utilise fetch (HEAD) plutot que new Image().onerror car certains serveurs renvoient
+   une page 404 avec un statut HTTP 200, ce qui empeche onerror de se declencher. */
 (function verifierIcones(){
-  [['agv-apple-icon','apple'],['agv-fav-icon','i192']].forEach(function(p){
-    var el = document.getElementById(p[0]);
-    if(!el) return;
-    var t = new Image();
-    t.onerror = function(){ el.href = ICONS[p[1]]; };
-    t.src = el.href;
-  });
+  if(typeof fetch !== 'function') return;
+  fetch('icons/icon-192.png', { method: 'HEAD', cache: 'no-store' })
+    .then(function(r){
+      if(r.ok && r.headers.get('content-type') && r.headers.get('content-type').indexOf('image') >= 0) return;
+      throw new Error('icon absent');
+    })
+    .catch(function(){
+      // Dossier icons/ absent ou mauvais content-type : on injecte les data URIs embarquees
+      var lien = document.querySelector('link[rel="manifest"]');
+      if(lien && lien.href.indexOf('data:') < 0){
+        // regenerer le manifeste embarque avec les data URIs
+        lien.href = lien.href; // deja gere par verifierManifeste ci-dessus
+      }
+      [
+        ['agv-apple-icon', ICONS.apple],
+        ['agv-fav-icon', ICONS.i192]
+      ].forEach(function(p){
+        var el = document.getElementById(p[0]);
+        if(el) el.href = p[1];
+      });
+      // Forcer le favicon du navigateur (rechargement dynamique)
+      var fav = document.createElement('link');
+      fav.rel = 'icon'; fav.type = 'image/png'; fav.href = ICONS.fav;
+      var ancien = document.querySelector('link[rel="icon"]');
+      if(ancien && ancien.id === 'agv-fav-icon') ancien.href = ICONS.i192;
+      else document.head.appendChild(fav);
+      // Mettre a jour le manifeste embarque avec les data URIs pour l'installation
+      (function(){
+        var base = location.href.split('?')[0].split('#')[0];
+        var m = {
+          id: base + '?app=agv',
+          name: 'App AGV \u2014 Gestion de Vente',
+          short_name: 'App AGV',
+          description: 'Gestion de boutique : stock, ventes, depenses, dettes, clients, gerants et paie.',
+          lang: 'fr', start_url: base + '?source=pwa',
+          scope: base.replace(/[^\/]*$/, ''),
+          display: 'standalone', display_override: ['standalone', 'minimal-ui', 'browser'],
+          orientation: 'any', background_color: '#060d24', theme_color: '#060d24',
+          categories: ['business', 'productivity', 'finance'],
+          prefer_related_applications: false,
+          icons: [
+            { src: ICONS.i192, sizes: '192x192', type: 'image/png', purpose: 'any' },
+            { src: ICONS.i512, sizes: '512x512', type: 'image/png', purpose: 'any' },
+            { src: ICONS.m192, sizes: '192x192', type: 'image/png', purpose: 'maskable' },
+            { src: ICONS.m512, sizes: '512x512', type: 'image/png', purpose: 'maskable' }
+          ]
+        };
+        var l = document.querySelector('link[rel="manifest"]');
+        if(l) l.href = 'data:application/manifest+json;charset=utf-8,' + encodeURIComponent(JSON.stringify(m));
+      })();
+    });
 })();
 
 /* ============================================================
