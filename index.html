@@ -959,6 +959,15 @@ function agvLaunchApp(shop){
     if(typeof renderAlerts==='function')renderAlerts();
     var _nb=document.getElementById('nb-produits');
     if(_nb) _nb.textContent=products.length;
+    // Rafraîchir l'onglet actuellement ouvert après réception des données
+    if(typeof currentView!=='undefined'){
+      if(currentView==='produits'    && typeof renderTable==='function')      renderTable();
+      if(currentView==='journalier'  && typeof renderJournalier==='function') renderJournalier();
+      if(currentView==='repartition' && typeof renderRepartition==='function')renderRepartition();
+      if(currentView==='inventaire'  && typeof renderInventaire==='function') renderInventaire();
+      if(currentView==='salaires'    && typeof renderSalaires==='function')   renderSalaires();
+      if(currentView==='rapport'     && typeof renderRapportJour==='function')renderRapportJour();
+    }
     setTimeout(function(){if(typeof refreshVentesHistory==='function')refreshVentesHistory();},100);
   }
   // 1. Charger le cache IMMEDIATEMENT (0ms d'attente)
