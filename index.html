@@ -1675,7 +1675,7 @@ function agvRenderShopLogin(shop, container){
   var logoHtml = shop.logo ? '<img src="'+shop.logo+'" style="height:70px;width:70px;object-fit:contain;border-radius:16px;margin-bottom:14px;box-shadow:0 0 30px rgba(37,99,235,0.25)">' : '<div style="font-size:60px;margin-bottom:14px">&#x1F3EA;</div>';
     var villeHtml = shop.ville ? '<div style="font-size:12px;color:#475569">'+shop.ville+'</div>' : '';
     container.innerHTML = [
-      '<div style="min-height:100vh;background:linear-gradient(180deg,#060d24 0%,#0a1628 100%);display:flex;flex-direction:column">',
+      '<div style="min-height:100vh;min-height:100dvh;background:linear-gradient(180deg,#060d24 0%,#0a1628 100%);display:flex;flex-direction:column;box-sizing:border-box">',
         '<div style="padding:24px;text-align:center;border-bottom:1px solid rgba(37,99,235,0.1)">',
           logoHtml,
           '<h1 style="font-size:22px;font-weight:800;color:#fff;margin-bottom:4px">'+shop.entreprise+'</h1>',
@@ -1690,7 +1690,7 @@ function agvRenderShopLogin(shop, container){
                 '<div style="width:40px;height:40px;background:rgba(251,191,36,0.15);border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:20px">&#x1F451;</div>',
                 '<div><div style="font-weight:700;color:#fbbf24;font-size:15px">Fondateur</div><div style="font-size:11px;color:#78716c">Acc&#232;s complet</div></div>',
               '</div>',
-              '<input id="sl-fondateur-pwd" type="password" placeholder="Code fondateur" style="width:100%;padding:11px 14px;background:#060d24;border:1px solid rgba(251,191,36,0.2);border-radius:9px;color:#e2e8f0;font-size:14px;font-family:inherit;outline:none;margin-bottom:10px;box-sizing:border-box">',
+              '<input id="sl-fondateur-pwd" type="password" placeholder="Code fondateur" style="width:100%;padding:11px 14px;background:#060d24;border:1px solid rgba(251,191,36,0.2);border-radius:9px;color:#e2e8f0;font-size:16px;font-family:inherit;outline:none;margin-bottom:10px;box-sizing:border-box">',
               '<button id="sl-btn-fondateur" style="width:100%;padding:12px;border:none;border-radius:9px;background:linear-gradient(135deg,#f59e0b,#d97706);color:#000;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit">Se connecter — Fondateur</button>',
             '</div>',
             '<div style="background:rgba(37,99,235,0.07);border:1px solid rgba(37,99,235,0.2);border-radius:14px;padding:20px">',
@@ -1701,7 +1701,7 @@ function agvRenderShopLogin(shop, container){
               '<select id="sl-gerant-select" style="width:100%;padding:11px 14px;background:#060d24;border:1px solid rgba(37,99,235,0.2);border-radius:9px;color:#e2e8f0;font-size:13px;font-family:inherit;outline:none;margin-bottom:10px;cursor:pointer;box-sizing:border-box">',
                 '<option value="">-- S&#233;lectionner un g&#233;rant --</option>',
               '</select>',
-              '<input id="sl-gerant-pwd" type="password" placeholder="Code g&#233;rant" style="width:100%;padding:11px 14px;background:#060d24;border:1px solid rgba(37,99,235,0.2);border-radius:9px;color:#e2e8f0;font-size:14px;font-family:inherit;outline:none;margin-bottom:10px;box-sizing:border-box">',
+              '<input id="sl-gerant-pwd" type="password" placeholder="Code g&#233;rant" style="width:100%;padding:11px 14px;background:#060d24;border:1px solid rgba(37,99,235,0.2);border-radius:9px;color:#e2e8f0;font-size:16px;font-family:inherit;outline:none;margin-bottom:10px;box-sizing:border-box">',
               '<button id="sl-btn-gerant" style="width:100%;padding:12px;border:none;border-radius:9px;background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#fff;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit">Se connecter — G&#233;rant</button>',
             '</div>',
           '</div>',
@@ -2987,7 +2987,22 @@ window.addEventListener('DOMContentLoaded',function(){
           <label class="form-label">WhatsApp (numéro avec indicatif)</label>
           <input class="form-input" id="fond-whatsapp" placeholder="Ex: 224620000000" type="tel">
         </div>
+        <div class="form-group">
+          <label class="form-label">% des bénéfices revenant au Fondateur</label>
+          <div style="display:flex;align-items:center;gap:10px">
+            <input class="form-input" id="fond-pct" type="number" min="0" max="100" value="100" style="max-width:90px;text-align:center">
+            <span style="font-size:12px;color:var(--text3)">Le reste est partagé entre les associés configurés ci-dessous</span>
+          </div>
+        </div>
         <div id="fond-msg" style="display:none;padding:10px;border-radius:8px;font-size:13px;margin-bottom:12px"></div>
+        <div style="margin-top:20px;border-top:1px solid var(--border);padding-top:16px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+            <h3 style="font-size:14px;font-weight:700">👥 Associés / Co-fondateurs</h3>
+            <button class="btn btn-ghost btn-sm" onclick="addAssocie()">+ Ajouter</button>
+          </div>
+          <p style="font-size:12px;color:var(--text3);margin-bottom:12px">Chaque associé reçoit son pourcentage sur la part du fondateur, déduit des fonds de répartition.</p>
+          <div id="associes-list"></div>
+        </div>
         <button class="btn btn-primary" style="width:100%" onclick="saveFondateurInfo()">💾 Enregistrer les infos Fondateur</button>
       </div>
     </div>
@@ -3601,7 +3616,7 @@ window.addEventListener('DOMContentLoaded',function(){
       <button class="modal-close" onclick="closeRepConfig()">✕</button>
     </div>
     <div class="modal-body">
-      <div class="info-box" style="margin-bottom:16px">Le total des pourcentages doit être égal à 100%.</div>
+      <div class="info-box" style="margin-bottom:16px">Définissez les fonds à prélever sur les bénéfices (jusqu’à 100%). Le reste est réparti automatiquement entre le fondateur et les gérants selon leurs pourcentages.</div>
       <div id="rep-config-list"></div>
       <button class="btn btn-ghost btn-sm" onclick="addRepLine()" style="margin-top:12px;width:100%">+ Ajouter une ligne</button>
       <div id="rep-config-total" style="margin-top:12px;font-weight:700;font-size:14px;text-align:right"></div>
@@ -4107,6 +4122,9 @@ function renderParametresBoutique(){
   if(fondNomEl)  fondNomEl.value  = fondateur?(fondateur.nom||''):'';
   if(fondCodeEl) fondCodeEl.value = shop.codeFondateur||'';
   if(fondWaEl)   fondWaEl.value   = fondateur?(fondateur.whatsapp||''):'';
+  var fondPctEl=document.getElementById('fond-pct');
+  if(fondPctEl)  fondPctEl.value  = fondateur&&fondateur.pct!=null?fondateur.pct:100;
+  renderAssociesList();
   // Photo fondateur
   var prev = document.getElementById('fond-photo-preview');
   if(prev){
@@ -4119,6 +4137,31 @@ function renderParametresBoutique(){
   var fmsg = document.getElementById('fond-msg');
   if(fmsg) fmsg.style.display = 'none';
   window._fondPhotoData = fondateur&&fondateur.photo ? fondateur.photo : null;
+}
+
+function renderAssociesList(){
+  var el=document.getElementById('associes-list'); if(!el) return;
+  var list=gerants.filter(function(g){return g.type==='associe';});
+  if(!list.length){el.innerHTML='<p style="font-size:12px;color:var(--text3);padding:8px 0">Aucun associé. Cliquez sur « + Ajouter ».</p>';return;}
+  el.innerHTML=list.map(function(a){
+    return '<div style="display:grid;grid-template-columns:1fr 90px 32px;gap:8px;align-items:center;margin-bottom:8px">'
+      +'<input class="form-input" value="'+(a.nom||'')+'" placeholder="Nom associé" '
+      +'oninput="(function(v){var x=gerants.find(function(g){return g.id==='+a.id+'});if(x)x.nom=v;})(this.value)" style="padding:8px 10px">'
+      +'<div style="display:flex;align-items:center;gap:4px">'
+      +'<input class="form-input" type="number" min="0" max="100" value="'+(a.pct||0)+'" '
+      +'oninput="(function(v){var x=gerants.find(function(g){return g.id==='+a.id+'});if(x)x.pct=parseFloat(v)||0;})(this.value)" '
+      +'style="padding:8px;text-align:center"><span style="color:var(--text3)">%</span></div>'
+      +'<button onclick="removeAssocie('+a.id+')" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:18px">✕</button>'
+      +'</div>';
+  }).join('');
+}
+function addAssocie(){
+  gerants.push({id:Date.now(),nom:'',pct:0,type:'associe',role:'associe'});
+  renderAssociesList();
+}
+function removeAssocie(id){
+  gerants=gerants.filter(function(g){return g.id!==id;});
+  renderAssociesList(); saveAll(); showToast('Associé supprimé');
 }
 
 function fondPreviewPhoto(input){
@@ -4156,6 +4199,8 @@ function saveFondateurInfo(){
     gerants[idxF].nom       = nom;
     gerants[idxF].whatsapp  = wa;
     if(window._fondPhotoData) gerants[idxF].photo = window._fondPhotoData;
+    var _fp=parseFloat((document.getElementById('fond-pct')||{}).value);
+    if(!isNaN(_fp)) gerants[idxF].pct=Math.min(100,Math.max(0,_fp));
   }
 
   // Mettre à jour le code fondateur dans Firebase /info
@@ -4571,6 +4616,9 @@ function appliquerDonneesFirebase(data) {
     if (typeof renderVentes==='function')      renderVentes();
     if (typeof renderDettes==='function')      renderDettes();
     if (typeof renderGerants==='function')     renderGerants();
+    if (currentView==='produits'    && typeof renderTable==='function')       renderTable();
+    if (currentView==='journalier'  && typeof renderJournalier==='function')  renderJournalier();
+    if (currentView==='repartition' && typeof renderRepartition==='function') renderRepartition();
     var ind = document.getElementById('syncIndicator');
     if(ind){ ind.textContent='🟢 Synchronisé'; ind.style.color='#1a7a4a';
       setTimeout(function(){ ind.textContent='☁️ Cloud actif'; ind.style.color='#2563eb'; },2000); }
@@ -6350,6 +6398,7 @@ function renderJournalier(){
   const allVM=ventes.filter(v=>getMonthKey(v.ts||v.date)===mk);
   const allEM=(typeof entrees!=='undefined'?entrees:[]).filter(e=>getMonthKey(e.date||e.ts)===mk);
   const allDM=depenses.filter(d=>getMonthKey(d.date||d.ts)===mk);
+  const emMonth=allEM; // BUG3 FIX: emMonth etait utilise mais jamais defini
   const daysSet=new Set([...allVM.map(v=>getDayKey(v.ts||v.date)),...allDM.map(d=>d.date||d.ts),...emMonth.map(e=>getDayKey(e.date||e.ts))]);
   const jourSel=document.getElementById('jour-day-filter');
   if(jourSel){
@@ -8051,12 +8100,19 @@ function renderRepartition(){
   const totalSalaires=gerantsSalaires.reduce((s,g)=>s+(g.salaire||0),0);
   const gerantsPct=gerants.filter(g=>g.type==='pourcentage'&&g.pct>0);
   const totalGerantPct=gerantsPct.reduce((s,g)=>s+g.pct,0);
+  const associes=gerants.filter(g=>g.type==='associe'&&(g.pct||0)>0);
+  const _fondG=gerants.find(g=>g.id===1||g.role==='fondateur'||g.type==='fondateur');
+  const fondPct=_fondG&&_fondG.pct!=null?_fondG.pct:100;
   const resteAvantFonds=Math.max(0,benefMonth-totalSalaires-depMonth-approMonth);
   const totalRepPct=repConfig.reduce((s,r)=>s+r.pct,0);
   const montantFonds=Math.round(resteAvantFonds*Math.min(totalRepPct,100)/100);
   const resteApresF=Math.max(0,resteAvantFonds-montantFonds);
   const montantGerants=Math.round(resteApresF*totalGerantPct/100);
-  const partFondateur=resteApresF-montantGerants;
+  const resteAvantFond2=Math.max(0,resteApresF-montantGerants);
+  const partFondateurBrute=Math.round(resteAvantFond2*Math.min(fondPct,100)/100);
+  const partAssocies=associes.map(function(a){return{nom:a.nom||'Associé',montant:Math.round(resteAvantFond2*(a.pct||0)/100)};});
+  const totalAssociesMont=partAssocies.reduce(function(s,a){return s+a.montant;},0);
+  const partFondateur=Math.max(0,partFondateurBrute-totalAssociesMont);
 
   const flux=document.getElementById('rep-flux');
   if(flux) flux.innerHTML=`<div style="display:flex;flex-direction:column;gap:8px">
@@ -8067,7 +8123,8 @@ function renderRepartition(){
     <div style="display:flex;justify-content:space-between;padding:10px 14px;background:var(--surface2);border-radius:8px;border:1px solid var(--border)"><span style="font-weight:700">Reste avant fonds</span><strong>${fmtGNF(resteAvantFonds)}</strong></div>
     <div style="display:flex;justify-content:space-between;padding:10px 14px;background:var(--amber-bg);border-radius:8px"><span>🏦 Fonds (${totalRepPct}%)</span><strong style="color:var(--amber)">− ${fmtGNF(montantFonds)}</strong></div>
     <div style="display:flex;justify-content:space-between;padding:10px 14px;background:var(--surface2);border-radius:8px;border:1px solid var(--border)"><span>👥 Gérants (${totalGerantPct}%)</span><strong style="color:var(--accent)">− ${fmtGNF(montantGerants)}</strong></div>
-    <div style="display:flex;justify-content:space-between;padding:12px 14px;background:var(--green-bg);border-radius:8px;border:2px solid var(--green)"><span style="font-weight:700">👑 Part Fondateur</span><strong style="font-size:16px;color:var(--green)">${fmtGNF(partFondateur)}</strong></div>
+    ${partAssocies.map(function(a){return '<div style="display:flex;justify-content:space-between;padding:10px 14px;background:var(--purple-bg,#f5f3ff);border-radius:8px"><span>🤝 '+a.nom+'</span><strong style="color:var(--purple,#6d28d9)">− '+fmtGNF(a.montant)+'</strong></div>';}).join('')}
+    <div style="display:flex;justify-content:space-between;padding:12px 14px;background:var(--green-bg);border-radius:8px;border:2px solid var(--green)"><span style="font-weight:700">👑 Part Fondateur (${fondPct}%)</span><strong style="font-size:16px;color:var(--green)">${fmtGNF(partFondateur)}</strong></div>
   </div>`;
 
   const totalPctCfg=repConfig.reduce((s,r)=>s+r.pct,0);
@@ -8122,7 +8179,10 @@ function closeRepConfig(e){
 function updateRepTotal(){
   const total=repConfig.reduce((s,r)=>s+r.pct,0);
   const el=document.getElementById('rep-config-total');
-  if(el){ el.textContent=`Total : ${total}%`; el.style.color=total===100?'var(--green)':'var(--red)'; }
+  if(el){
+    el.textContent='Fonds : '+total+'% — reste disponible : '+(100-total)+'%';
+    el.style.color=total>100?'var(--red)':total>0?'var(--green)':'var(--text3)';
+  }
 }
 function addRepLine(){
   repConfig.push({id:Date.now(),label:'Nouveau poste',pct:0,type:'custom',annuel:'roulement'});
@@ -8130,10 +8190,10 @@ function addRepLine(){
 }
 function saveRepConfig(){
   const total=repConfig.reduce((s,r)=>s+r.pct,0);
-  if(total!==100){ showToast(`⚠️ Total = ${total}% — doit être 100%`); return; }
+  if(total>100){ showToast('⚠️ Total = '+total+'% — ne peut pas dépasser 100%'); return; }
   saveAll(); renderRepartition();
   document.getElementById('rep-config-overlay').style.display='none';
-  showToast('✅ Configuration enregistrée');
+  showToast('✅ Fonds configurés : '+total+'% prélevés sur les bénéfices');
 }
 
 // ============================================================
@@ -9013,17 +9073,30 @@ function agvPrintPDF(type, extraData){
   }
 
   function openPrint(body){
-    var win = window.open('','_blank','width=900,height=700');
-    if(!win){ alert('Autorisez les popups pour imprimer'); return; }
-    win.document.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>'+shopNom+'</title><style>'+css+'</style></head><body>');
-    win.document.write(body);
-    win.document.write('<div class="no-print" style="position:fixed;top:10px;right:10px;display:flex;gap:8px">'
-      +'<button onclick="window.print()" style="padding:8px 18px;background:#1e3a5f;color:#fff;border:none;border-radius:6px;font-size:13px;font-weight:700;cursor:pointer">🖨️ Imprimer / PDF</button>'
-      +'<button onclick="window.close()" style="padding:8px 14px;background:#eee;color:#333;border:none;border-radius:6px;font-size:13px;cursor:pointer">✕ Fermer</button>'
-      +'</div>');
-    win.document.write('</body></html>');
-    win.document.close();
-    setTimeout(function(){ win.focus(); win.print(); }, 600);
+    var old=document.getElementById('agv-print-overlay'); if(old) old.remove();
+    var ov=document.createElement('div');
+    ov.id='agv-print-overlay';
+    ov.style.cssText='position:fixed;inset:0;background:#fff;z-index:99999;display:flex;flex-direction:column;overflow:hidden';
+    var bar=document.createElement('div');
+    bar.className='no-print';
+    bar.style.cssText='display:flex;gap:8px;padding:10px 16px;background:#1e3a5f;flex-shrink:0;align-items:center;justify-content:space-between';
+    bar.innerHTML='<span style="color:#fff;font-size:13px;font-weight:700">'+shopNom+' — Aperçu impression</span>'
+      +'<div style="display:flex;gap:8px">'
+      +'<button onclick="document.getElementById(\'agv-print-frame\').contentWindow.print()"'
+      +' style="padding:8px 18px;background:#22c55e;color:#fff;border:none;border-radius:6px;font-size:13px;font-weight:700;cursor:pointer">🖨️ Imprimer / PDF</button>'
+      +'<button onclick="document.getElementById(\'agv-print-overlay\').remove()"'
+      +' style="padding:8px 14px;background:rgba(255,255,255,.15);color:#fff;border:none;border-radius:6px;font-size:13px;cursor:pointer">✕ Fermer</button>'
+      +'</div>';
+    var fr=document.createElement('iframe');
+    fr.id='agv-print-frame';
+    fr.style.cssText='flex:1;width:100%;border:none;background:#fff';
+    ov.appendChild(bar); ov.appendChild(fr); document.body.appendChild(ov);
+    var doc=fr.contentDocument||fr.contentWindow.document;
+    doc.open();
+    doc.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>'+shopNom+'</title><style>'+css+'</style></head><body>');
+    doc.write(body);
+    doc.write('</body></html>');
+    doc.close();
   }
 
   // ── RAPPORT JOURNALIER ──
