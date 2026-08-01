@@ -13656,7 +13656,10 @@ window.agvToast = toast;
   });
 
   window.addEventListener('load', function(){
-    navigator.serviceWorker.register('./sw.js').then(function(reg){
+    // [CORRECTIF DEPLOIEMENT] updateViaCache:'none' force le navigateur a
+    // toujours verifier sw.js sur le reseau (jamais via son cache HTTP)
+    // quand une verification de mise a jour est demandee.
+    navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' }).then(function(reg){
 
       function proposerMaj(sw){
         var t = document.createElement('div');
@@ -13683,6 +13686,24 @@ window.agvToast = toast;
       });
 
       setInterval(function(){ try{ reg.update(); }catch(e){} }, 30 * 60 * 1000);
+
+      // [CORRECTIF DEPLOIEMENT] Sur telephone, l'application reste souvent
+      // ouverte en arriere-plan pendant des heures ou des jours (icone sur
+      // l'ecran d'accueil, jamais fermee). Le minuteur ci-dessus (30 min)
+      // ne se declenche pas de maniere fiable pendant que l'onglet est en
+      // arriere-plan. On verifie donc IMMEDIATEMENT des que l'utilisateur
+      // revient sur l'application, au lieu d'attendre le prochain minuteur.
+      document.addEventListener('visibilitychange', function(){
+        if(document.visibilityState === 'visible'){
+          try{ reg.update(); }catch(e){}
+        }
+      });
+
+      // Filet de securite supplementaire : restauration depuis le cache
+      // arriere-plan du navigateur (bfcache) apres une longue absence.
+      window.addEventListener('pageshow', function(e){
+        if(e.persisted){ try{ reg.update(); }catch(e){} }
+      });
 
     }).catch(function(err){
       console.warn('[AGV] Service worker non enregistre :', err && err.message);
