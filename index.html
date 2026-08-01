@@ -1826,10 +1826,8 @@ function agvShopLogin(role){
   }
 }
 
-// PWA
-var _pwaP=null;
-window.addEventListener('beforeinstallprompt',function(e){e.preventDefault();_pwaP=e;var b=document.getElementById('agv-install-btn');if(b)b.style.display='inline-flex';});
-function agvInstall(){if(_pwaP){_pwaP.prompt();_pwaP.userChoice.then(function(){_pwaP=null;});}}
+// PWA : ecouteur beforeinstallprompt + fonction agvInstall geres
+// plus loin dans le module application mobile (systeme unique).
 // [PWA] Enregistrement du service worker deplace dans le module
 // application mobile (fin de page) : l'ancien code desinscrivait tous
 // les service workers a chaque ouverture, ce qui empechait Chrome de
@@ -13193,6 +13191,34 @@ var LS = {
 var K_DISMISS = 'agv_pwa_reporte';     // date du dernier "plus tard"
 var K_INSTALLED = 'agv_pwa_installee';
 var K_LASTSHOP = 'agv_derniere_boutique';
+var K_BOUTIQUES = 'agv_boutiques_memorisees';   // liste (plusieurs boutiques sur le meme appareil)
+var MAX_BOUTIQUES_MEMORISEES = 8;
+
+/* Memorise une boutique dans la liste (la plus recente en tete),
+   sans jamais ecraser les autres boutiques deja utilisees sur cet
+   appareil — corrige le cas ou plusieurs boutiques sont connectees
+   successivement (seule la derniere etait retenue auparavant). */
+function agvMemoriserBoutique(shop){
+  if(!shop || !shop.codeAcces) return;
+  var liste = [];
+  try{ liste = JSON.parse(LS.get(K_BOUTIQUES, '[]')) || []; }catch(e){ liste = []; }
+  if(!Array.isArray(liste)) liste = [];
+  var code = String(shop.codeAcces).toUpperCase();
+  liste = liste.filter(function(b){ return b && b.code !== code; });
+  liste.unshift({
+    code: code,
+    nom: shop.entreprise || shop.nom || code,
+    date: Date.now()
+  });
+  if(liste.length > MAX_BOUTIQUES_MEMORISEES) liste = liste.slice(0, MAX_BOUTIQUES_MEMORISEES);
+  try{ LS.set(K_BOUTIQUES, JSON.stringify(liste)); }catch(e){}
+}
+function agvBoutiquesMemorisees(){
+  try{
+    var liste = JSON.parse(LS.get(K_BOUTIQUES, '[]'));
+    return Array.isArray(liste) ? liste : [];
+  }catch(e){ return []; }
+}
 var REPORT_JOURS = 7;
 
 /* ---------- styles application ---------- */
@@ -13522,7 +13548,10 @@ window.agvInstall = function(){ window.agvShowInstallPrompt(true); };
       // memoriser la boutique pour l'ouverture directe de l'application installee
       try{
         var s = window._currentShop;
-        if(s && s.codeAcces) LS.set(K_LASTSHOP, s.codeAcces);
+        if(s && s.codeAcces){
+          LS.set(K_LASTSHOP, s.codeAcces);   // conserve pour compatibilite (raccourci 1 seule boutique)
+          agvMemoriserBoutique(s);           // + liste complete (plusieurs boutiques sur cet appareil)
+        }
       }catch(e){}
 
       setTimeout(function(){ window.agvShowInstallPrompt(false); }, 2500);
@@ -13540,21 +13569,69 @@ window.agvInstall = function(){ window.agvShowInstallPrompt(true); };
 
 /* ============================================================
    4. LANCEMENT DE L'APPLICATION INSTALLEE
-      -> ouvre directement la page de connexion de la boutique
+      -> une seule boutique memorisee : ouvre directement sa connexion
+      -> plusieurs boutiques memorisees : propose un choix (corrige
+         le cas ou l'appareil sert a plusieurs boutiques : avant, la
+         plus recente ecrasait silencieusement les autres)
    ============================================================ */
 (function ouvertureDirecte(){
   if(!isStandalone()) return;
+  function ouvrirBoutique(code){
+    if(typeof agvShow !== 'function' || typeof agvLoadShopLogin !== 'function') return;
+    agvShow('agv-shop-login');
+    agvLoadShopLogin(String(code).toUpperCase());
+  }
+  function afficherChoixBoutiques(liste){
+    if(document.getElementById('agv-choix-boutiques')) return;
+    var ov = document.createElement('div');
+    ov.id = 'agv-choix-boutiques';
+    ov.style.cssText = 'position:fixed;inset:0;background:rgba(2,6,20,0.9);z-index:2147483200;'
+      + 'display:flex;align-items:center;justify-content:center;padding:16px';
+    var card = document.createElement('div');
+    card.style.cssText = 'background:#0a1628;border:1px solid rgba(37,99,235,0.3);border-radius:18px;'
+      + 'padding:22px;width:100%;max-width:380px;max-height:80vh;overflow-y:auto';
+    var titre = document.createElement('div');
+    titre.style.cssText = 'font-size:16px;font-weight:800;color:#fff;margin-bottom:4px';
+    titre.textContent = 'Quelle boutique ouvrir ?';
+    var sousTitre = document.createElement('div');
+    sousTitre.style.cssText = 'font-size:12.5px;color:#64748b;margin-bottom:16px';
+    sousTitre.textContent = 'Plusieurs boutiques ont ete utilisees sur cet appareil.';
+    card.appendChild(titre); card.appendChild(sousTitre);
+    liste.forEach(function(b){
+      var btn = document.createElement('button');
+      btn.style.cssText = 'display:block;width:100%;text-align:left;padding:12px 14px;margin-bottom:8px;'
+        + 'border:1px solid rgba(37,99,235,0.2);border-radius:11px;background:#060d24;color:#e2e8f0;'
+        + 'font-family:inherit;font-size:13.5px;font-weight:700;cursor:pointer';
+      btn.textContent = b.nom || b.code;
+      var sousLigne = document.createElement('div');
+      sousLigne.style.cssText = 'font-size:11px;color:#475569;font-weight:600;margin-top:2px';
+      sousLigne.textContent = 'Code : ' + b.code;
+      btn.appendChild(document.createElement('br'));
+      btn.appendChild(sousLigne);
+      btn.onclick = function(){ ov.remove(); ouvrirBoutique(b.code); };
+      card.appendChild(btn);
+    });
+    var fermer = document.createElement('button');
+    fermer.style.cssText = 'width:100%;margin-top:4px;padding:11px;border:none;border-radius:10px;'
+      + 'background:transparent;color:#64748b;font-family:inherit;font-size:13px;cursor:pointer';
+    fermer.textContent = 'Choisir plus tard';
+    fermer.onclick = function(){ ov.remove(); };
+    card.appendChild(fermer);
+    ov.appendChild(card);
+    document.body.appendChild(ov);
+  }
   function go(){
     try{
       var p = new URLSearchParams(location.search);
       if(p.get('shop')) return;                       // deja cible
-      var code = LS.get(K_LASTSHOP, '');
+      var liste = (typeof agvBoutiquesMemorisees === 'function') ? agvBoutiquesMemorisees() : [];
+      if(liste.length > 1){
+        afficherChoixBoutiques(liste);
+        return;
+      }
+      var code = liste.length === 1 ? liste[0].code : LS.get(K_LASTSHOP, '');
       if(!code) return;
-      if(typeof agvShow !== 'function' || typeof agvLoadShopLogin !== 'function') return;
-      var landing = document.getElementById('agv-landing');
-      if(!landing || landing.style.display === 'none') { /* rien */ }
-      agvShow('agv-shop-login');
-      agvLoadShopLogin(String(code).toUpperCase());
+      ouvrirBoutique(code);
     }catch(e){}
   }
   if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', function(){ setTimeout(go, 60); });
