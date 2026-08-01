@@ -4635,7 +4635,16 @@ function appliquerDonneesFirebase(data) {
 }
 
 // ===== ECOUTE TEMPS REEL =====
-db.ref('boutique').on('value', function(snapshot) {
+// [CORRECTIF] Attente que Firebase soit pret avant d'attacher l'ecouteur.
+// Sans cette garde, db.ref() levait une TypeError qui interrompait tout
+// le script : les declarations let/const suivantes (catFilter, editIdx,
+// PAGE_SIZE...) n'etaient jamais initialisees, ce qui cassait
+// l'affichage des produits et le bouton Ajouter.
+function agvAttachBoutiqueListener(){
+  if(!window.db || typeof window.db.ref !== 'function'){
+    return setTimeout(agvAttachBoutiqueListener, 200);
+  }
+  window.db.ref('boutique').on('value', function(snapshot) {
   var data = snapshot.val();
   console.log('🔥 Firebase boutique reçu:', data ? 'OUI' : 'VIDE');
   if (!data) { return; }
@@ -4651,7 +4660,9 @@ db.ref('boutique').on('value', function(snapshot) {
     preloadGerantsForLogin();
     buildGerantLoginList();
   }
-});
+  });
+}
+agvAttachBoutiqueListener();
 let catFilter = 'ALL';
 let stockFilter = 'all';
 let sortField = 'designation';
@@ -5013,10 +5024,7 @@ function showView(v){
       if(v==='depenses' && _gv && _gv.permDep===false){showToast('Permission dépenses non accordée');return;}
     }
   }
-  document.querySelectorAll('.view').forEach(el=>{
-    el.classList.remove('active');
-    el.style.display='';
-  });
+  document.querySelectorAll('.view').forEach(el=>{el.classList.remove('active');el.style.display='';});
   document.querySelectorAll('.nav-item').forEach(el=>el.classList.remove('active'));
   const viewEl=document.getElementById('view-'+v);
   if(viewEl){
@@ -5028,9 +5036,9 @@ function showView(v){
   if(v==='produits'){
     renderTable();
     if(!products.length){
-      var _wt2=setInterval(function(){
-        if(products.length&&currentView==='produits'){clearInterval(_wt2);renderTable();}
-      },300); setTimeout(function(){clearInterval(_wt2);},15000);
+      var _rtw=setInterval(function(){
+        if(products.length&&currentView==='produits'){clearInterval(_rtw);renderTable();}
+      },400);setTimeout(function(){clearInterval(_rtw);},20000);
     }
   }
   if(v==='inventaire'){renderInventaire()}
@@ -9092,31 +9100,11 @@ function agvPrintPDF(type, extraData){
   }
 
   function openPrint(body){
-    var old=document.getElementById('agv-print-overlay'); if(old) old.remove();
-    var ov=document.createElement('div');
-    ov.id='agv-print-overlay';
-    ov.style.cssText='position:fixed;inset:0;background:#fff;z-index:99999;display:flex;flex-direction:column;overflow:hidden';
-    var bar=document.createElement('div');
-    bar.className='no-print';
-    bar.style.cssText='display:flex;gap:8px;padding:10px 16px;background:#1e3a5f;flex-shrink:0;align-items:center;justify-content:space-between';
-    bar.innerHTML='<span style="color:#fff;font-size:13px;font-weight:700">'+shopNom+' — Aperçu impression</span>'
-      +'<div style="display:flex;gap:8px">'
-      +'<button onclick="document.getElementById(\'agv-print-frame\').contentWindow.print()"'
-      +' style="padding:8px 18px;background:#22c55e;color:#fff;border:none;border-radius:6px;font-size:13px;font-weight:700;cursor:pointer">🖨️ Imprimer / PDF</button>'
-      +'<button onclick="document.getElementById(\'agv-print-overlay\').remove()"'
-      +' style="padding:8px 14px;background:rgba(255,255,255,.15);color:#fff;border:none;border-radius:6px;font-size:13px;cursor:pointer">✕ Fermer</button>'
-      +'</div>';
-    var fr=document.createElement('iframe');
-    fr.id='agv-print-frame';
-    fr.style.cssText='flex:1;width:100%;border:none;background:#fff';
-    ov.appendChild(bar); ov.appendChild(fr); document.body.appendChild(ov);
-    var doc=fr.contentDocument||fr.contentWindow.document;
-    doc.open();
-    doc.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>'+shopNom+'</title><style>'+css+'</style></head><body>');
-    doc.write(body);
-    doc.write('</body></html>');
-    doc.close();
+    // Meme methode fiable que agvBlobPrint : impression de la fenetre
+    // principale (iframe.contentWindow.print() est inoperant sur Android).
+    agvBlobPrint(css, body, shopNom);
   }
+
 
   // ── RAPPORT JOURNALIER ──
   if(type==='rapport-jour' || type==='rapport'){
@@ -11575,36 +11563,146 @@ function agvOpenPrintOptions(htmlContent, titre){
   setTimeout(function(){ win.focus(); }, 400);
 }
 
+function agvScopeCss(css, scope){
+  // Isole le CSS du rapport dans #agv-print-area pour qu'il ne
+  // deforme JAMAIS le reste de l'application (le rapport contient
+  // des regles globales * et body).
+  var at='';
+  css = String(css||'')
+    .replace(/@page[^{]*\{[^}]*\}/g, function(m){ at+=m; return ''; })
+    .replace(/@media[^{]*\{(?:[^{}]*\{[^}]*\})*[^{}]*\}/g, function(m){ at+=m; return ''; });
+  var scoped = css.replace(/(^|\})\s*([^{}@]+)\{/g, function(m, br, sel){
+    var s = sel.split(',').map(function(x){
+      x = x.trim();
+      if(!x) return '';
+      if(x==='body'||x==='html') return scope;
+      if(x==='*') return scope+' *';
+      return scope+' '+x;
+    }).filter(Boolean).join(',');
+    return br + s + '{';
+  });
+  return at + scoped;
+}
+
 function agvBlobPrint(css, body, titre){
-  // Créer le HTML avec boutons Imprimer PDF + JPEG + Fermer
-  var btnBar='<div class="np" style="display:flex;position:fixed;top:10px;right:10px;gap:8px;z-index:99">'
-    +'<button onclick="window.print()" style="padding:9px 18px;background:#1e3a5f;color:#fff;border:none;border-radius:7px;font-size:13px;font-weight:700;cursor:pointer">🖨️ PDF A4</button>'
-    +'<button onclick="agvCapturJPEG()" style="padding:9px 14px;background:#7c3aed;color:#fff;border:none;border-radius:7px;font-size:13px;font-weight:700;cursor:pointer">🖼️ JPEG</button>'
-    +'<button onclick="window.close()" style="padding:9px 14px;background:#eee;color:#333;border:none;border-radius:7px;font-size:13px;cursor:pointer">✕ Fermer</button>'
-    +'</div>';
-  var jpegScript='<script>function agvCapturJPEG(){'
-    +'var el=document.body;'
-    +'if(typeof html2canvas!=="undefined"){'
-    +'html2canvas(el,{scale:2,useCORS:true,backgroundColor:"#fff"}).then(function(canvas){'
-    +'var a=document.createElement("a");'
-    +'a.href=canvas.toDataURL("image/jpeg",0.95);'
-    +'a.download="'+titre.replace(/[^a-z0-9]/gi,"_")+'.jpg";'
-    +'a.click();});'
-    +'}else{alert("Cliquez PDF puis Enregistrer comme image dans les options d\'impression");}}'
-    +'<\/script>';
-  var fullHtml='<!DOCTYPE html><html><head><meta charset="UTF-8"><title>'+titre+'</title>'
-    +'<style>'+css+'</style>'
-    +'<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"><\/script>'
-    +'</head><body>'+body+btnBar+jpegScript+'</body></html>';
-  var blob=new Blob([fullHtml],{type:'text/html'});
-  var url=URL.createObjectURL(blob);
-  var win=window.open(url,'_blank');
-  if(!win){
-    var ifr=document.getElementById('_agv_print_frame');
-    if(!ifr){ ifr=document.createElement('iframe'); ifr.id='_agv_print_frame'; ifr.style.cssText='position:fixed;top:0;left:0;width:100%;height:100%;z-index:9999;border:none;background:#fff'; document.body.appendChild(ifr); }
-    ifr.src=url;
+  agvClosePrintArea();
+
+  var SCOPE='#agv-print-area';
+  var st=document.createElement('style');
+  st.id='agv-print-style';
+  st.textContent = agvScopeCss(css, SCOPE)
+    + '\n@media screen{'
+    + SCOPE+'{position:fixed;inset:0;background:#fff;z-index:2147483000;'
+    + 'overflow:auto;-webkit-overflow-scrolling:touch;padding:62px 12px 24px;'
+    + 'color:#111;font-family:Arial,Helvetica,sans-serif;font-size:12px;}'
+    + '#agv-print-toolbar{position:fixed;top:0;left:0;right:0;z-index:2147483001;'
+    + 'display:flex;gap:6px;align-items:center;justify-content:space-between;'
+    + 'flex-wrap:wrap;padding:8px 10px;background:#1e3a5f;}'
+    + '}'
+    + '\n@media print{'
+    + 'body > *:not(#agv-print-area){display:none !important;}'
+    + SCOPE+'{display:block !important;position:static !important;'
+    + 'padding:0 !important;overflow:visible !important;background:#fff !important;}'
+    + '#agv-print-toolbar{display:none !important;}'
+    + 'html,body{position:static !important;height:auto !important;'
+    + 'overflow:visible !important;background:#fff !important;}'
+    + '}';
+  document.head.appendChild(st);
+
+  var area=document.createElement('div');
+  area.id='agv-print-area';
+  area.innerHTML=body;
+
+  function mkBtn(txt,bg){
+    var b=document.createElement('button');
+    b.textContent=txt;
+    b.style.cssText='padding:9px 13px;background:'+bg+';color:#fff;border:none;'
+      +'border-radius:6px;font-size:12.5px;font-weight:700;cursor:pointer;font-family:inherit';
+    return b;
   }
-  setTimeout(function(){ if(win){win.focus();} URL.revokeObjectURL(url); }, 800);
+
+  var bar=document.createElement('div');
+  bar.id='agv-print-toolbar';
+
+  // 1. Impression systeme
+  var bP=mkBtn('\uD83D\uDDA8\uFE0F Imprimer','#22c55e');
+  bP.onclick=function(){
+    try{ window.focus(); }catch(e){}
+    setTimeout(function(){
+      try{ window.print(); }
+      catch(e){ alert('Impression indisponible. Utilisez « Telecharger » puis ouvrez le fichier.'); }
+    },80);
+  };
+
+  // 2. Telechargement du rapport — fonctionne partout, meme sans impression
+  var bD=mkBtn('\u2B07\uFE0F Telecharger','#2563eb');
+  bD.onclick=function(){
+    try{
+      var full='<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">'
+        +'<meta name="viewport" content="width=device-width,initial-scale=1">'
+        +'<title>'+(titre||'Rapport')+'</title><style>'+css
+        +'\n@media screen{body{padding:14px}}'
+        +'</style></head><body>'+body
+        +'<div class="no-print" style="text-align:center;margin-top:20px">'
+        +'<button onclick="window.print()" style="padding:11px 22px;background:#22c55e;'
+        +'color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:700">'
+        +'Imprimer ce rapport</button></div></body></html>';
+      var blob=new Blob([full],{type:'text/html;charset=utf-8'});
+      var url=URL.createObjectURL(blob);
+      var a=document.createElement('a');
+      a.href=url;
+      a.download=(titre||'rapport').replace(/[^a-z0-9]/gi,'_')+'.html';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(function(){ URL.revokeObjectURL(url); },4000);
+    }catch(e){ alert('Telechargement impossible sur cet appareil.'); }
+  };
+
+  // 3. Image JPEG — pratique pour envoyer par WhatsApp
+  var bJ=mkBtn('\uD83D\uDDBC\uFE0F Image','#7c3aed');
+  bJ.onclick=function(){
+    function capture(){
+      window.html2canvas(area,{scale:2,useCORS:true,backgroundColor:'#fff'}).then(function(cv){
+        cv.toBlob(function(bl){
+          var u=URL.createObjectURL(bl);
+          var a=document.createElement('a');
+          a.href=u; a.download=(titre||'rapport').replace(/[^a-z0-9]/gi,'_')+'.jpg';
+          document.body.appendChild(a); a.click(); a.remove();
+          setTimeout(function(){ URL.revokeObjectURL(u); },4000);
+          bJ.textContent='\uD83D\uDDBC\uFE0F Image';
+        },'image/jpeg',0.92);
+      }).catch(function(){
+        bJ.textContent='\uD83D\uDDBC\uFE0F Image';
+        alert('Capture impossible. Utilisez « Telecharger ».');
+      });
+    }
+    if(window.html2canvas) return capture();
+    bJ.textContent='...';
+    var sc=document.createElement('script');
+    sc.src='https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
+    var done=false;
+    sc.onload=function(){ if(done)return; done=true; capture(); };
+    sc.onerror=function(){ if(done)return; done=true; bJ.textContent='\uD83D\uDDBC\uFE0F Image';
+      alert('Image indisponible hors connexion. Utilisez « Telecharger ».'); };
+    setTimeout(function(){ if(done)return; done=true; bJ.textContent='\uD83D\uDDBC\uFE0F Image'; },9000);
+    document.head.appendChild(sc);
+  };
+
+  var bC=mkBtn('\u2715','rgba(255,255,255,.18)');
+  bC.onclick=agvClosePrintArea;
+
+  var grp=document.createElement('div');
+  grp.style.cssText='display:flex;gap:6px;flex-wrap:wrap';
+  grp.appendChild(bP); grp.appendChild(bD); grp.appendChild(bJ); grp.appendChild(bC);
+  bar.appendChild(grp);
+
+  area.insertBefore(bar, area.firstChild);
+  document.body.appendChild(area);
+  try{ area.scrollTop=0; }catch(e){}
+}
+
+function agvClosePrintArea(){
+  var a=document.getElementById('agv-print-area'); if(a) a.remove();
+  var s=document.getElementById('agv-print-style'); if(s) s.remove();
 }
 
 
@@ -12223,239 +12321,6 @@ function saveReglerDette(){
 
     
 
-<!-- ============================================================
-     MODULE APP NATIVE v2 — App AGV
-     Drawer sidebar, hamburger 3 traits, plein écran.
-     SANS position:fixed sur body (cause page blanche corrigée).
-     ============================================================ -->
-<style id="agv-native-css">
-html{-webkit-text-size-adjust:100%;text-size-adjust:100%;}
-body{overscroll-behavior:none;}
-*{touch-action:pan-x pan-y;}
-input,select,textarea{touch-action:manipulation;}
-
-#agv-landing,#agv-shop-login,#agv-auth,#agv-admin{
-  position:fixed!important;inset:0!important;overflow-y:auto!important;
-  -webkit-overflow-scrolling:touch!important;}
-#agv-landing{z-index:5;background:var(--bg,#060d24);}
-#agv-shop-login{z-index:10;background:#060d24;}
-#agv-auth{z-index:8;}
-#agv-admin{z-index:8;}
-
-#agv-app{position:fixed!important;inset:0!important;display:flex!important;
-  flex-direction:column!important;overflow:hidden!important;z-index:2;}
-#agv-app .app,.app{display:none;flex:1;overflow:hidden;position:relative;}
-#agv-app .app.visible,.app.visible{display:flex!important;flex-direction:row;}
-
-#agv-native-topbar{display:none;align-items:center;gap:10px;padding:0 14px;
-  padding-top:env(safe-area-inset-top,0px);
-  height:calc(52px + env(safe-area-inset-top,0px));min-height:52px;
-  background:var(--surface,#fff);border-bottom:1px solid var(--border,#e8e4dc);
-  flex-shrink:0;z-index:50;}
-#agv-hamburger{background:none;border:none;cursor:pointer;padding:8px;
-  border-radius:8px;color:var(--text,#1a1714);flex-shrink:0;
-  display:flex;align-items:center;justify-content:center;
-  min-width:40px;min-height:40px;-webkit-tap-highlight-color:transparent;}
-#agv-hamburger:active{background:var(--surface2,#f9f8f6);}
-#agv-native-title{font-size:15px;font-weight:700;color:var(--text,#1a1714);
-  flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-
-.app.visible .sidebar{position:fixed!important;top:0!important;bottom:0!important;
-  left:0!important;width:280px!important;height:100%!important;
-  transform:translateX(-100%);
-  transition:transform .28s cubic-bezier(.4,0,.2,1),box-shadow .28s;
-  z-index:300!important;overflow-y:auto!important;overflow-x:hidden!important;
-  flex-direction:column!important;
-  border-right:1px solid var(--border,#e8e4dc)!important;
-  padding-top:env(safe-area-inset-top,0px);
-  padding-bottom:env(safe-area-inset-bottom,0px);}
-.app.visible .sidebar.nav-open{transform:translateX(0);
-  box-shadow:6px 0 30px rgba(0,0,0,.28);}
-
-#agv-nav-backdrop{display:none;position:fixed;inset:0;
-  background:rgba(0,0,0,.48);z-index:299;
-  -webkit-tap-highlight-color:transparent;}
-#agv-nav-backdrop.open{display:block;}
-
-.app.visible .main,#agv-app .main{flex:1;min-width:0;
-  overflow-y:auto!important;overflow-x:hidden;
-  -webkit-overflow-scrolling:touch;
-  padding:14px 12px!important;
-  padding-bottom:calc(20px + env(safe-area-inset-bottom,0px))!important;
-  padding-left:calc(12px + env(safe-area-inset-left,0px))!important;
-  padding-right:calc(12px + env(safe-area-inset-right,0px))!important;}
-
-.view{display:none;}
-.view.active{display:block;animation:agvIn .18s ease;}
-@keyframes agvIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
-
-.nav-item{min-height:48px!important;padding:10px 14px!important;
-  font-size:13px!important;display:flex!important;align-items:center!important;
-  gap:10px!important;flex-direction:row!important;text-align:left!important;
-  border-radius:10px!important;margin-bottom:2px;
-  -webkit-tap-highlight-color:transparent;touch-action:manipulation;}
-.nav-icon{width:20px!important;height:20px!important;flex-shrink:0;}
-
-input,select,textarea,.form-input{font-size:16px!important;}
-.btn{min-height:46px!important;font-size:14px!important;touch-action:manipulation;}
-.btn-sm{min-height:38px!important;font-size:12px!important;}
-button,[onclick],a{-webkit-tap-highlight-color:transparent;}
-
-.overlay.open{align-items:flex-end!important;}
-.modal{width:100%!important;max-width:100%!important;margin:0!important;
-  border-radius:20px 20px 0 0!important;max-height:90vh;overflow-y:auto;
-  padding-bottom:calc(24px + env(safe-area-inset-bottom,0px))!important;}
-
-.table-wrap{overflow-x:auto!important;-webkit-overflow-scrolling:touch!important;}
-table{min-width:480px;}
-.stats{grid-template-columns:1fr 1fr!important;gap:8px!important;}
-.card{padding:12px!important;border-radius:12px!important;}
-.stat{padding:10px!important;}.stat-val{font-size:20px!important;}
-.topbar{margin-bottom:14px!important;flex-wrap:wrap;gap:8px;}
-.topbar h1{font-size:17px!important;}
-.fg2,.fg3{grid-template-columns:1fr!important;}
-
-@media(max-width:480px){
-  #agv-native-topbar{display:flex;}
-  .app.visible>.sidebar{width:270px!important;}
-  .topbar{padding-top:4px!important;}}
-@media(min-width:481px) and (max-width:900px){
-  #agv-native-topbar{display:flex;}
-  .app.visible>.sidebar{width:300px!important;}
-  .stats{grid-template-columns:repeat(2,1fr)!important;}}
-@media(min-width:901px){
-  #agv-native-topbar{display:none!important;}
-  #agv-nav-backdrop{display:none!important;}
-  .app.visible>.sidebar{position:sticky!important;transform:none!important;
-    box-shadow:none!important;transition:none!important;
-    width:230px!important;height:100vh!important;top:0!important;z-index:10!important;}
-  .app.visible>.main{padding:22px!important;}
-  .stats{grid-template-columns:repeat(3,1fr)!important;}
-  .fg2{grid-template-columns:1fr 1fr!important;}
-  .fg3{grid-template-columns:1fr 1fr 1fr!important;}}
-@media(min-width:1200px){
-  .app.visible>.sidebar{width:250px!important;}
-  .stats{grid-template-columns:repeat(4,1fr)!important;}}
-
-#agv-dev-souleymane-trigger{cursor:pointer!important;
-  -webkit-tap-highlight-color:transparent;user-select:none;
-  text-decoration:underline;text-decoration-style:dotted;text-underline-offset:2px;
-  transition:opacity .15s;}
-#agv-dev-souleymane-trigger:active{opacity:.6;}
-</style>
-
-<script>
-(function(){
-'use strict';
-function creerTopbar(){
-  if(document.getElementById('agv-native-topbar')) return;
-  var bd=document.createElement('div');
-  bd.id='agv-nav-backdrop'; bd.onclick=agvFermerNav;
-  document.body.appendChild(bd);
-  var tb=document.createElement('div');
-  tb.id='agv-native-topbar';
-  tb.innerHTML='<button id="agv-hamburger" aria-label="Menu" onclick="agvToggleNav()">'
-    +'<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor"'
-    +' stroke-width="2.3" stroke-linecap="round">'
-    +'<line x1="3" y1="6"  x2="21" y2="6"/>'
-    +'<line x1="3" y1="12" x2="21" y2="12"/>'
-    +'<line x1="3" y1="18" x2="21" y2="18"/>'
-    +'</svg></button>'
-    +'<div id="agv-native-title">App AGV</div>'
-    +'<div id="agv-native-right"></div>';
-  var aa=document.getElementById('agv-app');
-  if(aa && aa.parentNode){
-    var w=document.createElement('div');
-    w.id='agv-native-wrap';
-    w.style.cssText='position:fixed;inset:0;display:flex;flex-direction:column;overflow:hidden;z-index:1';
-    aa.parentNode.insertBefore(w,aa);
-    w.appendChild(tb); w.appendChild(aa);
-  } else {
-    document.body.insertBefore(tb,document.body.firstChild);
-  }
-}
-
-window.agvToggleNav=function(){
-  var sb=document.querySelector('.app.visible .sidebar')||document.querySelector('.sidebar');
-  var bd=document.getElementById('agv-nav-backdrop');
-  if(!sb) return;
-  if(sb.classList.contains('nav-open')) agvFermerNav();
-  else{sb.classList.add('nav-open'); if(bd) bd.classList.add('open');
-    try{history.pushState({agvNav:1},'');}catch(e){}}
-};
-window.agvFermerNav=function(){
-  var sb=document.querySelector('.sidebar.nav-open');
-  var bd=document.getElementById('agv-nav-backdrop');
-  if(sb) sb.classList.remove('nav-open');
-  if(bd) bd.classList.remove('open');
-};
-
-var _arme={};
-function armerNav(){
-  document.querySelectorAll('.nav-item').forEach(function(btn){
-    var k=btn.id||(btn.textContent||'').trim().slice(0,20);
-    if(_arme[k]) return; _arme[k]=1;
-    btn.addEventListener('click',function(){
-      agvFermerNav();
-      setTimeout(function(){
-        var t=document.getElementById('agv-native-title');
-        if(t){var txt=(btn.textContent||'').trim().replace(/\s+/g,' ');if(txt) t.textContent=txt;}
-      },50);
-    });
-  });
-}
-window.addEventListener('popstate',function(){
-  if(document.querySelector('.sidebar.nav-open')) agvFermerNav();
-});
-
-function forcerSections(){
-  var aa=document.getElementById('agv-app');
-  if(aa) aa.style.cssText='position:fixed!important;inset:0!important;display:flex!important;flex-direction:column!important;overflow:hidden!important;z-index:2';
-}
-
-function activerSouleymane(){
-  if(document.getElementById('agv-dev-souleymane-trigger')) return;
-  var els=[].slice.call(document.querySelectorAll('span,div,p,a'));
-  for(var i=0;i<els.length;i++){
-    var el=els[i];
-    if(el.id && /agv-dev/.test(el.id)) continue;
-    var txt=(el.textContent||'').trim();
-    if(/^souleymane$/i.test(txt) && el.children.length===0){
-      el.id='agv-dev-souleymane-trigger';
-      el.setAttribute('role','button'); el.setAttribute('tabindex','0');
-      el.onclick=function(e){e.stopPropagation();
-        if(typeof agvConcepteurAccess==='function') agvConcepteurAccess();};
-      el.onkeydown=function(e){if(e.key==='Enter'||e.key===' ') el.onclick(e);};
-      break;
-    }
-  }
-}
-
-function cacherBtnConcepteur(){
-  var el=document.getElementById('agv-btn-concepteur');
-  if(el) el.style.setProperty('display','none','important');
-}
-
-function init(){
-  forcerSections(); creerTopbar();
-  activerSouleymane(); cacherBtnConcepteur(); armerNav();
-  if(window.MutationObserver){
-    var _obs_running=false;
-    new MutationObserver(function(){
-      if(_obs_running) return; _obs_running=true;
-      requestAnimationFrame(function(){
-        forcerSections(); activerSouleymane(); cacherBtnConcepteur(); armerNav();
-        _obs_running=false;
-      });
-    }).observe(document.body,{childList:true,subtree:false,
-      attributes:true,attributeFilter:['class','style']});
-  }
-}
-
-if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',init);
-else init();
-})();
-</script>
 <!-- ============================================================
      MODULE CORRECTIF — ESPACE CONCEPTEUR (v3)
      Redefinit UNIQUEMENT les fonctions du panneau concepteur.
@@ -13824,6 +13689,403 @@ window.agvToast = toast;
     });
   });
 })();
+
+})();
+</script>
+<!-- ============================================================
+     MENU RESPONSIVE — App AGV
+     100% CSS (media queries). Aucune detection JS de l'appareil.
+     - Telephone/tablette (<=768px) : sidebar en tiroir + hamburger.
+     - Ordinateur (>=769px)         : sidebar fixe, jamais de tiroir.
+     Ne touche ni Firebase, ni les donnees, ni les fonctionnalites
+     metier (ventes, produits, salaires, depenses, inventaire...).
+     ============================================================ -->
+<style id="agv-responsive-menu-css">
+
+/* ============ TELEPHONE / TABLETTE (<= 768px) ============ */
+@media (max-width: 768px){
+
+  /* Barre superieure avec le bouton 3 traits */
+  #agv-mobile-topbar{
+    display:flex;
+    align-items:center;
+    gap:10px;
+    position:fixed;
+    top:0; left:0; right:0;
+    height:56px;
+    padding:0 12px;
+    padding-top:env(safe-area-inset-top,0px);
+    background:var(--surface,#fff);
+    border-bottom:1px solid var(--border,#e5e0d8);
+    z-index:400;
+  }
+  #agv-hamburger-btn{
+    background:none;
+    border:none;
+    cursor:pointer;
+    width:44px; height:44px;
+    display:flex; align-items:center; justify-content:center;
+    border-radius:8px;
+    flex-shrink:0;
+    -webkit-tap-highlight-color:transparent;
+    pointer-events:auto !important;
+    position:relative;
+    z-index:401;
+  }
+  #agv-hamburger-btn:active{ background:rgba(0,0,0,.06); }
+  #agv-mobile-title{
+    font-size:15px; font-weight:700;
+    flex:1; min-width:0;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+
+  /* Decaler le contenu de l'appli sous la barre fixe */
+  #agv-app{ padding-top:calc(56px + env(safe-area-inset-top,0px)); }
+
+  /* La grille desktop (240px + 1fr) devient une ligne flex simple */
+  .app.visible{
+    display:flex !important;
+    flex-direction:row !important;
+  }
+
+  /* La sidebar devient un tiroir hors-champ par defaut */
+  .app .sidebar{
+    position:fixed !important;
+    top:0; bottom:0; left:0;
+    width:min(82vw,300px);
+    height:100%;
+    transform:translateX(-100%);
+    transition:transform .25s ease;
+    z-index:395;
+    overflow-y:auto;
+    -webkit-overflow-scrolling:touch;
+    padding-top:calc(56px + env(safe-area-inset-top,0px));
+    padding-bottom:env(safe-area-inset-bottom,0px);
+    pointer-events:auto;
+  }
+  .app .sidebar.nav-open{
+    transform:translateX(0);
+    box-shadow:6px 0 24px rgba(0,0,0,.25);
+  }
+
+  /* Rideau derriere le tiroir ouvert */
+  #agv-mobile-backdrop{
+    display:none;
+    position:fixed; inset:0;
+    background:rgba(0,0,0,.45);
+    z-index:390;
+  }
+  #agv-mobile-backdrop.open{ display:block; }
+
+  .app .main{
+    width:100%;
+    flex:1 1 auto;
+    min-width:0;
+    padding:14px 12px calc(20px + env(safe-area-inset-bottom,0px));
+  }
+
+  /* Empeche le zoom automatique iOS au focus d'un champ */
+  input, select, textarea{ font-size:16px; }
+
+  .stats{ grid-template-columns:1fr 1fr !important; }
+  .fg2, .fg3{ grid-template-columns:1fr !important; }
+  table{ min-width:520px; }
+  .table-wrap{ overflow-x:auto !important; }
+}
+
+/* ============ ORDINATEUR (>= 769px) ============ */
+@media (min-width: 769px){
+  /* Le hamburger et le tiroir n'existent tout simplement pas */
+  #agv-mobile-topbar, #agv-mobile-backdrop{ display:none !important; }
+
+  /* La sidebar reste fixe, jamais de tiroir, jamais de repli */
+  .app .sidebar{
+    position:sticky !important;
+    transform:none !important;
+    box-shadow:none !important;
+    transition:none !important;
+  }
+}
+</style>
+
+<script>
+(function(){
+'use strict';
+
+/* Cree la barre superieure + le rideau une seule fois.
+   Invisibles sur ordinateur grace au CSS ci-dessus (min-width:769px),
+   ils n'ont donc aucun effet visuel ni fonctionnel en dehors du mobile. */
+var construit = false;
+function construireBarre(){
+  if(construit) return;
+  if(document.getElementById('agv-mobile-topbar')){ construit = true; return; }
+
+  var barre = document.createElement('div');
+  barre.id = 'agv-mobile-topbar';
+  barre.innerHTML =
+    '<button id="agv-hamburger-btn" type="button" aria-label="Ouvrir le menu">' +
+      '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">' +
+        '<line x1="3" y1="6" x2="21" y2="6"></line>' +
+        '<line x1="3" y1="12" x2="21" y2="12"></line>' +
+        '<line x1="3" y1="18" x2="21" y2="18"></line>' +
+      '</svg>' +
+    '</button>' +
+    '<div id="agv-mobile-title">App AGV</div>';
+
+  var rideau = document.createElement('div');
+  rideau.id = 'agv-mobile-backdrop';
+
+  document.body.insertBefore(rideau, document.body.firstChild);
+  document.body.insertBefore(barre, document.body.firstChild);
+
+  construit = true;
+}
+
+function getSidebar(){ return document.querySelector('.app .sidebar'); }
+
+function ouvrirMenu(){
+  var sb = getSidebar();
+  var bd = document.getElementById('agv-mobile-backdrop');
+  if(!sb) return;
+  sb.classList.add('nav-open');
+  if(bd) bd.classList.add('open');
+}
+function fermerMenu(){
+  var sb = getSidebar();
+  var bd = document.getElementById('agv-mobile-backdrop');
+  if(sb) sb.classList.remove('nav-open');
+  if(bd) bd.classList.remove('open');
+}
+function basculerMenu(){
+  var sb = getSidebar();
+  if(!sb) return;
+  if(sb.classList.contains('nav-open')) fermerMenu();
+  else ouvrirMenu();
+}
+
+/* Attache tous les evenements UNE SEULE FOIS (garde anti-doublon) */
+var attache = false;
+function attacherEvenements(){
+  if(attache) return;
+
+  var bouton  = document.getElementById('agv-hamburger-btn');
+  var rideau  = document.getElementById('agv-mobile-backdrop');
+  if(!bouton || !rideau) return; // pas encore prets : on retentera
+
+  bouton.addEventListener('click', function(e){
+    e.preventDefault();
+    e.stopPropagation();
+    basculerMenu();
+  });
+
+  rideau.addEventListener('click', fermerMenu);
+
+  // Refermer automatiquement apres avoir choisi un onglet du menu
+  document.querySelectorAll('.nav-item').forEach(function(item){
+    item.addEventListener('click', function(){
+      fermerMenu();
+      var titre = document.getElementById('agv-mobile-title');
+      if(titre){
+        var texte = (item.textContent || '').trim().replace(/\s+/g, ' ');
+        if(texte) titre.textContent = texte;
+      }
+    });
+  });
+
+  // Refermer si on touche en dehors du tiroir
+  document.addEventListener('click', function(e){
+    var sb = getSidebar();
+    if(!sb || !sb.classList.contains('nav-open')) return;
+    if(sb.contains(e.target)) return;
+    if(bouton.contains(e.target)) return;
+    fermerMenu();
+  });
+
+  // Refermer avec la touche Echap (clavier physique / tablette)
+  document.addEventListener('keydown', function(e){
+    if(e.key === 'Escape') fermerMenu();
+  });
+
+  attache = true;
+}
+
+function demarrer(){
+  construireBarre();
+  attacherEvenements();
+}
+
+if(document.readyState === 'loading'){
+  document.addEventListener('DOMContentLoaded', demarrer);
+}else{
+  demarrer();
+}
+
+/* Filet de securite : si le DOM n'etait pas encore pret au premier
+   passage, on retente une seule fois de plus — sans jamais dupliquer
+   les ecouteurs grace aux gardes "construit" et "attache" ci-dessus. */
+setTimeout(demarrer, 500);
+
+})();
+</script>
+
+
+<!-- ============================================================
+     DETECTION INTELLIGENTE DE L'APPAREIL — App AGV
+     N'ALTERE RIEN du mode telephone (CSS et JS du menu mobile
+     restent identiques, intouches). Ce module ajoute uniquement
+     une garantie supplementaire pour le mode ordinateur : si un
+     signal quelconque (souris, survol, absence de tactile, grande
+     largeur) indique un ordinateur, le hamburger est masque et la
+     sidebar forcee visible — meme si une regle CSS plus ancienne
+     restait en cache quelque part.
+     Aucune donnee, aucun Firebase, aucune fonctionnalite metier
+     n'est touchee par ce module.
+     ============================================================ -->
+<style id="agv-desktop-guard-css">
+/* Renfort — s'ajoute a la regle @media(min-width:769px) existante,
+   ne la remplace pas. Actif uniquement quand <html> porte la classe
+   agv-mode-desktop, posee par detectDeviceMode() ci-dessous. */
+html.agv-mode-desktop #agv-mobile-topbar,
+html.agv-mode-desktop #agv-mobile-backdrop{
+  display:none !important;
+}
+html.agv-mode-desktop .app .sidebar{
+  position:sticky !important;
+  transform:none !important;
+  box-shadow:none !important;
+  transition:none !important;
+}
+</style>
+
+<script>
+(function(){
+'use strict';
+
+/* ============================================================
+   detectDeviceMode() — fonction unique de detection.
+   Signaux combines : largeur de fenetre, pointer coarse/fine,
+   hover/any-hover, maxTouchPoints, orientation.
+   Regle : la largeur reste prioritaire (permet de reduire la
+   fenetre sur un ordinateur pour voir l'interface mobile, comme
+   demande), le reste des signaux tranche les cas ambigus
+   (tablette en paysage, ordinateur tactile hybride...).
+   ============================================================ */
+function agvSignaux(){
+  var mm = function(q){
+    try{ return window.matchMedia(q).matches; }catch(e){ return false; }
+  };
+  return {
+    largeur:        window.innerWidth,
+    pointerCoarse:  mm('(pointer: coarse)'),
+    pointerFine:    mm('(pointer: fine)'),
+    hover:          mm('(hover: hover)') || mm('(any-hover: hover)'),
+    anyPointerFine: mm('(any-pointer: fine)'),
+    tactile:        (navigator.maxTouchPoints || 0) > 0,
+    portrait:       mm('(orientation: portrait)')
+  };
+}
+
+function detectDeviceMode(){
+  var s = agvSignaux();
+
+  // 1) Fenetre etroite : toujours mobile, y compris sur un
+  //    ordinateur dont on reduit la fenetre (demande explicite).
+  if(s.largeur <= 768) return 'mobile';
+
+  // 2) Un pointeur precis disponible (souris, trackpad, stylet) ET
+  //    une capacite de survol : c'est un ordinateur, meme hybride
+  //    ou tactile (portable a ecran tactile).
+  if((s.pointerFine || s.anyPointerFine) && s.hover) return 'desktop';
+
+  // 3) Tactile pur, sans pointeur fin ni survol, largeur > 768 :
+  //    tablette en mode paysage -> traitee comme mobile.
+  if(s.tactile && s.pointerCoarse && !s.pointerFine) return 'mobile';
+
+  // 4) Par defaut (aucun signal tactile, pas de survol declare
+  //    mais largeur confortable) : ordinateur.
+  return 'desktop';
+}
+window.agvDetectDeviceMode = detectDeviceMode;
+
+/* ============================================================
+   Application du mode : pose la classe sur <html> et, pour le
+   mode ordinateur uniquement, verrouille les styles en ligne en
+   filet de securite. En mode mobile, on efface simplement ces
+   verrous si on en avait pose — on NE TOUCHE A RIEN d'autre : le
+   menu mobile garde exactement son CSS et son JS d'origine.
+   ============================================================ */
+var dernierMode = null;
+
+function appliquerModeDesktop(){
+  var topbar   = document.getElementById('agv-mobile-topbar');
+  var rideau   = document.getElementById('agv-mobile-backdrop');
+  var sidebar  = document.querySelector('.app .sidebar');
+  if(topbar)  topbar.style.setProperty('display','none','important');
+  if(rideau)  rideau.style.setProperty('display','none','important');
+  if(sidebar){
+    sidebar.style.setProperty('position','sticky','important');
+    sidebar.style.setProperty('transform','none','important');
+    sidebar.style.setProperty('box-shadow','none','important');
+    sidebar.classList.remove('nav-open');
+  }
+  if(rideau) rideau.classList.remove('open');
+}
+
+function retirerVerrousDesktop(){
+  // Mode mobile : on efface uniquement ce que CE module a pu
+  // poser precedemment. Le CSS/JS mobile d'origine reprend alors
+  // integralement la main, sans aucune modification de sa part.
+  var topbar   = document.getElementById('agv-mobile-topbar');
+  var rideau   = document.getElementById('agv-mobile-backdrop');
+  var sidebar  = document.querySelector('.app .sidebar');
+  if(topbar)  topbar.style.removeProperty('display');
+  if(rideau)  rideau.style.removeProperty('display');
+  if(sidebar){
+    sidebar.style.removeProperty('position');
+    sidebar.style.removeProperty('transform');
+    sidebar.style.removeProperty('box-shadow');
+  }
+}
+
+function appliquerMode(){
+  var mode = detectDeviceMode();
+  document.documentElement.classList.toggle('agv-mode-desktop', mode === 'desktop');
+  document.documentElement.classList.toggle('agv-mode-mobile',  mode === 'mobile');
+
+  if(mode === dernierMode) return; // rien de nouveau, on ne touche a rien
+  dernierMode = mode;
+
+  if(mode === 'desktop') appliquerModeDesktop();
+  else retirerVerrousDesktop();
+}
+
+/* Execution au chargement */
+if(document.readyState === 'loading'){
+  document.addEventListener('DOMContentLoaded', appliquerMode);
+}else{
+  appliquerMode();
+}
+// Filet de securite si le menu mobile est construit apres ce script
+setTimeout(appliquerMode, 600);
+
+/* Re-execution au redimensionnement (fenetre reduite/agrandie) et
+   a la rotation (tablette/telephone), sans jamais recharger la page. */
+var agvResizeTimer = null;
+window.addEventListener('resize', function(){
+  clearTimeout(agvResizeTimer);
+  agvResizeTimer = setTimeout(appliquerMode, 120);
+});
+window.addEventListener('orientationchange', function(){
+  setTimeout(appliquerMode, 150);
+});
+
+/* Ecoute directe des media queries cles : declenchement immediat
+   des le changement, sans attendre l'evenement resize. */
+try{
+  window.matchMedia('(max-width: 768px)').addEventListener('change', appliquerMode);
+  window.matchMedia('(pointer: coarse)').addEventListener('change', appliquerMode);
+  window.matchMedia('(hover: hover)').addEventListener('change', appliquerMode);
+}catch(e){ /* navigateurs anciens : le resize/orientationchange suffit */ }
 
 })();
 </script>
