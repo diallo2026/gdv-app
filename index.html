@@ -4561,30 +4561,17 @@ window._boutique = {
   get gerants(){return gerants;},   set gerants(v){gerants=v;}
 };
 
-// ===== SAUVEGARDE FIREBASE =====
-window.sauvegarderFirebase = function() {
-  if(!window._AGV_READY) return; // Protection contre l'écrasement avant chargement
-  try {
-    var data = {
-      products: products,
-      ventes:   ventes,
-      depenses: depenses,
-      gerants:  gerants,
-      entrees:  entrees,
-      appros:   appros,
-      repConfig:     repConfig,
-      dettes:        dettes,
-      clients:       clients,
-      factureVentes: factureVentes
-    };
-    db.ref('boutique').set(data).then(function(){
-      console.log('✅ Firebase boutique OK');
-      var ind = document.getElementById('syncIndicator');
-      if(ind){ ind.textContent='🟢 Synchronisé'; ind.style.color='#1a7a4a';
-        setTimeout(function(){ ind.textContent='☁️ Cloud actif'; ind.style.color='#2563eb'; },2000); }
-    }).catch(function(e){ console.error('❌ Firebase erreur:', e); });
-  } catch(e){ console.error('Firebase save error:', e); }
-};
+// [CORRECTIF] Cette section redefinissait window.sauvegarderFirebase en
+// ecrivant vers db.ref('boutique') — un chemin global unique, heritage
+// d'une ancienne version mono-boutique de l'application. Comme cette
+// definition s'executait APRES celle correcte (creee a la connexion,
+// qui ecrit vers gdv_shops/<uid>/data, le vrai emplacement de CETTE
+// boutique), elle l'ecrasait silencieusement : chaque saveAll() —
+// y compris l'enregistrement des informations du Fondateur (nom,
+// contact, photo) — semblait reussir (aucune erreur, message de succes
+// affiche) mais ecrivait en realite dans le vide, sur un chemin que
+// rien d'autre ne lit. La vraie fonction, definie a la connexion de
+// la boutique, reste maintenant seule active.
 
 // Convertit un objet Firebase en vrai Array
 function toArray(val) {
