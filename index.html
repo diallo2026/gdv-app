@@ -1914,7 +1914,7 @@ window.addEventListener('DOMContentLoaded',function(){
     <!-- Carte concepteur -->
     <div style="background:rgba(37,99,235,0.06);border:1px solid rgba(37,99,235,0.15);border-radius:12px;padding:16px 20px;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:14px">
       <div>
-        <div style="font-size:14px;font-weight:700;color:#94a3b8">Développé par <span style="color:#60a5fa;font-size:15px">souleymane</span></div>
+        <div style="font-size:14px;font-weight:700;color:#94a3b8">Développé par <span id="agv-dev-souleymane-trigger" onclick="agvConcepteurAccess()" role="button" tabindex="0" style="color:#60a5fa;font-size:15px;cursor:pointer;text-decoration:underline;text-decoration-style:dotted;text-underline-offset:2px" onkeydown="if(event.key==='Enter'||event.key===' ')agvConcepteurAccess()">souleymane</span></div>
         <div style="font-size:11px;color:#334155;margin-top:3px">Contacter le concepteur pour toute assistance technique</div>
       </div>
       <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
@@ -4039,7 +4039,11 @@ function selectRole(r){
 
 function buildGerantLoginList(){
   const sel = document.getElementById('gerant-login-select');
-  const active = gerants.filter(g=>!g.bloque);
+  // [CORRECTIF] Meme filtre que renderGerants() : le fondateur (id 1,
+  // meme tableau) et les associes/co-fondateurs (type 'associe') ne
+  // doivent jamais apparaitre comme "gerant" selectionnable a l'ecran
+  // de connexion — ils n'ont ni compte ni acces a l'application.
+  const active = gerants.filter(g=>!g.bloque && g.id!==1 && g.role!=='fondateur' && g.type!=='fondateur' && g.type!=='associe');
   console.log('📋 buildGerantLoginList — gérants actifs:', active.length, active.map(g=>g.nom));
   sel.innerHTML = active.length
     ? active.map(g=>`<option value="${g.id}">${g.nom}</option>`).join('')
@@ -4820,6 +4824,17 @@ function _syncMonthFilter(yearSelId, monthSelId, currentMk){
   else monthSel.value = months[0];
 }
 
+function _forceMonthFilter(yearSelId, monthSelId, targetMk, targetYr){
+  var yearSel = document.getElementById(yearSelId);
+  var monthSel = document.getElementById(monthSelId);
+  if(yearSel) yearSel.value = String(targetYr);
+  if(!monthSel) return;
+  var months = [];
+  for(var m = 12; m >= 1; m--){ months.push(targetYr + '-' + String(m).padStart(2,'0')); }
+  monthSel.innerHTML = months.map(function(mk){ return '<option value="'+mk+'">'+getMonthLabel(mk)+'</option>'; }).join('');
+  monthSel.value = targetMk;
+}
+
 function onSalYearChange(){
   _syncMonthFilter('sal-year-filter','sal-month-filter', getMonthKey(new Date()));
   renderSalaires();
@@ -5542,7 +5557,20 @@ function saveDepense(){
     montant,date:document.getElementById('d-date').value||new Date().toISOString().slice(0,10),
     gerantId:currentGerantId, gerant:_gerantNomDep
   });
-  saveAll();buildMonthFilters();renderDepenses();
+  saveAll();buildMonthFilters();
+  // [CORRECTIF] Basculer automatiquement les filtres Dépenses sur le mois
+  // reel de la depense saisie : sinon une depense a une date anterieure
+  // reste correctement enregistree mais invisible tant que l'utilisateur
+  // ne change pas manuellement le filtre affiche (qui reste par defaut
+  // sur le mois en cours), ce qui donne l'impression que sa date n'a
+  // pas ete prise en compte. Fait APRES buildMonthFilters() pour que les
+  // options existent deja dans les selects (sinon la valeur ne prend pas).
+  (function(){
+    var _mk = getMonthKey(depenses[0].date);
+    var _yr = new Date(depenses[0].date).getFullYear();
+    _forceMonthFilter('dep-year-filter','dep-month-filter', _mk, _yr);
+  })();
+  renderDepenses();
   document.getElementById('dep-overlay').classList.remove('open');
   showToast('Dépense enregistrée');
 }
@@ -5912,8 +5940,17 @@ function togglePermDel(id){
 
 function renderGerants(){
   const container=document.getElementById('gerants-list');
-  if(!gerants.length){container.innerHTML='<div class="empty"><div class="empty-icon">👥</div><div class="empty-text">Aucun gérant enregistré</div></div>';return}
-  container.innerHTML=gerants.map(g=>{
+  // [CORRECTIF] Cette liste ne doit afficher que les VRAIS gérants
+  // salariés/employés — jamais le fondateur lui-même (id 1, meme
+  // tableau) ni les associés/co-fondateurs (type 'associe', ajoutes
+  // depuis Parametres). Sans ce filtre, ces entrees se melangeaient
+  // aux gerants dans "Gerants & Acces" avec code d'acces, permissions
+  // et bouton Bloquer/Debloquer — ce qui donnait l'impression que la
+  // liste etait deja "prise" et empechait d'ajouter clairement d'autres
+  // gerants, et donnait a tort un compte/acces aux associes.
+  const gerantsReels = gerants.filter(g=>g.id!==1 && g.role!=='fondateur' && g.type!=='fondateur' && g.type!=='associe');
+  if(!gerantsReels.length){container.innerHTML='<div class="empty"><div class="empty-icon">👥</div><div class="empty-text">Aucun gérant enregistré</div></div>';return}
+  container.innerHTML=gerantsReels.map(g=>{
     const typeLabel=g.type==='salaire'?`Salaire fixe: ${fmtGNF(g.salaire)}`:`${g.pct}% des bénéfices`;
     const statusBadge=g.bloque?'<span class="badge red">Bloqué</span>':'<span class="badge ok">Actif</span>';
     const avatarHTML=g.photo
@@ -6409,7 +6446,18 @@ function saveJD(){
   if(!desc){showToast('Saisissez une description');return;}
   if(montant<=0){showToast('Montant invalide');return;}
   depenses.push({id:Date.now(),date:dateVal,desc,cat,montant,gerantId:currentGerantId});
-  saveAll(); buildMonthFilters(); renderJournalier(); renderDepenses();
+  saveAll(); buildMonthFilters();
+  // [CORRECTIF] Meme correction que pour l'onglet Depenses : basculer
+  // le filtre Historique Journalier sur le mois reel de la depense saisie.
+  // Fait APRES buildMonthFilters() pour que les options existent deja.
+  (function(){
+    var _mk = getMonthKey(dateVal);
+    var _yr = new Date(dateVal).getFullYear();
+    var _dSel = document.getElementById('jour-day-filter');
+    _forceMonthFilter('jour-year-filter','jour-month-filter', _mk, _yr);
+    if(_dSel) _dSel.value = '';   // le changement de mois programmatique ne declenche pas onchange
+  })();
+  renderJournalier(); renderDepenses();
   // Vider les champs
   document.getElementById('jd-desc').value='';
   document.getElementById('jd-cat').value='';
@@ -7087,7 +7135,19 @@ function saveEditDep(){
   const idx = depenses.findIndex(d=>d.id===id);
   if(idx===-1){showToast('Dépense introuvable');return;}
   depenses[idx] = {...depenses[idx], desc, cat, montant, date};
-  saveAll(); renderDepenses();
+  saveAll(); buildMonthFilters();
+  // [CORRECTIF] Basculer les filtres sur le mois de la dépense modifiée
+  // (memes raisons que pour l'ajout : sinon elle disparait de la vue).
+  // Fait APRES buildMonthFilters() pour que les options existent deja.
+  (function(){
+    var _mk = getMonthKey(date);
+    var _yr = new Date(date).getFullYear();
+    _forceMonthFilter('dep-year-filter','dep-month-filter', _mk, _yr);
+    var _jD = document.getElementById('jour-day-filter');
+    _forceMonthFilter('jour-year-filter','jour-month-filter', _mk, _yr);
+    if(_jD) _jD.value = '';
+  })();
+  renderDepenses();
   if(document.getElementById('view-journalier').classList.contains('active')) renderJournalier();
   document.getElementById('edit-dep-overlay').classList.remove('open');
   showToast('✓ Dépense modifiée');
@@ -11337,6 +11397,14 @@ var _dashOrigRender = renderDashboard;
 renderDashboard = function(){
   // Init filtres
   _buildYearOpts('dash-year-filter', true);
+  // [CORRECTIF] Le mois courant n'etait jamais selectionne par defaut :
+  // les options du select etaient figees dans le HTML sans aucun mois
+  // marque "selected", ce qui affichait "Tous les mois" (donc l'historique
+  // complet, tous mois confondus) au lieu du mois en cours a chaque
+  // ouverture du tableau de bord. _buildMonthOpts ne s'applique qu'une
+  // seule fois (garde interne) : le choix manuel de l'utilisateur reste
+  // ensuite respecte sur les ouvertures suivantes.
+  _buildMonthOpts('dash-month-filter');
   var ySel=document.getElementById('dash-year-filter');
   var mSel=document.getElementById('dash-month-filter');
   var fYr=ySel?parseInt(ySel.value)||0:0;
