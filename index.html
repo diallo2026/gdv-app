@@ -4125,8 +4125,13 @@ function renderParametresBoutique(){
   if(msg) msg.style.display = 'none';
 
   // Remplir section Fondateur
+  // [CORRECTIF] "|| gerants[0]" ne doit s'appliquer que s'il n'y a
+  // AUCUN autre gerant : sinon, sur une boutique ayant plusieurs
+  // gerants dont aucun n'est marque comme fondateur, cela affichait
+  // le nom d'un EMPLOYE quelconque dans l'encadre "Fondateur" — les
+  // deux identites se melangeaient a l'affichage.
   var fondateur = gerants.find(function(g){ return g.id===1 || g.role==='fondateur' || g.type==='fondateur'; })
-    || gerants[0];
+    || (gerants.length===1 ? gerants[0] : null);
   var fondNomEl = document.getElementById('fond-nom');
   var fondCodeEl = document.getElementById('fond-code');
   var fondWaEl   = document.getElementById('fond-whatsapp');
@@ -4204,8 +4209,30 @@ function saveFondateurInfo(){
   if(!nom){ sm('Le nom est obligatoire',false); return; }
   if(!code||code.length<3){ sm('Le code doit faire au moins 3 caractères',false); return; }
 
-  // Mettre à jour le gérant fondateur (id=1)
-  var idxF = gerants.findIndex(function(g){ return g.id===1; });
+  // Mettre à jour le gérant fondateur.
+  // [CORRECTIF] Version precedente : le repli "s'il n'y a personne,
+  // prends gerants[0]" s'appliquait MEME quand plusieurs gerants
+  // existaient — si aucun n'etait marque fondateur, cela ecrasait
+  // silencieusement le PREMIER EMPLOYE du tableau avec le nom, le
+  // contact et la photo du fondateur : les deux identites,
+  // pourtant totalement distinctes, se retrouvaient melangees.
+  // Desormais : gerants[0] n'est utilise que si c'est le SEUL
+  // gerant existant (donc impossible a confondre avec un employe).
+  // Sinon, si personne n'est identifie comme fondateur parmi
+  // plusieurs gerants, on cree une entree dediee au lieu de deviner.
+  // Une fois identifie ou cree, le gerant est marque role:'fondateur'
+  // de facon permanente pour qu'aucune ambiguite ne revienne.
+  var idxF = gerants.findIndex(function(g){ return g.id===1 || g.role==='fondateur' || g.type==='fondateur'; });
+  if(idxF<0 && gerants.length===1) idxF = 0; // seul gerant existant : ne peut etre que le fondateur
+  if(idxF<0){
+    // Aucun gerant marque fondateur (et plusieurs gerants existent,
+    // ou aucun du tout) : creer une entree dediee plutot que de
+    // risquer d'ecraser un employe existant.
+    gerants.push({ id:Date.now(), nom:nom, whatsapp:wa, role:'fondateur', type:'salaire', salaire:0, pct:100,
+                   bloque:false, permVentes:true, permDep:true });
+    idxF = gerants.length-1;
+  }
+  gerants[idxF].role = 'fondateur'; // marquage permanent : leve l'ambiguite pour toujours
   if(idxF>=0){
     gerants[idxF].nom       = nom;
     gerants[idxF].whatsapp  = wa;
@@ -8173,18 +8200,29 @@ function renderRepartition(){
   const gerantsPct=gerants.filter(g=>g.type==='pourcentage'&&g.pct>0);
   const totalGerantPct=gerantsPct.reduce((s,g)=>s+g.pct,0);
   const associes=gerants.filter(g=>g.type==='associe'&&(g.pct||0)>0);
+  const totalAssociePct=associes.reduce((s,a)=>s+(a.pct||0),0);
   const _fondG=gerants.find(g=>g.id===1||g.role==='fondateur'||g.type==='fondateur');
   const fondPct=_fondG&&_fondG.pct!=null?_fondG.pct:100;
   const resteAvantFonds=Math.max(0,benefMonth-totalSalaires-depMonth-approMonth);
   const totalRepPct=repConfig.reduce((s,r)=>s+r.pct,0);
   const montantFonds=Math.round(resteAvantFonds*Math.min(totalRepPct,100)/100);
   const resteApresF=Math.max(0,resteAvantFonds-montantFonds);
-  const montantGerants=Math.round(resteApresF*totalGerantPct/100);
-  const resteAvantFond2=Math.max(0,resteApresF-montantGerants);
-  const partFondateurBrute=Math.round(resteAvantFond2*Math.min(fondPct,100)/100);
-  const partAssocies=associes.map(function(a){return{nom:a.nom||'Associé',montant:Math.round(resteAvantFond2*(a.pct||0)/100)};});
-  const totalAssociesMont=partAssocies.reduce(function(s,a){return s+a.montant;},0);
-  const partFondateur=Math.max(0,partFondateurBrute-totalAssociesMont);
+  // [CORRECTIF] Gérants, Fondateur et Associés doivent tous puiser leur
+  // pourcentage dans le MEME total (resteApresF) — c'est l'ensemble de
+  // leurs pourcentages qui doit faire 100%, pas une cascade ou chacun
+  // prend son % de ce qu'il reste APRES le groupe precedent. Avant ce
+  // correctif, le Fondateur touchait son % du reste APRES les gérants
+  // (ex: gérants 30% + fondateur 30% configuré → le fondateur ne
+  // recevait en realite que 30% de 70%, soit 21% du total, pas 30%).
+  const poolARepartir = resteApresF;
+  const totalPctPersonnes = totalGerantPct + fondPct + totalAssociePct;
+  const montantGerants = Math.round(poolARepartir*totalGerantPct/100);
+  const partAssocies = associes.map(function(a){return{nom:a.nom||'Associé',montant:Math.round(poolARepartir*(a.pct||0)/100)};});
+  const totalAssociesMont = partAssocies.reduce(function(s,a){return s+a.montant;},0);
+  const partFondateur = Math.round(poolARepartir*fondPct/100);
+  // Part non configuree (si gerants% + fondateur% + associes% < 100%) :
+  // affichee separement plutot que silencieusement absorbee ou perdue.
+  const resteAvantFond2 = Math.max(0, poolARepartir - montantGerants - totalAssociesMont - partFondateur);
 
   const flux=document.getElementById('rep-flux');
   if(flux) flux.innerHTML=`<div style="display:flex;flex-direction:column;gap:8px">
@@ -8197,6 +8235,7 @@ function renderRepartition(){
     <div style="display:flex;justify-content:space-between;padding:10px 14px;background:var(--surface2);border-radius:8px;border:1px solid var(--border)"><span>👥 Gérants (${totalGerantPct}%)</span><strong style="color:var(--accent)">− ${fmtGNF(montantGerants)}</strong></div>
     ${partAssocies.map(function(a){return '<div style="display:flex;justify-content:space-between;padding:10px 14px;background:var(--purple-bg,#f5f3ff);border-radius:8px"><span>🤝 '+a.nom+'</span><strong style="color:var(--purple,#6d28d9)">− '+fmtGNF(a.montant)+'</strong></div>';}).join('')}
     <div style="display:flex;justify-content:space-between;padding:12px 14px;background:var(--green-bg);border-radius:8px;border:2px solid var(--green)"><span style="font-weight:700">👑 Part Fondateur (${fondPct}%)</span><strong style="font-size:16px;color:var(--green)">${fmtGNF(partFondateur)}</strong></div>
+    ${resteAvantFond2>0?`<div style="display:flex;justify-content:space-between;padding:10px 14px;background:var(--surface2);border-radius:8px;border:1px dashed var(--border)"><span>⚠️ Non distribué (gérants + fondateur + associés = ${totalPctPersonnes}%, pas 100%)</span><strong>${fmtGNF(resteAvantFond2)}</strong></div>`:''}
   </div>`;
 
   const totalPctCfg=repConfig.reduce((s,r)=>s+r.pct,0);
@@ -8221,8 +8260,11 @@ function renderRepartition(){
     const appM=filterByMonth(appros,'date',year,m).reduce((s,a)=>s+a.montant,0);
     const rM=Math.max(0,benM-totalSalaires-depM-appM);
     const fM=Math.round(rM*Math.min(totalRepPct,100)/100);
-    const gM=Math.round(Math.max(0,rM-fM)*totalGerantPct/100);
-    const fondM=Math.max(0,rM-fM)-gM;
+    const poolM=Math.max(0,rM-fM);
+    // [CORRECTIF] Meme modele additif que dans le flux principal :
+    // gerants% et fondateur% puisent tous deux dans poolM, sans cascade.
+    const gM=Math.round(poolM*totalGerantPct/100);
+    const fondM=Math.round(poolM*fondPct/100);
     annRows+=`<tr style="${m===month?'background:var(--green-bg);font-weight:700':''}border-bottom:1px solid var(--border)"><td style="padding:8px">${months[m-1]}</td><td style="padding:8px;text-align:right;color:var(--green)">${fmtGNF(benM)}</td><td style="padding:8px;text-align:right;color:var(--red)">${fmtGNF(depM+appM+totalSalaires)}</td><td style="padding:8px;text-align:right;color:var(--amber)">${fmtGNF(fM)}</td><td style="padding:8px;text-align:right;font-weight:600;color:var(--green)">${fmtGNF(fondM)}</td></tr>`;
   }
   const ann=document.getElementById('rep-annual');
