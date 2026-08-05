@@ -3170,6 +3170,11 @@ window.addEventListener('DOMContentLoaded',function(){
       <div class="card-title">Détail de la répartition</div>
       <div id="rep-detail"></div>
     </div>
+    <!-- Répartition du reste : fondateur, gérants, associés, reliquat -->
+    <div class="card" style="margin-top:16px" id="rep-personnes-card">
+      <div class="card-title">👥 Répartition du reste (fondateur, gérants, associés)</div>
+      <div id="rep-personnes"></div>
+    </div>
     <!-- Historique années -->
     <div class="card" style="margin-top:16px" id="rep-history-card">
       <div class="card-title">📅 Cumul annuel — <span id="rep-year-label"></span></div>
@@ -4873,10 +4878,31 @@ function buildMonthFiltersForBulletin(){
 // ============================================================
 //  UTILITAIRES MOIS/ANNÉE
 // ============================================================
+// [CORRECTIF] Resolution robuste de la date d'un enregistrement.
+// Certaines ventes sont enregistrees avec le seul champ `ts` (horodatage
+// numerique) et SANS champ `date` — notamment celles saisies depuis le
+// Journalier avec une date choisie. Toutes les vues qui lisaient
+// uniquement `date` (dont la Repartition des Fonds) les ignoraient
+// totalement : les ventes etaient bien enregistrees, mais la repartition
+// affichait 0 et des mois entiers apparaissaient vides.
+// Cette fonction lit `date`, puis retombe sur `ts` (et inversement),
+// accepte aussi bien une chaine ISO qu'un horodatage numerique, et ne
+// modifie AUCUNE donnee stockee : c'est une correction de lecture seule.
+function resolveRecDate(x, dateField){
+  if(!x) return null;
+  var raw = x[dateField];
+  if(raw===undefined || raw===null || raw==='') raw = x.ts;
+  if(raw===undefined || raw===null || raw==='') raw = x.date;
+  if(raw===undefined || raw===null || raw==='') raw = x.createdAt;
+  if(raw===undefined || raw===null || raw==='') return null;
+  if(typeof raw==='string' && /^\d{10,}$/.test(raw)) raw = +raw;
+  var d = new Date(raw);
+  return isNaN(d.getTime()) ? null : d;
+}
 function buildYearOptions(sel, items, dateField){
   if(!sel) return;
   // Années des données existantes
-  const dataYears=new Set(items.map(x=>{ try{ return new Date(x[dateField]).getFullYear(); }catch(e){ return new Date().getFullYear(); } }));
+  const dataYears=new Set(items.map(x=>{ const d=resolveRecDate(x,dateField); return d?d.getFullYear():new Date().getFullYear(); }));
   // Toujours inclure 2020→2040
   for(var _y=2020;_y<=2040;_y++) dataYears.add(_y);
   const years=[...dataYears].sort((a,b)=>b-a);
@@ -4895,7 +4921,7 @@ function getSelectedYearMonth(yearSel, monthSel){
   return { year:parseInt(yearSel.value)||new Date().getFullYear(), month:parseInt(monthSel.value)||new Date().getMonth()+1 };
 }
 function filterByMonth(items, dateField, year, month){
-  return items.filter(x=>{ try{ const d=new Date(x[dateField]); return d.getFullYear()===year && d.getMonth()+1===month; }catch(e){ return false; } });
+  return items.filter(x=>{ const d=resolveRecDate(x,dateField); return !!d && d.getFullYear()===year && d.getMonth()+1===month; });
 }
 function onEntYearChange(){ buildMonthOptions(document.getElementById('ent-month-filter')); renderEntrees(); }
 function onSortYearChange(){ buildMonthOptions(document.getElementById('sort-month-filter')); renderSorties(); }
@@ -5663,7 +5689,9 @@ function renderSalaires(){
   const montantFonds=Math.round(resteAvantFonds*totalRepPct/100);
 
   // Gérants au pourcentage — calculé sur le reste APRÈS fonds
-  const gerantsPct=gerants.filter(g=>g.type==='pourcentage'&&g.pct>0);
+  // [CORRECTIF] Le fondateur est exclu : sinon son pourcentage était
+  // compté deux fois (dans le pool gérants puis dans sa propre part).
+  const gerantsPct=gerants.filter(g=>!(g.id===1||g.role==='fondateur'||g.type==='fondateur')&&g.type==='pourcentage'&&g.pct>0);
   const totalGerantPct=gerantsPct.reduce((s,g)=>s+g.pct,0);
   const resteApresGerants=Math.max(0,resteAvantFonds-montantFonds);
   const reste=resteApresGerants;
@@ -5782,9 +5810,12 @@ function renderSalaires(){
       }).join('')+'</div>'
     : '<div style="font-size:12px;color:var(--text3);margin-top:8px">Aucun gérant rémunéré en salaire fixe.</div>';
 
-  if(gerantsPct.length===0){
-    document.getElementById('sal-pct-list').innerHTML='<div style="font-size:12px;color:var(--text3);margin-top:8px">Aucun gérant rémunéré en pourcentage.</div>';
-  } else {
+  // [CORRECTIF] Ce bloc n'affichait RIEN quand aucun gerant n'etait
+  // remunere au pourcentage : la part du fondateur, son pourcentage et
+  // sa valeur disparaissaient completement de l'ecran. Il s'execute
+  // desormais dans tous les cas, le fondateur y figure toujours, et le
+  // reste non attribue est affiche explicitement.
+  {
     var _dsolPct = getDettesSolde();
     const rows=gerantsPct.map(function(g){
       const part=reste>0?Math.round(reste*(g.pct/100)):0;
@@ -5811,18 +5842,42 @@ function renderSalaires(){
         + detteHtml2
         +'</div>';
     });
-    const fondateurPct=Math.max(0,100-totalGerantPct);
-    const fondateurPart=reste>0?Math.round(reste*(fondateurPct/100)):0;
-    if(fondateurPct>0){
-      rows.push(`<div class="repartition-row" style="background:var(--accent-light);border-radius:6px;padding:10px 8px;border:none;margin-top:4px">
-        <div class="rep-name">👑 Fondateur</div>
-        <div class="rep-pct"><span class="badge amber">${fondateurPct}%</span></div>
-        <div class="rep-amount" style="color:var(--accent)">${fmtGNF(fondateurPart)}</div>
-      </div>`);
-    }
-    document.getElementById('sal-pct-list').innerHTML=`<div style="margin-top:10px">${rows.join('')}</div>
-      <div style="margin-top:10px;padding:10px;background:var(--surface2);border-radius:6px;font-size:12px;color:var(--text3)">
-        Total %: ${totalGerantPct}% gérants + Fondateur ${fondateurPct}% = 100%
+    // [CORRECTIF] Le pourcentage du fondateur etait DEDUIT (100 − gerants)
+    // au lieu d'utiliser celui reellement configure dans Paramètres →
+    // Fondateur. Gerants, associes et fondateur puisent tous dans le meme
+    // reste ; ce qui n'est pas attribue est affiche comme "Reste des fonds".
+    var _fondGS = gerants.find(function(g){return g.id===1||g.role==='fondateur'||g.type==='fondateur';});
+    var _fondNomS = _fondGS&&_fondGS.nom?_fondGS.nom:'Fondateur';
+    const fondateurPct = _fondGS&&_fondGS.pct!=null ? _fondGS.pct : Math.max(0,100-totalGerantPct);
+    const fondateurPart = reste>0?Math.round(reste*(fondateurPct/100)):0;
+    var _associesS = gerants.filter(function(g){return g!==_fondGS&&g.type==='associe'&&(g.pct||0)>0;});
+    var _totalAssoPctS = _associesS.reduce(function(s,a){return s+(a.pct||0);},0);
+    var _totalAssoMontS = 0;
+    _associesS.forEach(function(a){
+      var part=reste>0?Math.round(reste*((a.pct||0)/100)):0;
+      _totalAssoMontS+=part;
+      rows.push('<div class="repartition-row" style="background:var(--surface2);border-radius:6px;padding:10px 8px;border:none;margin-top:4px">'
+        +'<div class="rep-name">🤝 '+(a.nom||'Associé')+'</div>'
+        +'<div class="rep-pct"><span class="badge purple">'+(a.pct||0)+'%</span></div>'
+        +'<div class="rep-amount">'+fmtGNF(part)+'</div></div>');
+    });
+    rows.push(`<div class="repartition-row" style="background:var(--accent-light);border-radius:6px;padding:10px 8px;border:none;margin-top:4px">
+      <div class="rep-name">👑 ${_fondNomS} <span style="font-size:11px;color:var(--text3)">Fondateur</span></div>
+      <div class="rep-pct"><span class="badge amber">${fondateurPct}%</span></div>
+      <div class="rep-amount" style="color:var(--accent)">${fmtGNF(fondateurPart)}</div>
+    </div>`);
+    var _totalPctPersS = totalGerantPct + fondateurPct + _totalAssoPctS;
+    var _gerantsMontS = gerantsPct.reduce(function(s,g){return s+(reste>0?Math.round(reste*(g.pct/100)):0);},0);
+    var _resteFondsS = Math.max(0, reste - _gerantsMontS - _totalAssoMontS - fondateurPart);
+    rows.push(`<div class="repartition-row" style="background:var(--surface2);border-radius:6px;padding:10px 8px;border:1px dashed var(--border);margin-top:6px">
+      <div class="rep-name">💼 Reste des fonds (non attribué)</div>
+      <div class="rep-pct"><span class="badge">${Math.max(0,100-_totalPctPersS)}%</span></div>
+      <div class="rep-amount" style="color:${_resteFondsS>0?'var(--amber)':'var(--text3)'}">${fmtGNF(_resteFondsS)}</div>
+    </div>`);
+    document.getElementById('sal-pct-list').innerHTML=(gerantsPct.length===0?'<div style="font-size:12px;color:var(--text3);margin-top:8px">Aucun gérant rémunéré en pourcentage.</div>':'')
+      +`<div style="margin-top:10px">${rows.join('')}</div>
+      <div style="margin-top:10px;padding:10px;background:var(--surface2);border-radius:6px;font-size:12px;color:${_totalPctPersS===100?'var(--text3)':'var(--amber)'}">
+        Total % : ${totalGerantPct}% gérants + ${_totalAssoPctS}% associés + ${fondateurPct}% fondateur = ${_totalPctPersS}%${_totalPctPersS===100?' ✅':' — il reste '+Math.max(0,100-_totalPctPersS)+'% non attribué'}
       </div>`;
   }
 }
@@ -6441,7 +6496,14 @@ function saveJV(){
   const m=prodVal.match(/\(([^)]+)\)$/);
   const prod=m?products.find(p=>p.reference===m[1]):products.find(p=>p.designation===prodVal);
   if(prod){ prod.stock_initial=Math.max(0,(prod.stock_initial||0)-qty); prod.total=prod.stock_initial*prod.prix_achat; }
-  ventes.push({id:Date.now(),ts:new Date(dateVal+'T12:00:00').getTime(),name:prod?prod.designation:prodVal,ref:prod?prod.reference:'',qty,prixU:prix,prixAchat:prod?prod.prix_achat||0:0,total:qty*prix,benefice:qty*(prix-(prod?prod.prix_achat||0:0)),type:'sortie',gerantId:currentGerantId});
+  // [CORRECTIF] Ces ventes n'ecrivaient que `ts` et aucun champ `date`.
+  // Toutes les autres ventes de l'application enregistrent les deux ;
+  // l'absence de `date` les rendait invisibles pour la Repartition des
+  // Fonds. On ecrit desormais les deux champs (meme schema qu'ailleurs,
+  // aucune structure modifiee), et resolveRecDate() rattrape en lecture
+  // les enregistrements deja existants.
+  var _jvDate=new Date(dateVal+'T12:00:00');
+  ventes.push({id:Date.now(),ts:_jvDate.getTime(),date:_jvDate.toISOString(),name:prod?prod.designation:prodVal,ref:prod?prod.reference:'',qty,prixU:prix,prixAchat:prod?prod.prix_achat||0:0,total:qty*prix,benefice:qty*(prix-(prod?prod.prix_achat||0:0)),type:'sortie',gerantId:currentGerantId});
   saveAll(); buildMonthFilters(); renderJournalier(); renderDashboard();
   // Vider les champs
   document.getElementById('jv-product').value='';
@@ -7115,7 +7177,11 @@ function saveEditVente(){
     qty, prixU: prix, prixAchat: prixAchat,
     total: qty*prix,
     benefice: qty*(prix-prixAchat),
-    ts: new Date(dateVal+'T12:00:00').toISOString()
+    // [CORRECTIF] La modification n'ecrivait que `ts` : le champ `date`
+    // gardait l'ANCIENNE date, si bien qu'une vente corrigee restait
+    // comptee dans le mois d'origine par la Repartition des Fonds.
+    ts: new Date(dateVal+'T12:00:00').toISOString(),
+    date: new Date(dateVal+'T12:00:00').toISOString()
   };
   saveAll(); renderDashboard(); refreshVentesHistory();
   if(document.getElementById('view-journalier').classList.contains('active')) renderJournalier();
@@ -8195,14 +8261,19 @@ function renderRepartition(){
   const benefMonth=filterByMonth(sorties,'date',year,month).reduce((s,v)=>s+(v.benefice!=null?v.benefice:v.total),0);
   const depMonth=filterByMonth(depenses,'date',year,month).reduce((s,d)=>s+(d.montant||0),0);
   const approMonth=filterByMonth(appros,'date',year,month).reduce((s,a)=>s+a.montant,0);
+  const _fondG=gerants.find(g=>g.id===1||g.role==='fondateur'||g.type==='fondateur');
+  const _estFond=function(g){ return !!_fondG && g===_fondG; };
   const gerantsSalaires=gerants.filter(g=>g.type==='salaire'&&g.salaire>0);
   const totalSalaires=gerantsSalaires.reduce((s,g)=>s+(g.salaire||0),0);
-  const gerantsPct=gerants.filter(g=>g.type==='pourcentage'&&g.pct>0);
+  // [CORRECTIF] Le fondateur est exclu des listes "gerants %" et
+  // "associes" : s'il y figurait aussi, son pourcentage etait compte
+  // DEUX FOIS (une fois dans le pool gerants, une fois dans sa part).
+  const gerantsPct=gerants.filter(g=>!_estFond(g)&&g.type==='pourcentage'&&g.pct>0);
   const totalGerantPct=gerantsPct.reduce((s,g)=>s+g.pct,0);
-  const associes=gerants.filter(g=>g.type==='associe'&&(g.pct||0)>0);
+  const associes=gerants.filter(g=>!_estFond(g)&&g.type==='associe'&&(g.pct||0)>0);
   const totalAssociePct=associes.reduce((s,a)=>s+(a.pct||0),0);
-  const _fondG=gerants.find(g=>g.id===1||g.role==='fondateur'||g.type==='fondateur');
-  const fondPct=_fondG&&_fondG.pct!=null?_fondG.pct:100;
+  const fondPct=_fondG&&_fondG.pct!=null?_fondG.pct:Math.max(0,100-totalGerantPct-totalAssociePct);
+  const fondNom=_fondG&&_fondG.nom?_fondG.nom:'Fondateur';
   const resteAvantFonds=Math.max(0,benefMonth-totalSalaires-depMonth-approMonth);
   const totalRepPct=repConfig.reduce((s,r)=>s+r.pct,0);
   const montantFonds=Math.round(resteAvantFonds*Math.min(totalRepPct,100)/100);
@@ -8234,8 +8305,8 @@ function renderRepartition(){
     <div style="display:flex;justify-content:space-between;padding:10px 14px;background:var(--amber-bg);border-radius:8px"><span>🏦 Fonds (${totalRepPct}%)</span><strong style="color:var(--amber)">− ${fmtGNF(montantFonds)}</strong></div>
     <div style="display:flex;justify-content:space-between;padding:10px 14px;background:var(--surface2);border-radius:8px;border:1px solid var(--border)"><span>👥 Gérants (${totalGerantPct}%)</span><strong style="color:var(--accent)">− ${fmtGNF(montantGerants)}</strong></div>
     ${partAssocies.map(function(a){return '<div style="display:flex;justify-content:space-between;padding:10px 14px;background:var(--purple-bg,#f5f3ff);border-radius:8px"><span>🤝 '+a.nom+'</span><strong style="color:var(--purple,#6d28d9)">− '+fmtGNF(a.montant)+'</strong></div>';}).join('')}
-    <div style="display:flex;justify-content:space-between;padding:12px 14px;background:var(--green-bg);border-radius:8px;border:2px solid var(--green)"><span style="font-weight:700">👑 Part Fondateur (${fondPct}%)</span><strong style="font-size:16px;color:var(--green)">${fmtGNF(partFondateur)}</strong></div>
-    ${resteAvantFond2>0?`<div style="display:flex;justify-content:space-between;padding:10px 14px;background:var(--surface2);border-radius:8px;border:1px dashed var(--border)"><span>⚠️ Non distribué (gérants + fondateur + associés = ${totalPctPersonnes}%, pas 100%)</span><strong>${fmtGNF(resteAvantFond2)}</strong></div>`:''}
+    <div style="display:flex;justify-content:space-between;padding:12px 14px;background:var(--green-bg);border-radius:8px;border:2px solid var(--green)"><span style="font-weight:700">👑 Part Fondateur — ${fondNom} (${fondPct}%)</span><strong style="font-size:16px;color:var(--green)">${fmtGNF(partFondateur)}</strong></div>
+    <div style="display:flex;justify-content:space-between;padding:10px 14px;background:var(--surface2);border-radius:8px;border:1px dashed var(--border)"><span>${resteAvantFond2>0?'⚠️ ':'✅ '}Reste des fonds non distribué <span style="font-size:11px;color:var(--text3)">(gérants ${totalGerantPct}% + fondateur ${fondPct}% + associés ${totalAssociePct}% = ${totalPctPersonnes}%)</span></span><strong style="color:${resteAvantFond2>0?'var(--amber)':'var(--text3)'}">${fmtGNF(resteAvantFond2)}</strong></div>
   </div>`;
 
   const totalPctCfg=repConfig.reduce((s,r)=>s+r.pct,0);
@@ -8253,6 +8324,32 @@ function renderRepartition(){
       <tr style="background:var(--surface2)"><td style="padding:8px;font-weight:700">Total</td><td style="padding:8px;text-align:center;font-weight:700;color:${barColor}">${totalPctCfg}%</td><td style="padding:8px;text-align:right;font-weight:700">${fmtGNF(montantFonds)}</td><td></td></tr>
       </tbody></table>`;
 
+  // [AJOUT] Repartition nominative du reste (apres prelevement des fonds) :
+  // le fondateur y figure toujours avec SON pourcentage et SA valeur, aux
+  // cotes des gerants et des associes, et le reliquat non attribue est
+  // affiche explicitement au lieu de disparaitre.
+  const repReste=document.getElementById('rep-personnes');
+  if(repReste){
+    let pRows='';
+    pRows+=`<tr style="border-bottom:1px solid var(--border);background:var(--green-bg)"><td style="padding:10px 8px;font-weight:700">👑 ${fondNom} <span style="font-size:11px;color:var(--text3);font-weight:400">Fondateur</span></td><td style="padding:10px 8px;text-align:center;color:var(--green);font-weight:700">${fondPct}%</td><td style="padding:10px 8px;text-align:right;font-weight:700;color:var(--green)">${fmtGNF(partFondateur)}</td></tr>`;
+    gerantsPct.forEach(function(g){
+      const part=Math.round(poolARepartir*(g.pct||0)/100);
+      pRows+=`<tr style="border-bottom:1px solid var(--border)"><td style="padding:10px 8px">🧑‍💼 ${g.nom||'Gérant'}</td><td style="padding:10px 8px;text-align:center;color:var(--accent)">${g.pct}%</td><td style="padding:10px 8px;text-align:right;font-weight:600">${fmtGNF(part)}</td></tr>`;
+    });
+    associes.forEach(function(a){
+      const part=Math.round(poolARepartir*(a.pct||0)/100);
+      pRows+=`<tr style="border-bottom:1px solid var(--border)"><td style="padding:10px 8px">🤝 ${a.nom||'Associé'}</td><td style="padding:10px 8px;text-align:center;color:var(--accent)">${a.pct}%</td><td style="padding:10px 8px;text-align:right;font-weight:600">${fmtGNF(part)}</td></tr>`;
+    });
+    const resteColorR=resteAvantFond2>0?'var(--amber)':'var(--text3)';
+    pRows+=`<tr style="background:var(--surface2)"><td style="padding:10px 8px;font-weight:700">💼 Reste des fonds (non attribué)</td><td style="padding:10px 8px;text-align:center;font-weight:700;color:${resteColorR}">${Math.max(0,100-totalPctPersonnes)}%</td><td style="padding:10px 8px;text-align:right;font-weight:700;color:${resteColorR}">${fmtGNF(resteAvantFond2)}</td></tr>`;
+    repReste.innerHTML=`
+      <div style="font-size:12px;color:var(--text3);margin-bottom:10px">Montant à répartir après prélèvement des fonds : <strong style="color:var(--text)">${fmtGNF(poolARepartir)}</strong></div>
+      <table style="width:100%;border-collapse:collapse">
+        <thead><tr style="font-size:11px;color:var(--text3);text-transform:uppercase"><th style="padding:8px;text-align:left">Bénéficiaire</th><th style="padding:8px;text-align:center">%</th><th style="padding:8px;text-align:right">Montant</th></tr></thead>
+        <tbody>${pRows}</tbody>
+      </table>`;
+  }
+
   let annRows='';
   for(let m=1;m<=12;m++){
     const benM=filterByMonth(sorties,'date',year,m).reduce((s,v)=>s+(v.benefice!=null?v.benefice:v.total),0);
@@ -8264,11 +8361,13 @@ function renderRepartition(){
     // [CORRECTIF] Meme modele additif que dans le flux principal :
     // gerants% et fondateur% puisent tous deux dans poolM, sans cascade.
     const gM=Math.round(poolM*totalGerantPct/100);
+    const aM=Math.round(poolM*totalAssociePct/100);
     const fondM=Math.round(poolM*fondPct/100);
-    annRows+=`<tr style="${m===month?'background:var(--green-bg);font-weight:700':''}border-bottom:1px solid var(--border)"><td style="padding:8px">${months[m-1]}</td><td style="padding:8px;text-align:right;color:var(--green)">${fmtGNF(benM)}</td><td style="padding:8px;text-align:right;color:var(--red)">${fmtGNF(depM+appM+totalSalaires)}</td><td style="padding:8px;text-align:right;color:var(--amber)">${fmtGNF(fM)}</td><td style="padding:8px;text-align:right;font-weight:600;color:var(--green)">${fmtGNF(fondM)}</td></tr>`;
+    const resteM=Math.max(0,poolM-gM-aM-fondM);
+    annRows+=`<tr style="${m===month?'background:var(--green-bg);font-weight:700':''}border-bottom:1px solid var(--border)"><td style="padding:8px">${months[m-1]}</td><td style="padding:8px;text-align:right;color:var(--green)">${fmtGNF(benM)}</td><td style="padding:8px;text-align:right;color:var(--red)">${fmtGNF(depM+appM+totalSalaires)}</td><td style="padding:8px;text-align:right;color:var(--amber)">${fmtGNF(fM)}</td><td style="padding:8px;text-align:right;font-weight:600;color:var(--green)">${fmtGNF(fondM)}</td><td style="padding:8px;text-align:right;color:var(--text3)">${fmtGNF(resteM)}</td></tr>`;
   }
   const ann=document.getElementById('rep-annual');
-  if(ann) ann.innerHTML=`<table style="width:100%;border-collapse:collapse"><thead><tr style="font-size:11px;color:var(--text3);text-transform:uppercase"><th style="padding:8px;text-align:left">Mois</th><th style="padding:8px;text-align:right">Bénéfice</th><th style="padding:8px;text-align:right">Charges</th><th style="padding:8px;text-align:right">Fonds</th><th style="padding:8px;text-align:right">Fondateur</th></tr></thead><tbody>${annRows}</tbody></table>`;
+  if(ann) ann.innerHTML=`<table style="width:100%;border-collapse:collapse"><thead><tr style="font-size:11px;color:var(--text3);text-transform:uppercase"><th style="padding:8px;text-align:left">Mois</th><th style="padding:8px;text-align:right">Bénéfice</th><th style="padding:8px;text-align:right">Charges</th><th style="padding:8px;text-align:right">Fonds</th><th style="padding:8px;text-align:right">Fondateur (${fondPct}%)</th><th style="padding:8px;text-align:right">Reste</th></tr></thead><tbody>${annRows}</tbody></table>`;
 }
 
 function openRepConfig(){
