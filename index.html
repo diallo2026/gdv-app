@@ -14384,4 +14384,644 @@ try{
 })();
 </script>
 
+<!-- ============================================================
+     MODULE CORRECTIF — CONTROLE D'ACCES STRICT (v1)
+     ------------------------------------------------------------
+     1. Toute boutique BLOQUEE (info/blocked = true) ou dont la
+        LICENCE EST EXPIREE (info/dateExpiration depassee et
+        info/licenceStatut different de 'actif') est privee de
+        TOUT acces : page d'accueil, page de connexion boutique,
+        connexion fondateur, connexion gerant, ouverture directe
+        de l'application installee (PWA).
+     2. Le blocage est aussi verifie EN CONTINU pendant la session :
+        si le concepteur bloque la boutique ou si la licence expire
+        alors que l'utilisateur travaille, l'acces est coupe
+        immediatement.
+     3. La synchronisation ne fonctionne QU'EN LIGNE. Hors ligne,
+        tout acces est bloque automatiquement (ecran plein ecran)
+        et l'application redevient accessible des le retour de la
+        connexion.
+
+     AUCUNE modification de la structure de la base.
+     AUCUNE modification des donnees des boutiques.
+     Lecture  : gdv_codes/<code>
+                gdv_shops/<uid>/info/blocked
+                gdv_shops/<uid>/info/licenceStatut
+                gdv_shops/<uid>/info/dateExpiration
+                gdv_shops/<uid>/info  (affichage uniquement)
+     Ecriture : gdv_shops/<uid>/info/blocked        (champ existant)
+                gdv_shops/<uid>/info/licenceStatut  (champ existant)
+                -> uniquement lorsqu'une licence arrive a expiration,
+                   exactement comme le faisait deja l'application.
+     ============================================================ -->
+<script>
+(function(){
+'use strict';
+
+/* ---------- contacts ---------- */
+var TEL  = '+224 623 030 403';
+var WA   = '224623030403';
+var MAIL = 'neindimultiservice@gmail.com';
+
+/* ---------- delais ---------- */
+var T_LECTURE      = 10000;  // delai max d'une lecture Firebase
+var T_GRACE_RESEAU = 6000;   // tolerance avant l'ecran "hors ligne"
+var T_RECONTROLE   = 60000;  // recontrole periodique de l'expiration
+
+function DB(){ return window.db || null; }
+
+/* ============================================================
+   1. LECTURES SECURISEES (avec delai maximum)
+   Hors ligne, Firebase met la lecture en file d'attente sans
+   jamais repondre : le delai est donc indispensable pour
+   detecter reellement l'absence de connexion.
+   ============================================================ */
+function lireUneFois(chemin, cb){
+  var d = DB();
+  if(!d){ cb('hors-ligne', null); return; }
+  var fini = false;
+  var minuteur = setTimeout(function(){
+    if(fini) return; fini = true; cb('hors-ligne', null);
+  }, T_LECTURE);
+  try{
+    d.ref(chemin).once('value', function(snap){
+      if(fini) return; fini = true; clearTimeout(minuteur); cb(null, snap.val());
+    }, function(){
+      if(fini) return; fini = true; clearTimeout(minuteur); cb('hors-ligne', null);
+    });
+  }catch(e){
+    if(!fini){ fini = true; clearTimeout(minuteur); cb('hors-ligne', null); }
+  }
+}
+
+/* Lit uniquement les 3 champs necessaires au controle d'acces.
+   Le logo et la photo du fondateur (plusieurs Mo) ne sont jamais
+   telecharges ici : la verification reste instantanee. */
+function lireEtatAcces(uid, cb){
+  if(!uid){ cb('introuvable', null); return; }
+  var etat = {}, restants = 3, termine = false;
+  function echec(){ if(termine) return; termine = true; cb('hors-ligne', null); }
+  function fini(){
+    if(termine) return;
+    if(--restants > 0) return;
+    termine = true; cb(null, etat);
+  }
+  ['blocked','licenceStatut','dateExpiration'].forEach(function(champ){
+    lireUneFois('gdv_shops/' + uid + '/info/' + champ, function(err, val){
+      if(err) return echec();
+      etat[champ] = val; fini();
+    });
+  });
+}
+
+/* ============================================================
+   2. REGLES DE BLOCAGE
+   ============================================================ */
+/* Une licence est expiree des que sa date d'expiration est depassee,
+   qu'il s'agisse d'un essai OU d'une licence payee : c'est ce qui
+   rend le renouvellement obligatoire. Le concepteur repousse la date
+   de 12 mois a chaque paiement enregistre : une boutique a jour n'est
+   donc jamais concernee.
+   >>> Pour ne bloquer QUE les essais et les impayes (ancien
+   >>> comportement), ajouter la ligne :
+   >>>   if(info.licenceStatut === 'actif') return false;
+   >>> juste apres la ligne suivante.                              */
+function licenceExpiree(info){
+  if(!info || !info.dateExpiration) return false;
+  var exp = new Date(info.dateExpiration);
+  if(isNaN(exp.getTime())) return false;
+  return new Date() > exp;
+}
+
+/* Retourne 'bloquee', 'expiree' ou null */
+function motifBlocage(info){
+  if(!info) return null;
+  if(info.blocked === true) return 'bloquee';
+  if(licenceExpiree(info)) return 'expiree';
+  return null;
+}
+
+/* Marque la boutique comme bloquee a l'expiration de la licence.
+   Champs existants uniquement — comportement deja present dans
+   l'application d'origine. */
+var dejaMarquees = {};
+function marquerExpiree(uid, etat){
+  var d = DB();
+  if(!d || !uid || dejaMarquees[uid]) return;
+  // Une licence payee ('actif') n'est jamais requalifiee en 'expire' :
+  // l'acces est refuse localement, mais le statut de paiement reste
+  // intact dans la base pour le concepteur.
+  if(etat && etat.licenceStatut === 'actif') return;
+  dejaMarquees[uid] = true;
+  try{
+    d.ref('gdv_shops/' + uid + '/info/blocked').set(true);
+    d.ref('gdv_shops/' + uid + '/info/licenceStatut').set('expire');
+  }catch(e){}
+}
+
+/* ============================================================
+   3. NETTOYAGE DU CACHE LOCAL D'UNE BOUTIQUE BLOQUEE
+   Le cache local permettait auparavant d'entrer dans
+   l'application sans repasser par Firebase : il est vide des
+   qu'un acces est refuse. Aucune donnee n'est touchee dans la
+   base : tout est retelecharge au deblocage.
+   ============================================================ */
+function purgerCache(uid, code){
+  try{
+    if(uid){
+      localStorage.removeItem('agv_cache_' + uid);
+      localStorage.removeItem('agv_shop_'  + uid);
+    }
+    if(code) localStorage.removeItem('agv_shop_' + String(code).toUpperCase());
+  }catch(e){}
+}
+
+/* ============================================================
+   4. ECRANS DE BLOCAGE
+   ============================================================ */
+function contactsHtml(){
+  return '<div style="margin-top:18px;font-size:12.5px;line-height:1.9;color:#94a3b8">'
+    + 'Service de gestion des paiements<br>'
+    + '<strong style="color:#e2e8f0">' + TEL + '</strong><br>'
+    + '<span style="color:#64748b">' + MAIL + '</span>'
+    + '</div>'
+    + '<a href="https://wa.me/' + WA + '" style="display:inline-block;margin-top:16px;padding:11px 22px;'
+    + 'border-radius:9px;background:#25D366;color:#fff;text-decoration:none;font-weight:700;font-size:13px">'
+    + 'Contacter par WhatsApp</a>';
+}
+
+function contenuBlocage(motif){
+  if(motif === 'expiree'){
+    return { icone:'&#9203;', couleur:'#f97316', titre:'Licence expir&eacute;e',
+      texte:'L\'acc&egrave;s &agrave; votre boutique est suspendu : votre licence d\'utilisation est arriv&eacute;e &agrave; expiration.<br>'
+          + 'Effectuez votre paiement, puis envoyez la capture d\'&eacute;cran pour r&eacute;tablir imm&eacute;diatement votre acc&egrave;s.' };
+  }
+  if(motif === 'introuvable'){
+    return { icone:'&#10060;', couleur:'#ef4444', titre:'Boutique introuvable',
+      texte:'Ce code ne correspond &agrave; aucune boutique. V&eacute;rifiez le code saisi.' };
+  }
+  return { icone:'&#9940;', couleur:'#ef4444', titre:'Acc&egrave;s suspendu',
+    texte:'Votre boutique a &eacute;t&eacute; bloqu&eacute;e suite au non-paiement de votre licence d\'utilisation.<br>'
+        + 'Aucun acc&egrave;s n\'est possible tant que la situation n\'est pas r&eacute;gularis&eacute;e.' };
+}
+
+function blocHtml(motif){
+  if(motif === 'hors-ligne') return blocHorsLigneHtml();
+  var c = contenuBlocage(motif);
+  return '<div style="min-height:100vh;min-height:100dvh;display:flex;align-items:center;justify-content:center;'
+    + 'background:linear-gradient(180deg,#060d24 0%,#0a1628 100%);padding:24px;box-sizing:border-box">'
+    + '<div style="text-align:center;max-width:420px">'
+    + '<div style="font-size:52px;margin-bottom:14px">' + c.icone + '</div>'
+    + '<h2 style="color:' + c.couleur + ';font-size:19px;font-weight:800;margin-bottom:10px">' + c.titre + '</h2>'
+    + '<p style="color:#94a3b8;font-size:13.5px;line-height:1.75">' + c.texte + '</p>'
+    + contactsHtml()
+    + '</div></div>';
+}
+
+function blocHorsLigneHtml(){
+  return '<div style="min-height:100vh;min-height:100dvh;display:flex;align-items:center;justify-content:center;'
+    + 'background:linear-gradient(180deg,#060d24 0%,#0a1628 100%);padding:24px;box-sizing:border-box">'
+    + '<div style="text-align:center;max-width:420px">'
+    + '<div style="font-size:52px;margin-bottom:14px">&#128246;</div>'
+    + '<h2 style="color:#f59e0b;font-size:19px;font-weight:800;margin-bottom:10px">Connexion Internet requise</h2>'
+    + '<p style="color:#94a3b8;font-size:13.5px;line-height:1.75">'
+    + 'L\'application fonctionne uniquement en ligne : la synchronisation avec le serveur est obligatoire.<br>'
+    + 'L\'acc&egrave;s est r&eacute;tabli automatiquement d&egrave;s le retour de la connexion.</p>'
+    + '</div></div>';
+}
+
+/* Ecran plein ecran non fermable */
+function ecranBlocage(motif){
+  fermerEcranHorsLigne();
+  var ex = document.getElementById('agv-ecran-blocage');
+  if(ex) ex.remove();
+  var ov = document.createElement('div');
+  ov.id = 'agv-ecran-blocage';
+  ov.style.cssText = 'position:fixed;inset:0;z-index:2147483600;background:#060d24;overflow:auto;'
+    + '-webkit-overflow-scrolling:touch';
+  ov.innerHTML = blocHtml(motif);
+  document.body.appendChild(ov);
+  try{ document.body.style.overflow = 'hidden'; }catch(e){}
+}
+
+function ecranHorsLigne(){
+  if(document.getElementById('agv-ecran-blocage')) return; // blocage licence prioritaire
+  if(document.getElementById('agv-ecran-hors-ligne')) return;
+  var ov = document.createElement('div');
+  ov.id = 'agv-ecran-hors-ligne';
+  ov.style.cssText = 'position:fixed;inset:0;z-index:2147483500;background:#060d24;overflow:auto;'
+    + '-webkit-overflow-scrolling:touch';
+  ov.innerHTML = blocHorsLigneHtml();
+  var pied = document.createElement('div');
+  pied.style.cssText = 'position:fixed;left:0;right:0;bottom:26px;text-align:center';
+  var btn = document.createElement('button');
+  btn.textContent = 'R\u00e9essayer';
+  btn.style.cssText = 'padding:11px 26px;border:1px solid rgba(37,99,235,0.4);border-radius:9px;'
+    + 'background:rgba(37,99,235,0.15);color:#60a5fa;font-size:13px;font-weight:700;'
+    + 'cursor:pointer;font-family:inherit';
+  btn.onclick = function(){ verifierRetourConnexion(true); };
+  pied.appendChild(btn);
+  ov.appendChild(pied);
+  document.body.appendChild(ov);
+}
+
+function fermerEcranHorsLigne(){
+  var el = document.getElementById('agv-ecran-hors-ligne');
+  if(el) el.remove();
+  if(!document.getElementById('agv-ecran-blocage')){
+    try{ document.body.style.overflow = ''; }catch(e){}
+  }
+}
+
+function messageCourt(motif){
+  if(motif === 'expiree')     return 'Licence expir\u00e9e \u2014 acc\u00e8s suspendu. Contactez le ' + TEL + '.';
+  if(motif === 'bloquee')     return 'Acc\u00e8s suspendu \u2014 boutique bloqu\u00e9e. Contactez le ' + TEL + '.';
+  if(motif === 'introuvable') return 'Code introuvable. V\u00e9rifiez votre code.';
+  return 'Connexion Internet requise : l\'application fonctionne uniquement en ligne.';
+}
+
+/* ============================================================
+   5. SURVEILLANCE DE LA CONNEXION
+   ============================================================ */
+var connexionFirebase = null;    // true / false / null (inconnu)
+var minuteurHorsLigne = null;
+
+function reseauProbable(){ return navigator.onLine !== false; }
+
+function planifierBlocageHorsLigne(){
+  clearTimeout(minuteurHorsLigne);
+  minuteurHorsLigne = setTimeout(function(){
+    if(connexionFirebase === true && navigator.onLine !== false) return;
+    try{ if(typeof window.agvSetOnlineStatus === 'function') window.agvSetOnlineStatus(false); }catch(e){}
+    ecranHorsLigne();
+  }, T_GRACE_RESEAU);
+}
+
+function retablirAcces(){
+  clearTimeout(minuteurHorsLigne);
+  fermerEcranHorsLigne();
+  try{ if(typeof window.agvSetOnlineStatus === 'function') window.agvSetOnlineStatus(true); }catch(e){}
+  recontrolerBoutiqueCourante();
+}
+
+function verifierRetourConnexion(force){
+  if(navigator.onLine === false){ ecranHorsLigne(); return; }
+  if(connexionFirebase === true){ retablirAcces(); return; }
+  if(!force) return;
+  // Tentative de reconnexion manuelle, puis nouvelle evaluation
+  try{ if(DB()) DB().goOnline(); }catch(e){}
+  setTimeout(function(){
+    if(connexionFirebase === true) retablirAcces();
+  }, 2500);
+}
+
+function surveillerConnexion(){
+  var d = DB();
+  if(!d || window._agvSurveillanceConnexion) return;
+  window._agvSurveillanceConnexion = true;
+  try{
+    d.ref('.info/connected').on('value', function(snap){
+      var connecte = snap.val() === true;
+      connexionFirebase = connecte;
+      if(connecte){
+        clearTimeout(minuteurHorsLigne);
+        fermerEcranHorsLigne();
+        try{ if(typeof window.agvSetOnlineStatus === 'function') window.agvSetOnlineStatus(true); }catch(e){}
+        recontrolerBoutiqueCourante();
+      }else{
+        planifierBlocageHorsLigne();
+      }
+    });
+  }catch(e){}
+  window.addEventListener('offline', function(){
+    connexionFirebase = false;
+    planifierBlocageHorsLigne();
+  });
+  window.addEventListener('online', function(){
+    setTimeout(function(){ verifierRetourConnexion(false); }, 900);
+  });
+}
+
+/* Attente de l'initialisation de Firebase */
+(function attendreFirebase(){
+  if(DB()){ surveillerConnexion(); return; }
+  setTimeout(attendreFirebase, 200);
+})();
+
+/* ============================================================
+   6. VERIFICATION D'ACCES (connexion + blocage + licence)
+   ============================================================ */
+function verifierAcces(uid, code, onAutorise, onRefuse){
+  if(!uid){ onRefuse('introuvable'); return; }
+  if(!reseauProbable()){ onRefuse('hors-ligne'); ecranHorsLigne(); return; }
+  lireEtatAcces(uid, function(err, etat){
+    if(err){ onRefuse(err === 'introuvable' ? 'introuvable' : 'hors-ligne'); return; }
+    var motif = motifBlocage(etat);
+    if(motif){
+      if(motif === 'expiree') marquerExpiree(uid, etat);
+      purgerCache(uid, code);
+      onRefuse(motif);
+      return;
+    }
+    onAutorise(etat);
+  });
+}
+
+/* ============================================================
+   7. SURVEILLANCE PENDANT LA SESSION
+   ============================================================ */
+var refsSurveillance = [];
+var minuteurExpiration = null;
+
+function arreterSurveillance(){
+  refsSurveillance.forEach(function(o){ try{ o.ref.off('value', o.h); }catch(e){} });
+  refsSurveillance = [];
+  clearInterval(minuteurExpiration);
+  minuteurExpiration = null;
+}
+
+function surveillerAcces(shop){
+  var d = DB();
+  arreterSurveillance();
+  if(!d || !shop || !shop.uid) return;
+  var etat = {};
+  function evaluer(){
+    var motif = motifBlocage(etat);
+    if(!motif) return;
+    if(motif === 'expiree') marquerExpiree(shop.uid, etat);
+    revoquerAcces(motif);
+  }
+  ['blocked','licenceStatut','dateExpiration'].forEach(function(champ){
+    try{
+      var r = d.ref('gdv_shops/' + shop.uid + '/info/' + champ);
+      var h = r.on('value', function(snap){ etat[champ] = snap.val(); evaluer(); });
+      refsSurveillance.push({ ref:r, h:h });
+    }catch(e){}
+  });
+  // Le temps passe sans que la base change : recontrole periodique
+  minuteurExpiration = setInterval(evaluer, T_RECONTROLE);
+}
+
+function recontrolerBoutiqueCourante(){
+  var shop = window._currentShop;
+  if(!shop || !shop.uid) return;
+  lireEtatAcces(shop.uid, function(err, etat){
+    if(err) return;
+    var motif = motifBlocage(etat);
+    if(motif){
+      if(motif === 'expiree') marquerExpiree(shop.uid, etat);
+      revoquerAcces(motif);
+    }
+  });
+}
+
+/* Coupure immediate de l'acces en pleine session */
+function revoquerAcces(motif){
+  if(window._agvAccesRevoque) return;
+  window._agvAccesRevoque = true;
+  var shop = window._currentShop || {};
+  var uid  = shop.uid;
+  var code = shop.codeAcces || window._lastShopCode;
+
+  // 1. Bloquer toute nouvelle ecriture vers Firebase
+  try{ window._AGV_READY = false; }catch(e){}
+  // 2. Couper l'ecoute des donnees de la boutique
+  try{ if(window._agvDbListener) window._agvDbListener.off(); }catch(e){}
+  arreterSurveillance();
+  // 3. Vider le cache local (aucune donnee touchee dans la base)
+  purgerCache(uid, code);
+  // 4. Fermer l'application
+  try{ window.currentRole = null; window.currentGerantId = null; }catch(e){}
+  window._currentShop = null;
+  window._shopLoginData = null;
+  try{
+    var app = document.getElementById('app');
+    if(app) app.classList.remove('visible');
+  }catch(e){}
+  try{ var ch = document.getElementById('agv-chrono-banner'); if(ch) ch.remove(); }catch(e){}
+  try{ var si = document.getElementById('syncIndicator'); if(si) si.style.display = 'none'; }catch(e){}
+  ecranBlocage(motif);
+}
+
+/* ============================================================
+   8. REDEFINITION DES POINTS D'ENTREE
+   ============================================================ */
+
+/* ---------- 8.1 Page d'accueil : saisie du code boutique ---------- */
+window.landingGoShop = function(){
+  var champ = document.getElementById('landing-shop-code');
+  var code  = ((champ && champ.value) || '').trim().toUpperCase();
+  var msg   = document.getElementById('landing-code-msg');
+  var btn   = document.querySelector('#agv-landing button[onclick="landingGoShop()"]')
+           || document.querySelector('#agv-landing .fb-blue');
+
+  function relacher(){ if(btn){ btn.textContent = 'Acc\u00e9der \u2192'; btn.disabled = false; } }
+  function erreur(txt){
+    relacher();
+    if(msg){ msg.style.display = 'block'; msg.textContent = txt; }
+  }
+  if(!code){ erreur('Entrez votre code boutique'); return; }
+  if(msg) msg.style.display = 'none';
+  if(btn){ btn.textContent = 'V\u00e9rification...'; btn.disabled = true; }
+
+  if(!reseauProbable()){ erreur(messageCourt('hors-ligne')); ecranHorsLigne(); return; }
+
+  lireUneFois('gdv_codes/' + code, function(err, uid){
+    if(err){ erreur(messageCourt('hors-ligne')); ecranHorsLigne(); return; }
+    if(!uid){ erreur('Code introuvable. V\u00e9rifiez votre code.'); return; }
+    verifierAcces(uid, code, function(){
+      relacher();
+      window._lastShopCode  = code;
+      window._shopLoginData = null;
+      if(typeof window.agvShow === 'function') window.agvShow('agv-shop-login');
+      window.agvLoadShopLogin(code);
+    }, function(motif){
+      erreur(messageCourt(motif));
+      if(motif === 'bloquee' || motif === 'expiree') ecranBlocage(motif);
+      else if(motif === 'hors-ligne') ecranHorsLigne();
+    });
+  });
+};
+
+/* ---------- 8.2 Page de connexion d'une boutique ---------- */
+window.agvLoadShopLogin = function(code){
+  var container = document.getElementById('agv-shop-login');
+  if(!container) return;
+  code = String(code || '').trim().toUpperCase();
+
+  container.innerHTML = '<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;'
+    + 'background:#060d24;padding:20px"><div style="color:#60a5fa;font-size:14px">'
+    + 'V\u00e9rification de la licence...</div></div>';
+
+  if(!reseauProbable()){ container.innerHTML = blocHorsLigneHtml(); ecranHorsLigne(); return; }
+
+  function afficher(shop){
+    shop.uid = shop.uid || window._agvUidCourant;
+    window._shopLoginData = shop;
+    if(typeof window.agvRenderShopLogin === 'function') window.agvRenderShopLogin(shop, container);
+  }
+
+  function suite(uid){
+    window._agvUidCourant = uid;
+    verifierAcces(uid, code, function(){
+      var cache = null;
+      try{ cache = JSON.parse(localStorage.getItem('agv_shop_' + code) || 'null'); }catch(e){}
+      if(cache && cache.codeFondateur){
+        cache.uid = cache.uid || uid;
+        afficher(cache);
+        // rafraichissement discret des informations d'affichage
+        lireUneFois('gdv_shops/' + uid + '/info', function(err, info){
+          if(err || !info) return;
+          info.uid = uid;
+          try{ localStorage.setItem('agv_shop_' + code, JSON.stringify(info)); }catch(e){}
+          window._shopLoginData = info;
+        });
+        return;
+      }
+      lireUneFois('gdv_shops/' + uid + '/info', function(err, info){
+        if(err){ container.innerHTML = blocHorsLigneHtml(); ecranHorsLigne(); return; }
+        if(!info){ container.innerHTML = blocHtml('introuvable'); return; }
+        info.uid = uid;
+        try{ localStorage.setItem('agv_shop_' + code, JSON.stringify(info)); }catch(e){}
+        afficher(info);
+      });
+    }, function(motif){
+      container.innerHTML = blocHtml(motif);
+      if(motif === 'hors-ligne') ecranHorsLigne();
+    });
+  }
+
+  var uidCache = null;
+  try{
+    var c = JSON.parse(localStorage.getItem('agv_shop_' + code) || 'null');
+    if(c && c.uid) uidCache = c.uid;
+  }catch(e){}
+  if(uidCache){ suite(uidCache); return; }
+
+  lireUneFois('gdv_codes/' + code, function(err, uid){
+    if(err){ container.innerHTML = blocHorsLigneHtml(); ecranHorsLigne(); return; }
+    if(!uid){ container.innerHTML = blocHtml('introuvable'); return; }
+    suite(uid);
+  });
+};
+
+/* ---------- 8.3 Connexion par code d'acces (espace auth) ---------- */
+window.agvLogin = function(){
+  var inp = document.getElementById('l-code');
+  if(!inp) return;
+  var code = inp.value.trim().toUpperCase();
+  if(!code){ if(typeof window.agvMsg === 'function') window.agvMsg('Entrez votre code dacces', false); return; }
+  if(code === 'AGVADMIN2026'){ if(typeof window.agvLoadAdmin === 'function') window.agvLoadAdmin(); return; }
+
+  var btn = document.getElementById('l-btn');
+  if(btn){ btn.disabled = true; btn.textContent = 'V\u00e9rification...'; }
+  function relacher(){ if(btn){ btn.disabled = false; btn.textContent = 'Se connecter'; } }
+  function erreur(motif){
+    relacher();
+    if(typeof window.agvMsg === 'function') window.agvMsg(messageCourt(motif), false);
+    if(motif === 'bloquee' || motif === 'expiree') ecranBlocage(motif);
+    else if(motif === 'hors-ligne') ecranHorsLigne();
+  }
+
+  if(!reseauProbable()){ erreur('hors-ligne'); return; }
+
+  lireUneFois('gdv_codes/' + code, function(err, uid){
+    if(err){ erreur('hors-ligne'); return; }
+    if(!uid){
+      relacher();
+      if(typeof window.agvMsg === 'function') window.agvMsg('Code incorrect. V\u00e9rifiez votre code.', false);
+      return;
+    }
+    verifierAcces(uid, code, function(){
+      var cache = null;
+      try{ cache = JSON.parse(localStorage.getItem('agv_shop_' + code) || 'null'); }catch(e){}
+      if(cache && cache.uid){
+        relacher();
+        window._lastShopCode = code;
+        window._currentShop  = cache;
+        window.agvLaunchApp(cache);
+        return;
+      }
+      lireUneFois('gdv_shops/' + uid + '/info', function(err2, info){
+        relacher();
+        if(err2){ erreur('hors-ligne'); return; }
+        if(!info){ if(typeof window.agvMsg === 'function') window.agvMsg('Boutique introuvable.', false); return; }
+        info.uid = uid;
+        try{
+          localStorage.setItem('agv_shop_' + uid,  JSON.stringify(info));
+          localStorage.setItem('agv_shop_' + code, JSON.stringify(info));
+        }catch(e){}
+        window._lastShopCode = code;
+        window._currentShop  = info;
+        window.agvLaunchApp(info);
+      });
+    }, erreur);
+  });
+};
+
+/* ---------- 8.4 Ouverture de l'application : dernier verrou ----------
+   Tous les chemins d'entree (fondateur, gerant, code d'acces,
+   ouverture directe de l'application installee) passent par
+   agvLaunchApp : la verification y est donc definitive. */
+(function verrouillerLancement(){
+  function poser(){
+    if(typeof window.agvLaunchApp !== 'function'){ setTimeout(poser, 150); return; }
+    if(window._agvLaunchVerrouille) return;
+    window._agvLaunchVerrouille = true;
+    var original = window.agvLaunchApp;
+
+    window.agvLaunchApp = function(shop){
+      if(!shop) return;
+      var code = shop.codeAcces || window._lastShopCode;
+      if(!reseauProbable()){ ecranHorsLigne(); return; }
+
+      function demarrer(uid){
+        verifierAcces(uid, code, function(){
+          window._agvAccesRevoque = false;
+          shop.uid = shop.uid || uid;
+          window._currentShop = shop;
+          original(shop);
+          surveillerAcces(shop);
+        }, function(motif){
+          if(motif === 'hors-ligne') ecranHorsLigne();
+          else ecranBlocage(motif);
+        });
+      }
+
+      if(shop.uid){ demarrer(shop.uid); return; }
+      lireUneFois('gdv_codes/' + (code || ''), function(err, uid){
+        if(err){ ecranHorsLigne(); return; }
+        if(!uid){ ecranBlocage('introuvable'); return; }
+        demarrer(uid);
+      });
+    };
+  }
+  poser();
+})();
+
+/* ---------- 8.5 Perte de connexion pendant la session ---------- */
+window.agvHandleOffline = function(){
+  try{ if(typeof window.agvSetOnlineStatus === 'function') window.agvSetOnlineStatus(false); }catch(e){}
+  planifierBlocageHorsLigne();
+};
+
+/* ---------- 8.6 Deconnexion volontaire : lever les verrous ---------- */
+(function surveillerDeconnexion(){
+  function poser(){
+    if(typeof window.doLogout !== 'function'){ setTimeout(poser, 200); return; }
+    if(window._agvLogoutVerrouille) return;
+    window._agvLogoutVerrouille = true;
+    var original = window.doLogout;
+    window.doLogout = function(){
+      arreterSurveillance();
+      window._agvAccesRevoque = false;
+      return original.apply(this, arguments);
+    };
+  }
+  poser();
+})();
+
+})();
+</script>
+
 </body></html>
