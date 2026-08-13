@@ -15024,4 +15024,389 @@ window.agvHandleOffline = function(){
 })();
 </script>
 
+<!-- ============================================================
+     MODULE CORRECTIF — BULLETIN DE PAIE & RAPPORT JOURNALIER (v1)
+     ------------------------------------------------------------
+     1. BULLETIN DE PAIE : l'en-tete, la signature, le cachet et le
+        pied de page affichaient en dur l'adresse, les telephones et
+        la signature de NEINDI MULTI-SERVICES pour TOUTES les
+        boutiques. Le bulletin reprend desormais uniquement les
+        informations de la boutique connectee (nom, logo, adresse,
+        ville, telephone, nom du fondateur, photo du fondateur).
+        Corrige aussi le pied de page qui affichait du code brut
+        (« ' + (window._currentShop ? ... ) + ' ») a cause d'une
+        concatenation invalide a l'interieur d'un gabarit.
+
+     2. RAPPORT JOURNALIER : l'impression ne se declenchait jamais.
+        Cause : les ventes saisies par le formulaire journalier
+        enregistrent « ts » sous forme de nombre (horodatage), et
+        l'impression appelait directement .slice() dessus
+        -> erreur JavaScript, la fonction s'arretait avant d'ouvrir
+        la fenetre d'impression. Les dates sont maintenant
+        normalisees avant le calcul, uniquement en memoire et le
+        temps de l'impression.
+
+     AUCUNE modification de la structure de la base.
+     AUCUNE ecriture, AUCUNE modification des donnees des boutiques :
+     les copies normalisees sont temporaires et les tableaux
+     d'origine sont restitues immediatement apres l'impression.
+     ============================================================ -->
+<script>
+(function(){
+'use strict';
+
+/* ============================================================
+   A. IDENTITE DE LA BOUTIQUE CONNECTEE
+   ============================================================ */
+function boutique(){
+  var s = window._currentShop || window._shopLoginData || {};
+  return {
+    nom:       s.entreprise || 'Ma Boutique',
+    adresse:   s.adresse || '',
+    ville:     s.ville || '',
+    tel:       s.tel || '',
+    logo:      s.logo || '',
+    fondateur: s.nom || '',
+    photoFond: s.fondateurPhoto || ''
+  };
+}
+
+function ech(t){
+  return String(t == null ? '' : t)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;');
+}
+
+/* Ligne de localisation : adresse si renseignee, sinon ville */
+function ligneLieu(b){
+  var lieu = b.adresse || '';
+  if(b.ville && lieu.toLowerCase().indexOf(b.ville.toLowerCase()) < 0){
+    lieu = lieu ? (lieu + ', ' + b.ville) : b.ville;
+  }
+  return lieu;
+}
+
+/* ============================================================
+   B. BULLETIN DE PAIE — aux informations de la boutique
+   ============================================================ */
+window.openBulletin = function(gerantId){
+  if(window.currentRole !== 'fondateur'){
+    if(window.currentGerantId != gerantId){
+      if(typeof showToast === 'function') showToast('Acces refuse');
+      return;
+    }
+  }
+  window.currentBulletinGerantId = gerantId;
+  try{ currentBulletinGerantId = gerantId; }catch(e){}
+
+  var g = gerants.find(function(x){ return x.id == gerantId; });
+  if(!g) return;
+
+  /* Selecteur de mois */
+  var salSel   = document.getElementById('sal-month-filter');
+  var currentMk = salSel ? salSel.value : getMonthKey(new Date());
+  if(typeof populateBulletinMonthFilter === 'function') populateBulletinMonthFilter(currentMk);
+  var bulSel = document.getElementById('bulletin-month-filter');
+  var mk = bulSel ? bulSel.value : currentMk;
+
+  /* Calculs du mois — identiques a l'origine */
+  var ventesMonth = ventes.filter(function(v){ return getMonthKey(v.ts) === mk && v.type !== 'entree'; });
+  var revenus   = ventesMonth.reduce(function(s,v){ return s + (v.total||0); }, 0);
+  var benefBrut = ventesMonth.reduce(function(s,v){ return s + (v.benefice!=null ? v.benefice : (v.total||0)); }, 0);
+  var totalSalFixes = gerants.filter(function(x){ return x.type==='salaire' && x.salaire>0; })
+                             .reduce(function(s,x){ return s + (x.salaire||0); }, 0);
+  var depMonth = depenses.filter(function(d){ return getMonthKey(d.date) === mk; });
+  var totalDep = depMonth.reduce(function(s,d){ return s + (d.montant||0); }, 0);
+  var reste = Math.max(0, benefBrut - totalSalFixes - totalDep);
+
+  var montantNet = 0, typeRemunLabel = '';
+  if(g.type === 'salaire'){
+    montantNet = g.salaire || 0;
+    typeRemunLabel = 'Salaire fixe mensuel';
+  }else{
+    montantNet = reste > 0 ? Math.round(reste * (g.pct/100)) : 0;
+    typeRemunLabel = g.pct + '% des b\u00e9n\u00e9fices nets';
+  }
+
+  var monthLabel = getMonthLabel(mk);
+  var today = new Date().toLocaleDateString('fr-FR',{day:'2-digit',month:'long',year:'numeric'});
+  var annee = new Date().getFullYear();
+
+  var b    = boutique();
+  var lieu = ligneLieu(b);
+
+  /* En-tete : logo + identite de LA boutique concernee */
+  var logoEntete = b.logo
+    ? '<img src="' + ech(b.logo) + '" style="height:52px;width:52px;object-fit:contain;border-radius:8px">'
+    : '<div style="height:52px;width:52px;border-radius:8px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:700">'
+      + ech(b.nom.charAt(0).toUpperCase()) + '</div>';
+
+  var avatarHTML = g.photo
+    ? '<img src="' + ech(g.photo) + '" class="bulletin-avatar" alt="' + ech(g.nom) + '" style="object-fit:cover">'
+    : '<div class="bulletin-avatar">' + ech(String(g.nom||'?').charAt(0).toUpperCase()) + '</div>';
+
+  var btnWa = document.getElementById('btn-send-whatsapp');
+  if(btnWa) btnWa.style.display = g.whatsapp ? 'inline-flex' : 'none';
+
+  /* Signature : la base ne contient aucun champ de signature par
+     boutique. On laisse donc la ligne vide, a signer a la main, avec
+     le nom du fondateur de LA boutique en dessous — plutot que la
+     signature figee de NEINDI MULTI-SERVICES qui apparaissait
+     auparavant sur les bulletins de toutes les boutiques. */
+  var blocSignature = '';
+
+  /* Cachet : logo de la boutique */
+  var blocCachet = b.logo
+    ? '<img src="' + ech(b.logo) + '" style="height:50px;object-fit:contain">'
+    : '<span style="font-size:9px;color:#b9b3ad;text-align:center;padding:6px;line-height:1.3">' + ech(b.nom) + '</span>';
+
+  var contenu = document.getElementById('bulletin-content');
+  if(!contenu) return;
+
+  contenu.innerHTML =
+    '<div class="bulletin-header">'
+    +  '<div style="display:flex;align-items:center;gap:10px">'
+    +    logoEntete
+    +    '<div>'
+    +      '<div class="bulletin-company">' + ech(b.nom) + '</div>'
+    +      (lieu   ? '<div style="font-size:11px;color:#666;margin-top:2px">\uD83D\uDCCD ' + ech(lieu) + '</div>' : '')
+    +      (b.tel  ? '<div style="font-size:11px;color:#666">\u260E ' + ech(b.tel) + '</div>' : '')
+    +    '</div>'
+    +  '</div>'
+    +  '<div class="bulletin-title">Bulletin de Paie</div>'
+    + '</div>'
+
+    + '<div class="bulletin-gerant-info">'
+    +   avatarHTML
+    +   '<div>'
+    +     '<div style="font-weight:700;font-size:15px;color:var(--text)">' + ech(g.nom) + '</div>'
+    +     '<div style="font-size:12px;color:#666;margin-top:2px">G\u00e9rant \u2014 ' + ech(typeRemunLabel) + '</div>'
+    +     (g.whatsapp ? '<div style="font-size:11px;color:#25D366;margin-top:2px">\uD83D\uDCF1 +' + ech(g.whatsapp) + '</div>' : '')
+    +   '</div>'
+    + '</div>'
+
+    + '<div class="bulletin-section">'
+    +   '<div class="bulletin-section-title">Informations de la p\u00e9riode</div>'
+    +   '<div class="bulletin-row"><span class="bulletin-row-label">P\u00e9riode</span><span class="bulletin-row-val">' + ech(monthLabel) + '</span></div>'
+    +   '<div class="bulletin-row"><span class="bulletin-row-label">Date d\'\u00e9mission</span><span class="bulletin-row-val">' + ech(today) + '</span></div>'
+    +   '<div class="bulletin-row"><span class="bulletin-row-label">Mode de r\u00e9mun\u00e9ration</span><span class="bulletin-row-val">' + ech(typeRemunLabel) + '</span></div>'
+    + '</div>'
+
+    + (window.currentRole === 'fondateur'
+      ? '<div class="bulletin-section">'
+      +   '<div class="bulletin-section-title">R\u00e9capitulatif financier du mois</div>'
+      +   '<div class="bulletin-row"><span class="bulletin-row-label">Total des ventes</span><span class="bulletin-row-val" style="color:var(--green)">' + fmtGNF(revenus) + '</span></div>'
+      +   '<div class="bulletin-row"><span class="bulletin-row-label">Total salaires fixes</span><span class="bulletin-row-val" style="color:var(--red)">- ' + fmtGNF(totalSalFixes) + '</span></div>'
+      +   '<div class="bulletin-row"><span class="bulletin-row-label">Total d\u00e9penses</span><span class="bulletin-row-val" style="color:var(--red)">- ' + fmtGNF(totalDep) + '</span></div>'
+      +   '<div class="bulletin-row"><span class="bulletin-row-label">B\u00e9n\u00e9fice net \u00e0 r\u00e9partir</span><span class="bulletin-row-val" style="color:var(--accent)">' + fmtGNF(reste) + '</span></div>'
+      + '</div>'
+      : '')
+
+    + '<div class="bulletin-section">'
+    +   '<div class="bulletin-section-title">R\u00e9mun\u00e9ration</div>'
+    +   (g.type === 'salaire'
+        ? '<div class="bulletin-row"><span class="bulletin-row-label">Salaire mensuel fixe</span><span class="bulletin-row-val">' + fmtGNF(g.salaire||0) + '</span></div>'
+        : '<div class="bulletin-row"><span class="bulletin-row-label">Part des b\u00e9n\u00e9fices (' + ech(g.pct) + '%)</span><span class="bulletin-row-val">' + fmtGNF(montantNet) + '</span></div>')
+    + '</div>'
+
+    + '<div class="bulletin-total">'
+    +   '<span class="bulletin-total-label">NET \u00c0 PAYER</span>'
+    +   '<span class="bulletin-total-val">' + fmtGNF(montantNet) + '</span>'
+    + '</div>'
+
+    + '<div style="display:flex;justify-content:space-between;align-items:flex-end;margin-top:24px;padding-top:14px;border-top:1px solid #e8e4dc">'
+    +   '<div style="text-align:center">'
+    +     '<div style="font-size:11px;color:#9b9590;margin-bottom:6px;text-transform:uppercase;letter-spacing:.05em">Signature du Fondateur</div>'
+    +     '<div style="width:160px;height:70px;display:flex;align-items:center;justify-content:center;border-bottom:1px solid #ccc">' + blocSignature + '</div>'
+    +     (b.fondateur ? '<div style="font-size:11px;font-weight:700;color:#1a1714;margin-top:4px">' + ech(b.fondateur) + '</div>' : '')
+    +     '<div style="font-size:10px;color:#9b9590">' + ech(b.nom) + '</div>'
+    +   '</div>'
+    +   '<div style="text-align:right">'
+    +     '<div style="font-size:11px;color:#9b9590">Cachet de l\'\u00e9tablissement</div>'
+    +     '<div style="width:80px;height:80px;border:2px solid var(--accent);border-radius:50%;display:flex;align-items:center;justify-content:center;margin:4px 0 0 auto;overflow:hidden;background:#f9f8f6">' + blocCachet + '</div>'
+    +   '</div>'
+    + '</div>'
+
+    + '<div class="bulletin-footer">'
+    +   'Document g\u00e9n\u00e9r\u00e9 le ' + ech(today) + ' \u00b7 ' + ech(b.nom) + ' \u2014 App AGV ' + annee + '<br>'
+    +   (lieu  ? '\uD83D\uDCCD ' + ech(lieu) : '')
+    +   (lieu && b.tel ? ' \u00b7 ' : '')
+    +   (b.tel ? '\u260E ' + ech(b.tel) : '')
+    +   ((lieu || b.tel) ? '<br>' : '')
+    +   '<em>Ce bulletin est un document confidentiel.</em>'
+    + '</div>';
+
+  var ov = document.getElementById('bulletin-overlay');
+  if(ov) ov.classList.add('open');
+};
+
+/* Impression du bulletin : repli automatique si la fenetre est
+   bloquee (cas frequent sur telephone / application installee) */
+window.printBulletin = function(){
+  var el = document.getElementById('bulletin-content');
+  if(!el) return;
+  var contenu = el.innerHTML;
+  var b = boutique();
+  var css = [
+    '@page{size:A4 portrait;margin:12mm}',
+    '*{margin:0;padding:0;box-sizing:border-box}',
+    'body{font-family:Arial,Helvetica,sans-serif;padding:24px;color:#1a1714;font-size:14px;background:#fff}',
+    '.bulletin-header{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #c17f3a;padding-bottom:16px;margin-bottom:20px}',
+    '.bulletin-company{font-size:18px;font-weight:700}',
+    '.bulletin-title{font-size:13px;font-weight:700;color:#fff;background:#c17f3a;padding:6px 16px;border-radius:6px;text-transform:uppercase;letter-spacing:.05em}',
+    '.bulletin-section{margin-bottom:16px}',
+    '.bulletin-section-title{font-size:11px;font-weight:700;color:#9b9590;text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px;padding-bottom:4px;border-bottom:1px solid #e8e4dc}',
+    '.bulletin-row{display:flex;justify-content:space-between;align-items:center;padding:5px 0;font-size:13px;border-bottom:1px solid #f0ede8}',
+    '.bulletin-row:last-child{border-bottom:none}',
+    '.bulletin-row-label{color:#5c574f}',
+    '.bulletin-row-val{font-weight:600;color:#1a1714}',
+    '.bulletin-total{display:flex;justify-content:space-between;align-items:center;background:#c17f3a;color:#fff;padding:14px 16px;border-radius:8px;margin-top:16px;-webkit-print-color-adjust:exact;print-color-adjust:exact}',
+    '.bulletin-total-label{font-size:14px;font-weight:600}',
+    '.bulletin-total-val{font-size:22px;font-weight:700}',
+    '.bulletin-gerant-info{display:flex;align-items:center;gap:14px;padding:12px;background:#f9f8f6;border-radius:8px;margin-bottom:16px}',
+    '.bulletin-avatar{width:52px;height:52px;border-radius:50%;object-fit:cover;border:2px solid #c17f3a;background:#c17f3a;color:#fff;display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:700;flex-shrink:0}',
+    '.bulletin-footer{margin-top:20px;padding-top:14px;border-top:1px solid #e8e4dc;font-size:11px;color:#9b9590;text-align:center}'
+  ].join('');
+
+  var titre = 'Bulletin-' + (b.nom || 'boutique');
+  var win = null;
+  try{ win = window.open('', '_blank', 'width=700,height=900'); }catch(e){ win = null; }
+
+  if(!win){
+    // Fenetre bloquee : impression dans la page (methode fiable sur mobile)
+    if(typeof agvBlobPrint === 'function'){ agvBlobPrint(css, contenu, titre); return; }
+    if(typeof showToast === 'function') showToast('Autorisez les fen\u00eatres pour imprimer');
+    return;
+  }
+  win.document.write('<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">'
+    + '<meta name="viewport" content="width=device-width,initial-scale=1">'
+    + '<title>' + ech(titre) + '</title><style>' + css + '</style></head><body>'
+    + contenu + '</body></html>');
+  win.document.close();
+  try{ win.focus(); }catch(e){}
+  setTimeout(function(){ try{ win.print(); }catch(e){} }, 500);
+};
+
+/* ============================================================
+   C. RAPPORT JOURNALIER — normalisation des dates
+   Les ventes du formulaire journalier enregistrent « ts » sous
+   forme de nombre : .slice() y provoquait une erreur et
+   l'impression ne demarrait jamais.
+   ============================================================ */
+function jourISO(v){
+  if(v === null || v === undefined || v === '') return '';
+  if(typeof v === 'string'){
+    if(/^\d{4}-\d{2}-\d{2}/.test(v)) return v;   // deja au bon format
+    var ds = new Date(v);
+    return isNaN(ds.getTime()) ? '' : ds.toISOString();
+  }
+  var d = (v instanceof Date) ? v : new Date(v);
+  return isNaN(d.getTime()) ? '' : d.toISOString();
+}
+
+function copieNormalisee(o){
+  if(!o || typeof o !== 'object') return o;
+  var c = {}, k;
+  for(k in o){ if(Object.prototype.hasOwnProperty.call(o, k)) c[k] = o[k]; }
+  if(c.ts   !== undefined && c.ts   !== null && c.ts   !== '') c.ts   = jourISO(c.ts);
+  if(c.date !== undefined && c.date !== null && c.date !== '') c.date = jourISO(c.date);
+  /* Filet de securite : une ecriture sans aucune date exploitable
+     faisait echouer tout le rapport (new Date('').toISOString()).
+     Elle recoit une date neutre qui ne correspond a aucun jour
+     selectionnable — uniquement dans la copie temporaire. */
+  if(!c.ts && !c.date){ c.ts = '1970-01-01T00:00:00.000Z'; c.date = c.ts; }
+  else if(!c.ts)   c.ts   = c.date;
+  else if(!c.date) c.date = c.ts;
+  return c;
+}
+
+function normaliser(liste){
+  return Array.isArray(liste) ? liste.map(copieNormalisee) : liste;
+}
+
+/* Execute fn avec des copies aux dates normalisees, puis restitue
+   IMMEDIATEMENT les tableaux d'origine. Rien n'est enregistre :
+   aucune donnee de boutique n'est modifiee. */
+function avecDatesNormalisees(fn){
+  var oV, oD, oE, echange = false;
+  /* Verrou de securite : tant que les copies normalisees sont en
+     place, TOUTE sauvegarde vers Firebase est neutralisee. Il est
+     donc mecaniquement impossible qu'une copie temporaire soit
+     enregistree a la place des donnees reelles de la boutique. */
+  var sauvOrigine = window.sauvegarderFirebase;
+  try{
+    oV = ventes; oD = depenses; oE = entrees;
+    ventes = normaliser(oV); depenses = normaliser(oD); entrees = normaliser(oE);
+    echange = true;
+    if(typeof sauvOrigine === 'function'){
+      window.sauvegarderFirebase = function(){ /* neutralise pendant l'impression */ };
+    }
+  }catch(e){
+    echange = false;   // en cas d'imprevu : execution normale, sans normalisation
+  }
+  try{
+    return fn();
+  } finally {
+    if(echange){
+      try{ ventes = oV; depenses = oD; entrees = oE; }catch(e){}
+      try{ if(typeof sauvOrigine === 'function') window.sauvegarderFirebase = sauvOrigine; }catch(e){}
+    }
+  }
+}
+
+/* Toutes les fonctions qui LISENT les dates des ventes, depenses et
+   entrees pour afficher ou imprimer. « Ce jour PDF » (bouton du
+   calendrier des ventes) passe par printVentesJourPDF, qui est une
+   fonction SEPAREE de agvPrintPDF : elle contenait exactement la
+   meme faille et restait donc sans effet.
+   Aucune de ces fonctions n'ecrit : elles se contentent de lire. */
+var A_PROTEGER = [
+  'agvPrintPDF',
+  'printVentesJourPDF',
+  'printVentesJour',
+  'printVentesMoisPDF',
+  'printVentesAnneePDF',
+  'printView',
+  'renderRapportJour',
+  'renderRapportMois',
+  'renderRapportAnnuel'
+];
+
+function estImpression(nom){ return nom.toLowerCase().indexOf('print') >= 0; }
+
+function proteger(nom){
+  var original = window[nom];
+  if(typeof original !== 'function' || original._agvProtege) return;
+  var enveloppe = function(){
+    var args = arguments, self = this;
+    try{
+      return avecDatesNormalisees(function(){ return original.apply(self, args); });
+    }catch(e){
+      console.error('[AGV] ' + nom + ' :', e);
+      if(estImpression(nom) && typeof showToast === 'function'){
+        showToast('Impression impossible : ' + (e && e.message ? e.message : 'erreur'));
+      }
+    }
+  };
+  enveloppe._agvProtege = true;
+  try{ window[nom] = enveloppe; }catch(e){}
+}
+
+function poserProtections(){ A_PROTEGER.forEach(proteger); }
+
+/* Pose immediate, puis passes de rattrapage : certaines fonctions
+   sont (re)definies plus loin dans la page, aucune ne doit echapper
+   a la protection. Chaque fonction n'est enveloppee qu'une fois. */
+(function poserRapport(essai){
+  essai = essai || 0;
+  poserProtections();
+  if(essai < 40) setTimeout(function(){ poserRapport(essai + 1); }, 200);
+})();
+if(document.readyState === 'loading'){
+  document.addEventListener('DOMContentLoaded', poserProtections);
+}
+
+})();
+</script>
+
 </body></html>
