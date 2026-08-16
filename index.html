@@ -22128,4 +22128,643 @@ setInterval(function(){
 })();
 </script>
 
+
+<!-- ============================================================
+     MODULE v17 — RECUPERATION DES VENTES (App AGV)
+     ------------------------------------------------------------
+     POURQUOI DES VENTES DISPARAISSENT
+
+     Au demarrage, l'application affiche d'abord la copie locale
+     (localStorage) et pose immediatement _AGV_READY = true, AVANT
+     que Firebase ait repondu. Si une vente est enregistree pendant
+     ces quelques secondes, sauvegarderFirebase() ecrit la copie
+     LOCALE — forcement plus ancienne — par un .set() qui remplace
+     tout le noeud « data ». Les ventes saisies entre-temps sur un
+     autre telephone sont alors effacees du nuage.
+
+     CE QUE FAIT CE MODULE
+     1. GARDE-FOU : avant chaque sauvegarde, les ventes et factures
+        presentes dans le nuage sont fusionnees avec celles de
+        l'appareil. Une sauvegarde ne peut plus faire disparaitre
+        une vente qu'elle ne connaissait pas.
+     2. RECUPERATION : un outil rassemble les ventes de toutes les
+        sources — memoire, copie locale, nuage, sauvegardes
+        quotidiennes, et reconstitution a partir des factures — et
+        restitue celles qui manquent.
+     3. SAUVEGARDE QUOTIDIENNE des ventes dans
+        gdv_shops/<uid>/sauvegardes/<date>, a cote de « data » donc
+        hors d'atteinte du .set() de l'application.
+
+     AUCUNE vente n'est supprimee par ce module : il n'ajoute que
+     ce qui manque.
+     ============================================================ -->
+<script>
+(function(){
+'use strict';
+
+function nb(v){ var n = parseFloat(v); return isNaN(n) ? 0 : n; }
+function esc(v){
+  if(v === null || v === undefined) return '';
+  return String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+                  .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+function argent(n){
+  try{ if(typeof window.fmtGNF === 'function') return window.fmtGNF(n || 0); }catch(e){}
+  return Number(n || 0).toLocaleString('fr-FR') + ' GNF';
+}
+function toast(t){ if(typeof window.showToast === 'function') window.showToast(t); }
+function DB(){ return (window.db && typeof window.db.ref === 'function') ? window.db : null; }
+function uid(){ var s = window._currentShop || {}; return s.uid || null; }
+function enTableau(v){
+  if(!v) return [];
+  return Array.isArray(v) ? v.filter(Boolean) : Object.keys(v).map(function(k){ return v[k]; }).filter(Boolean);
+}
+function lesVentes(){
+  var v;
+  try{ v = ventes; }catch(e){ v = window.ventes; }
+  if(!Array.isArray(v)){
+    v = enTableau(v);
+    try{ ventes = v; }catch(e){ window.ventes = v; }
+  }
+  return v;
+}
+function lesFactures(){
+  var v;
+  try{ v = factureVentes; }catch(e){ v = window.factureVentes; }
+  if(!Array.isArray(v)){
+    v = enTableau(v);
+    try{ factureVentes = v; }catch(e){ window.factureVentes = v; }
+  }
+  return v;
+}
+function jourDe(v){
+  var t = v && (v.ts || v.date);
+  if(typeof t === 'number') return new Date(t);
+  var d = new Date(String(t));
+  return isNaN(d.getTime()) ? null : d;
+}
+function jourFr(v){ var d = jourDe(v); return d ? d.toLocaleDateString('fr-FR') : '—'; }
+
+/* une vente est identifiee par son id ; a defaut par sa signature */
+function cle(v){
+  if(v && v.id !== undefined && v.id !== null && v.id !== '') return 'id:' + String(v.id);
+  var d = jourDe(v);
+  return 'sig:' + [(v && (v.name || v.produit)) || '', nb(v && v.qty || v && v.qte),
+                   nb(v && v.total), d ? d.toISOString().slice(0,16) : ''].join('|');
+}
+
+/* ============================================================
+   SOURCES
+   ============================================================ */
+function ventesNuage(){
+  var d = DB();
+  if(!d || !uid()) return Promise.resolve([]);
+  return d.ref('gdv_shops/' + uid() + '/data/ventes').once('value')
+    .then(function(s){ return enTableau(s.val()); }, function(){ return []; });
+}
+function facturesNuage(){
+  var d = DB();
+  if(!d || !uid()) return Promise.resolve([]);
+  return d.ref('gdv_shops/' + uid() + '/data/factureVentes').once('value')
+    .then(function(s){ return enTableau(s.val()); }, function(){ return []; });
+}
+function ventesCopieLocale(){
+  try{
+    var brut = localStorage.getItem('agv_cache_' + uid());
+    if(!brut) return [];
+    return enTableau(JSON.parse(brut).ventes);
+  }catch(e){ return []; }
+}
+function ventesSauvegardes(){
+  var d = DB();
+  if(!d || !uid()) return Promise.resolve([]);
+  return d.ref('gdv_shops/' + uid() + '/sauvegardes').once('value').then(function(s){
+    var v = s.val() || {}, out = [];
+    Object.keys(v).forEach(function(k){ out = out.concat(enTableau(v[k] && v[k].ventes)); });
+    return out;
+  }, function(){ return []; });
+}
+/* une facture engendree par une vente permet de reconstituer la vente */
+function ventesDepuisFactures(source){
+  var out = [];
+  (source || lesFactures()).forEach(function(f){
+    if(!f || f.origine !== 'vente') return;
+    var l = enTableau(f.lignes)[0];
+    if(!l) return;
+    var quand = f.date ? new Date(f.date + 'T12:00:00').toISOString() : new Date().toISOString();
+    out.push({
+      id: f.venteId !== undefined && f.venteId !== null ? f.venteId : String(f.id).replace(/^V/, ''),
+      name: l.produit, produit: l.produit,
+      qty: nb(l.qte), qte: nb(l.qte),
+      prixU: nb(l.prixU), total: nb(l.total || f.totalLignes),
+      type: 'sortie', ts: quand, date: quand,
+      gerant: f.vendeur || '—',
+      _reconstituee: true
+    });
+  });
+  return out;
+}
+
+/* ============================================================
+   GARDE-FOU : plus aucune sauvegarde ne peut effacer une vente
+   ============================================================ */
+var nuageVentes = [];
+var nuageFactures = [];
+
+function surveillerNuage(){
+  var d = DB();
+  if(!d || !uid()) return;
+  if(window._agvSurveilleVentes) return;
+  window._agvSurveilleVentes = true;
+  d.ref('gdv_shops/' + uid() + '/data/ventes').on('value', function(s){
+    nuageVentes = enTableau(s.val());
+  });
+  d.ref('gdv_shops/' + uid() + '/data/factureVentes').on('value', function(s){
+    nuageFactures = enTableau(s.val());
+  });
+}
+
+function fusionner(locales, distantes){
+  var vus = {}, out = [];
+  locales.forEach(function(v){ if(!v) return; var k = cle(v); if(!vus[k]){ vus[k] = 1; out.push(v); } });
+  var ajoutees = 0;
+  distantes.forEach(function(v){
+    if(!v) return;
+    var k = cle(v);
+    if(vus[k]) return;
+    vus[k] = 1; out.push(v); ajoutees++;
+  });
+  return { liste: out, ajoutees: ajoutees };
+}
+
+(function poserGardeFou(){
+  function poser(){
+    if(typeof window.sauvegarderFirebase !== 'function'){ setTimeout(poser, 400); return; }
+    if(window._agvGardeFouVentes) return;
+    window._agvGardeFouVentes = true;
+    var original = window.sauvegarderFirebase;
+    window.sauvegarderFirebase = function(){
+      try{
+        if(nuageVentes.length){
+          var r = fusionner(lesVentes(), nuageVentes);
+          if(r.ajoutees){
+            var l = lesVentes();
+            l.length = 0;
+            r.liste.forEach(function(x){ l.push(x); });
+            console.warn('[AGV] ' + r.ajoutees + ' vente(s) du nuage reintegrees avant sauvegarde');
+            toast(r.ajoutees + ' vente(s) recuperees du nuage');
+          }
+        }
+        if(nuageFactures.length){
+          var rf = fusionner(lesFactures(), nuageFactures);
+          if(rf.ajoutees){
+            var lf = lesFactures();
+            lf.length = 0;
+            rf.liste.forEach(function(x){ lf.push(x); });
+          }
+        }
+      }catch(e){ console.error('[AGV] garde-fou :', e); }
+      return original.apply(this, arguments);
+    };
+  }
+  poser();
+})();
+
+/* ============================================================
+   SAUVEGARDE QUOTIDIENNE DES VENTES
+   ============================================================ */
+function sauvegardeDuJour(){
+  var d = DB();
+  if(!d || !uid()) return;
+  var jour = new Date().toISOString().slice(0,10);
+  var marque = 'agv_sauv_' + uid() + '_' + jour;
+  try{ if(localStorage.getItem(marque)) return; }catch(e){}
+  var l = lesVentes();
+  if(!l.length) return;
+  d.ref('gdv_shops/' + uid() + '/sauvegardes/' + jour)
+    .set({ date: jour, ventes: l, nombre: l.length, faiteLe: Date.now() })
+    .then(function(){ try{ localStorage.setItem(marque, '1'); }catch(e){} })
+    .catch(function(){});
+}
+
+/* ============================================================
+   OUTIL DE RECUPERATION
+   ============================================================ */
+window.agvRecupFermer = function(){
+  var o = document.getElementById('agvrec-overlay');
+  if(o) o.remove();
+};
+
+window.agvRetrouverVentes = function(){
+  window.agvRecupFermer();
+  var ov = document.createElement('div');
+  ov.id = 'agvrec-overlay';
+  ov.style.cssText = 'position:fixed;inset:0;z-index:99993;background:rgba(0,0,0,0.9);display:flex;'
+    + 'align-items:center;justify-content:center;padding:10px';
+  ov.innerHTML = '<div style="background:var(--surface,#0a1628);border:1px solid var(--border,rgba(37,99,235,0.3));'
+      + 'border-radius:14px;padding:18px;width:100%;max-width:760px;max-height:92vh;overflow:auto;'
+      + 'color:var(--text,#cbd5e1);font-family:inherit">'
+    + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">'
+      + '<div style="font-size:15px;font-weight:700">Retrouver les ventes</div>'
+      + '<button class="btn btn-ghost btn-sm" onclick="agvRecupFermer()">Fermer</button></div>'
+    + '<div id="agvrec-corps" style="font-size:13px">Recherche dans toutes les sources...</div></div>';
+  ov.onclick = function(e){ if(e.target === ov) window.agvRecupFermer(); };
+  document.body.appendChild(ov);
+  analyser();
+};
+
+var manquantes = [];
+
+function analyser(){
+  var z = document.getElementById('agvrec-corps');
+  if(!z) return;
+  var enMemoire = lesVentes().slice();
+
+  Promise.all([ventesNuage(), ventesSauvegardes(), facturesNuage()]).then(function(r){
+    var nuage = r[0], sauv = r[1], factNuage = r[2];
+    var locale = ventesCopieLocale();
+    var reconstituees = ventesDepuisFactures(lesFactures().concat(factNuage));
+
+    var connues = {};
+    enMemoire.forEach(function(v){ connues[cle(v)] = 1; });
+
+    var sources = [
+      { nom:'Dans le nuage (Firebase)', liste: nuage },
+      { nom:'Sauvegardes quotidiennes', liste: sauv },
+      { nom:'Copie locale de cet appareil', liste: locale },
+      { nom:'Reconstituees depuis les factures', liste: reconstituees }
+    ];
+
+    manquantes = [];
+    var vus = {};
+    sources.forEach(function(s){
+      s.absentes = 0;
+      s.liste.forEach(function(v){
+        var k = cle(v);
+        if(connues[k]) return;
+        s.absentes++;
+        if(vus[k]) return;
+        vus[k] = 1;
+        var copie = {};
+        for(var p in v) copie[p] = v[p];
+        copie._source = s.nom;
+        manquantes.push(copie);
+      });
+    });
+
+    manquantes.sort(function(a,b){ return (jourDe(b) || 0) - (jourDe(a) || 0); });
+    var montant = manquantes.reduce(function(s,v){ return s + nb(v.total); }, 0);
+
+    var html = '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-bottom:14px">'
+      + '<div style="background:var(--surface2,#060d24);border-radius:9px;padding:10px">'
+        + '<div style="font-size:10.5px;color:var(--text3);text-transform:uppercase">Sur cet appareil</div>'
+        + '<div style="font-size:17px;font-weight:800">' + enMemoire.length + '</div></div>'
+      + sources.map(function(s){
+          return '<div style="background:var(--surface2,#060d24);border-radius:9px;padding:10px">'
+            + '<div style="font-size:10.5px;color:var(--text3);text-transform:uppercase">' + esc(s.nom) + '</div>'
+            + '<div style="font-size:17px;font-weight:800">' + s.liste.length + '</div>'
+            + '<div style="font-size:10.5px;color:' + (s.absentes ? 'var(--amber)' : 'var(--text3)') + '">'
+            + (s.absentes ? s.absentes + ' absente(s) ici' : 'rien de nouveau') + '</div></div>';
+        }).join('')
+      + '</div>';
+
+    if(!manquantes.length){
+      html += '<div style="padding:16px;border-radius:9px;background:rgba(34,197,94,0.12);color:#15803d;font-size:13px">'
+        + 'Aucune vente manquante : tout ce qui existe dans le nuage, dans les sauvegardes et dans les factures '
+        + 'est deja present sur cet appareil.</div>';
+      z.innerHTML = html;
+      return;
+    }
+
+    html += '<div style="padding:12px;border-radius:9px;background:rgba(245,158,11,0.12);color:#b45309;'
+      + 'font-size:13px;margin-bottom:12px"><strong>' + manquantes.length + ' vente(s)</strong> introuvable(s) '
+      + 'sur cet appareil, pour ' + argent(montant) + '. Elles seront ajoutees sans rien supprimer.</div>'
+      + '<button class="btn btn-success" onclick="agvRestaurerVentes()">Restaurer ces ' + manquantes.length + ' vente(s)</button>'
+      + '<div style="overflow:auto;max-height:44vh;margin-top:12px">'
+      + '<table class="table" style="width:100%;min-width:640px"><thead><tr>'
+      + '<th>Date</th><th>Produit</th><th style="text-align:center">Qte</th>'
+      + '<th style="text-align:right">Total</th><th>Vendeur</th><th>Source</th></tr></thead><tbody>'
+      + manquantes.slice(0, 200).map(function(v){
+          return '<tr><td style="white-space:nowrap">' + jourFr(v) + '</td>'
+            + '<td style="font-weight:600">' + esc(v.name || v.produit || '—') + '</td>'
+            + '<td style="text-align:center">' + nb(v.qty || v.qte) + '</td>'
+            + '<td class="td-num">' + argent(v.total) + '</td>'
+            + '<td style="font-size:11px;color:var(--text3)">' + esc(v.gerant || '—') + '</td>'
+            + '<td style="font-size:11px;color:var(--text3)">' + esc(v._source)
+              + (v._reconstituee ? ' <span style="color:var(--amber)">(reconstituee)</span>' : '') + '</td></tr>';
+        }).join('')
+      + '</tbody></table></div>';
+    z.innerHTML = html;
+  }).catch(function(e){
+    z.innerHTML = '<div style="color:var(--red)">Recherche impossible : ' + esc(e.message || e) + '</div>';
+  });
+}
+
+window.agvRestaurerVentes = function(){
+  if(!manquantes.length) return;
+  var l = lesVentes();
+  var connues = {};
+  l.forEach(function(v){ connues[cle(v)] = 1; });
+  var n = 0;
+  manquantes.forEach(function(v){
+    if(connues[cle(v)]) return;
+    var copie = {};
+    for(var p in v){ if(p !== '_source' && p !== '_reconstituee') copie[p] = v[p]; }
+    l.push(copie);
+    n++;
+  });
+  if(!n) return toast('Rien a restaurer');
+  l.sort(function(a,b){ return (jourDe(b) || 0) - (jourDe(a) || 0); });
+  if(typeof window.saveAll === 'function') window.saveAll();
+  ['renderDashboard','refreshVentesHistory','renderVentesView','renderTable','renderInventaire']
+    .forEach(function(f){ try{ if(typeof window[f] === 'function') window[f](); }catch(e){} });
+  try{ if(typeof window.agvCorrigerRendre === 'function') window.agvCorrigerRendre(); }catch(e){}
+  toast(n + ' vente(s) restauree(s)');
+  analyser();
+};
+
+/* ============================================================
+   ACCES : bouton dans la fenetre « Corriger une vente »
+   ============================================================ */
+(function poserBouton(){
+  function tenter(){
+    var barre = document.getElementById('agvcv-diag');
+    if(barre && !document.getElementById('agvrec-bouton')){
+      var b = document.createElement('button');
+      b.id = 'agvrec-bouton';
+      b.className = 'btn btn-ghost btn-sm';
+      b.style.cssText = 'font-size:11px;margin-top:6px';
+      b.textContent = 'Retrouver les ventes manquantes';
+      b.onclick = function(){ window.agvRetrouverVentes(); };
+      if(barre.parentNode) barre.parentNode.appendChild(b);
+    }
+    var vue = document.getElementById('view-ventes');
+    if(vue && vue.classList.contains('active') && !document.getElementById('agvrec-bouton2')){
+      var panneau = document.getElementById('agvv-panneau');
+      if(panneau){
+        var b2 = document.createElement('button');
+        b2.id = 'agvrec-bouton2';
+        b2.className = 'btn btn-ghost btn-sm';
+        b2.style.cssText = 'font-size:11.5px;margin-bottom:10px';
+        b2.textContent = 'Retrouver les ventes manquantes';
+        b2.onclick = function(){ window.agvRetrouverVentes(); };
+        panneau.parentNode.insertBefore(b2, panneau);
+      }
+    }
+  }
+  setInterval(tenter, 1500);
+})();
+
+/* mise en route des que la boutique est ouverte */
+(function demarrer(){
+  if(uid() && DB()){
+    surveillerNuage();
+    setTimeout(sauvegardeDuJour, 8000);
+    setInterval(sauvegardeDuJour, 3600000);
+    return;
+  }
+  setTimeout(demarrer, 1500);
+})();
+
+})();
+</script>
+
+
+<!-- ============================================================
+     MODULE v18 — AFFICHAGE INSTANTANE (App AGV)
+     ------------------------------------------------------------
+     POURQUOI IL FALLAIT CHANGER D'APPAREIL POUR VOIR UNE VENTE
+
+     L'application ecoute deja Firebase en temps reel :
+        db.ref('gdv_shops/<uid>/data').on('value', ...)
+     A chaque changement, les listes en memoire sont bien mises a
+     jour... mais AUCUN redessin n'est demande. Les nouvelles
+     ventes etaient donc deja dans l'appareil, invisibles a
+     l'ecran : il fallait changer d'onglet, se reconnecter ou
+     rouvrir l'application pour les voir apparaitre.
+
+     CE MODULE
+     - ecoute le meme noeud (lecture seule, aucune ecriture),
+     - redessine l'ecran affiche des qu'une donnee change,
+     - previent discretement quand une vente arrive d'un autre
+       appareil,
+     - ne redessine JAMAIS pendant une saisie ou quand une
+       fenetre est ouverte : le travail en cours n'est pas
+       interrompu, le rafraichissement attend la fermeture.
+
+     AUCUNE ecriture, AUCUNE modification des donnees des
+     boutiques ni de la structure de la base.
+     ============================================================ -->
+<script>
+(function(){
+'use strict';
+
+function DB(){ return (window.db && typeof window.db.ref === 'function') ? window.db : null; }
+function uid(){ var s = window._currentShop || {}; return s.uid || null; }
+function nb(v){ var n = parseFloat(v); return isNaN(n) ? 0 : n; }
+function toast(t){ if(typeof window.showToast === 'function') window.showToast(t); }
+function enTableau(v){
+  if(!v) return [];
+  return Array.isArray(v) ? v.filter(Boolean) : Object.keys(v).map(function(k){ return v[k]; }).filter(Boolean);
+}
+function appeler(nom, arg){
+  try{ if(typeof window[nom] === 'function') return window[nom](arg); }catch(e){
+    console.error('[AGV] rendu ' + nom + ' :', e);
+  }
+}
+
+/* ------------------------------------------------------------
+   Ne jamais interrompre une saisie ni une fenetre ouverte
+   ------------------------------------------------------------ */
+var FENETRES = ['agvv-overlay','agvcv-overlay','agvc-overlay','agvrec-overlay','agvcr-overlay',
+                'agvcu-overlay','agvi-overlay','agv-dev-panel','facture-cli-overlay',
+                'edit-vente-overlay','gerant-overlay'];
+function occupe(){
+  var a = document.activeElement;
+  if(a && /^(INPUT|SELECT|TEXTAREA)$/.test(a.tagName)) return true;
+  for(var i=0;i<FENETRES.length;i++){
+    var el = document.getElementById(FENETRES[i]);
+    if(!el) continue;
+    if(el.id.indexOf('overlay') >= 0 || el.id === 'agv-dev-panel'){
+      var visible = el.classList.contains('open')
+        || (el.style && el.style.display && el.style.display !== 'none')
+        || (el.offsetParent !== null && el.id.indexOf('agv') === 0);
+      if(visible) return true;
+    }
+  }
+  return false;
+}
+
+/* ------------------------------------------------------------
+   Redessin de l'ecran affiche
+   ------------------------------------------------------------ */
+function vueCourante(){
+  var v = window.currentView;
+  try{ if(!v) v = currentView; }catch(e){}
+  if(v) return v;
+  var actif = document.querySelector('.view.active');
+  return actif ? String(actif.id).replace(/^view-/, '') : null;
+}
+
+function redessiner(){
+  var v = vueCourante();
+
+  /* toujours : les compteurs d'en-tete et les alertes */
+  appeler('renderAlerts');
+  appeler('buildMonthFilters');
+
+  if(v === 'dashboard' || !v) appeler('renderDashboard');
+  if(v === 'produits' || v === 'stock') appeler('renderTable');
+  if(v === 'inventaire') appeler('renderInventaire');
+  if(v === 'ventes'){
+    appeler('renderVentesView');
+    appeler('refreshVentesHistory');
+    var champ = document.getElementById('agvv-recherche');
+    if(champ) appeler('agvVenteRechercher', champ.value);
+  }
+  if(v === 'journalier') appeler('renderJournalier');
+  if(v === 'facturation') appeler('agvRendreFactures');
+  if(v === 'caisse') appeler('agvCaisseRendre');
+  if(v === 'clients-mgr'){ appeler('renderClientsListe'); appeler('renderFacturesList'); }
+  if(v === 'fournisseurs'){ appeler('renderFournisseurs'); appeler('renderDettesFournisseurs'); }
+  if(v === 'commandes') appeler('renderCommandesList');
+  if(v === 'dettes') appeler('renderDettes');
+  if(v === 'gerants') appeler('renderGerants');
+  if(v === 'depenses') appeler('renderDepenses');
+  if(v === 'repartition') appeler('renderRepartition');
+
+  /* fenetres de correction ouvertes : elles se mettent a jour seules */
+  if(document.getElementById('agvcv-liste')) appeler('agvCorrigerRendre');
+}
+
+var enAttente = false;
+function demanderRedessin(){
+  if(enAttente) return;
+  enAttente = true;
+  var essais = 0;
+  (function tenter(){
+    if(occupe() && essais < 120){        /* jusqu'a 1 minute d'attente */
+      essais++;
+      setTimeout(tenter, 500);
+      return;
+    }
+    enAttente = false;
+    redessiner();
+  })();
+}
+window.agvRafraichirEcran = function(){ enAttente = false; redessiner(); };
+
+/* ------------------------------------------------------------
+   Ecoute temps reel (lecture seule)
+   ------------------------------------------------------------ */
+var dernier = { ventes:-1, factures:-1, produits:-1, clients:-1, commandes:-1, dettes:-1 };
+var premier = true;
+
+function empreinteVentes(l){
+  var total = 0;
+  l.forEach(function(v){ total += nb(v && v.total); });
+  return l.length + ':' + total;
+}
+var derniereEmpreinte = null;
+
+function surveiller(){
+  var d = DB();
+  if(!d || !uid()) return;
+  if(window._agvTempsReel) return;
+  window._agvTempsReel = true;
+
+  d.ref('gdv_shops/' + uid() + '/data').on('value', function(snap){
+    var data = snap.val() || {};
+    var v = enTableau(data.ventes);
+    var e = empreinteVentes(v);
+    var nouvelles = (dernier.ventes >= 0) ? (v.length - dernier.ventes) : 0;
+
+    var change = (e !== derniereEmpreinte)
+      || enTableau(data.factureVentes).length !== dernier.factures
+      || enTableau(data.products).length !== dernier.produits
+      || enTableau(data.clients).length !== dernier.clients
+      || enTableau(data.commandes).length !== dernier.commandes
+      || enTableau(data.dettes).length !== dernier.dettes;
+
+    derniereEmpreinte = e;
+    dernier.ventes = v.length;
+    dernier.factures = enTableau(data.factureVentes).length;
+    dernier.produits = enTableau(data.products).length;
+    dernier.clients = enTableau(data.clients).length;
+    dernier.commandes = enTableau(data.commandes).length;
+    dernier.dettes = enTableau(data.dettes).length;
+
+    if(premier){ premier = false; setTimeout(demanderRedessin, 400); return; }
+    if(!change) return;
+
+    /* le temps que le gestionnaire de l'application ait applique les donnees */
+    setTimeout(demanderRedessin, 250);
+
+    if(nouvelles > 0){
+      var derniereVente = v[0];
+      var qui = derniereVente && derniereVente.gerant ? derniereVente.gerant : null;
+      toast(nouvelles === 1
+        ? 'Nouvelle vente' + (qui ? ' de ' + qui : '') + ' — affichage mis a jour'
+        : nouvelles + ' nouvelles ventes — affichage mis a jour');
+      pastille();
+    }
+  }, function(){});
+}
+
+/* petit temoin visuel de synchronisation */
+function pastille(){
+  var ind = document.getElementById('syncIndicator');
+  if(!ind) return;
+  var avant = ind.textContent, couleur = ind.style.color;
+  ind.textContent = 'Mise a jour ✓';
+  ind.style.color = '#22c55e';
+  setTimeout(function(){ ind.textContent = avant || 'Cloud actif'; ind.style.color = couleur || '#2563eb'; }, 2200);
+}
+
+/* apres une saisie locale, l'ecran suit immediatement */
+(function suivreSauvegarde(){
+  function poser(){
+    if(typeof window.saveAll !== 'function'){ setTimeout(poser, 400); return; }
+    if(window._agvSuitSaveAll) return;
+    window._agvSuitSaveAll = true;
+    var original = window.saveAll;
+    window.saveAll = function(){
+      var r = original.apply(this, arguments);
+      setTimeout(demanderRedessin, 150);
+      return r;
+    };
+  }
+  poser();
+})();
+
+/* changement d'onglet : on repart d'un affichage a jour */
+(function suivreNavigation(){
+  function poser(){
+    if(typeof window.showView !== 'function'){ setTimeout(poser, 400); return; }
+    if(window._agvSuitShowView) return;
+    window._agvSuitShowView = true;
+    var original = window.showView;
+    window.showView = function(){
+      var r = original.apply(this, arguments);
+      setTimeout(redessiner, 120);
+      return r;
+    };
+  }
+  poser();
+})();
+
+/* retour au premier plan : on rattrape ce qui a change entre-temps */
+document.addEventListener('visibilitychange', function(){
+  if(document.visibilityState !== 'hidden') setTimeout(demanderRedessin, 300);
+});
+window.addEventListener('online', function(){ setTimeout(demanderRedessin, 800); });
+
+(function demarrer(){
+  if(uid() && DB()){ surveiller(); return; }
+  setTimeout(demarrer, 1200);
+})();
+
+})();
+</script>
+
 </body></html>

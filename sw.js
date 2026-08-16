@@ -31,7 +31,7 @@
      "pour de bon" au premier lancement puis y rester bloquee.
    ============================================================ */
 
-var AGV_VERSION = 'agv-v14-20260816';
+var AGV_VERSION = 'agv-v16-20260816';
 var SHELL_CACHE = AGV_VERSION + '-shell';
 var RUNTIME_CACHE = AGV_VERSION + '-runtime';
 
