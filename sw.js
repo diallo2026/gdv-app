@@ -13,6 +13,12 @@
    il y a longtemps, avec sa propre copie de la page mise en cache
    au tout premier lancement.
 
+   [14/08/2026] Version passee a agv-v3-20260814 pour le
+   deploiement du nouvel espace concepteur (module v4). Le
+   changement de AGV_VERSION suffit : sw.js differe octet par
+   octet, le nouveau service worker s'installe, les caches des
+   versions precedentes sont effaces a l'activation.
+
    Regles importantes :
    - Firebase (base de donnees) n'est JAMAIS mis en cache ni intercepte.
      Les donnees des boutiques passent toujours par le reseau reel.
@@ -25,7 +31,7 @@
      "pour de bon" au premier lancement puis y rester bloquee.
    ============================================================ */
 
-var AGV_VERSION = 'agv-v2-20260801';
+var AGV_VERSION = 'agv-v14-20260816';
 var SHELL_CACHE = AGV_VERSION + '-shell';
 var RUNTIME_CACHE = AGV_VERSION + '-runtime';
 
@@ -49,6 +55,7 @@ var BYPASS = [
   'googleapis.com',
   'gstatic.com/firebasejs',
   'api.emailjs.com',
+  'api.callmebot.com',
   'firebaseinstallations',
   'google-analytics.com'
 ];
