@@ -23721,4 +23721,535 @@ setInterval(function(){
 })();
 </script>
 
+
+<!-- ============================================================
+     MODULE v20 — NAVIGATION BLOQUEE SUR TELEPHONE (App AGV)
+     ------------------------------------------------------------
+     DEUX DEFAUTS INTRODUITS PAR MES PROPRES MODULES
+
+     1. UNE REGLE CSS TROP LARGE (module v9, filigrane)
+        La feuille de style ajoutee pour le filigrane contenait :
+           body > *:not(.agv-filigrane){position:relative;z-index:1}
+        Elle s'appliquait A L'ECRAN, pas seulement a l'impression.
+        Sa specificite depasse celle des regles de l'application :
+        tout enfant direct de <body> se voyait impose
+        position:relative, ce qui casse les barres en position
+        fixed/sticky — le menu et le tiroir du telephone en
+        premier. D'ou les onglets qui ne repondent plus et
+        l'affichage fige. La feuille est desormais limitee a
+        l'impression.
+
+     2. AFFICHAGE FORCE EN DUR SUR MES VUES (Facturation, Caisse)
+        Mes deux onglets montraient leur vue avec un style en
+        ligne (display:block). L'application, elle, change de vue
+        par la classe « active ». Le style en ligne survivait donc
+        au changement d'onglet : ma vue restait affichee par
+        dessus les autres, et l'ecran semblait bloque sur un seul
+        onglet. On repasse par le mecanisme de l'application.
+
+     AUCUNE modification de la structure de la base ni des donnees
+     des boutiques : ce module ne touche qu'a l'affichage.
+     ============================================================ -->
+<script>
+(function(){
+'use strict';
+
+/* ============================================================
+   1. LA FEUILLE DU FILIGRANE REDEVIENT UNE FEUILLE D'IMPRESSION
+   ============================================================ */
+function cssFiligraneSaine(){
+  return '@media print{'
+    + '*{-webkit-print-color-adjust:exact !important;print-color-adjust:exact !important;'
+      + 'color-adjust:exact !important}'
+    + 'body{background:#fff}'
+    + '.agv-filigrane,.agv-filigrane-texte{display:block !important}'
+    + '.agv-filigrane{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);'
+      + 'z-index:0;pointer-events:none;opacity:.07;width:62%;max-width:520px}'
+    + '.agv-filigrane img{width:100%;height:auto;object-fit:contain}'
+    + '.agv-filigrane-texte{position:fixed;top:50%;left:50%;'
+      + 'transform:translate(-50%,-50%) rotate(-30deg);z-index:0;pointer-events:none;opacity:.07;'
+      + 'font-size:58px;font-weight:800;font-family:Arial,Helvetica,sans-serif;color:#1e3a5f;'
+      + 'white-space:nowrap;text-align:center}'
+  + '}'
+  /* a l'ecran : le filigrane est masque et AUCUNE regle ne touche
+     au positionnement des elements de l'application */
+  + '@media screen{.agv-filigrane,.agv-filigrane-texte{display:none !important}}';
+}
+
+function assainirStyle(){
+  var st = document.getElementById('agv-style-impression');
+  if(!st){
+    st = document.createElement('style');
+    st.id = 'agv-style-impression';
+    document.head.appendChild(st);
+  }
+  if(st.getAttribute('data-v20') === '1') return;
+  st.textContent = cssFiligraneSaine();
+  st.setAttribute('data-v20', '1');
+}
+assainirStyle();
+setInterval(function(){
+  var st = document.getElementById('agv-style-impression');
+  if(st && st.getAttribute('data-v20') !== '1') assainirStyle();
+}, 3000);
+
+/* si un filigrane a ete pose dans la page, il ne doit rien intercepter */
+setInterval(function(){
+  var l = document.querySelectorAll('.agv-filigrane,.agv-filigrane-texte');
+  Array.prototype.forEach.call(l, function(el){
+    el.style.pointerEvents = 'none';
+  });
+}, 5000);
+
+/* ============================================================
+   2. CHANGEMENT D'ONGLET : on repasse par l'application
+   ============================================================ */
+function toutesLesVues(){ return document.querySelectorAll('.view'); }
+
+function nettoyerAffichageEnLigne(){
+  Array.prototype.forEach.call(toutesLesVues(), function(v){
+    if(v.style && v.style.display) v.style.display = '';
+  });
+}
+
+function montrerVue(id, boutonId){
+  nettoyerAffichageEnLigne();
+  Array.prototype.forEach.call(toutesLesVues(), function(v){ v.classList.remove('active'); });
+  Array.prototype.forEach.call(document.querySelectorAll('.nav-item'), function(b){ b.classList.remove('active'); });
+  var vue = document.getElementById(id);
+  if(vue) vue.classList.add('active');
+  var b = document.getElementById(boutonId);
+  if(b) b.classList.add('active');
+  fermerTiroir();
+  try{ if(typeof window.scrollTo === 'function') window.scrollTo(0, 0); }catch(e){}
+}
+
+/* sur telephone, le tiroir doit se refermer apres le choix */
+function fermerTiroir(){
+  ['sidebar','agv-sidebar','nav-drawer'].forEach(function(id){
+    var el = document.getElementById(id);
+    if(el && el.classList.contains('open')) el.classList.remove('open');
+  });
+  var fond = document.getElementById('overlay') || document.getElementById('sidebar-overlay');
+  if(fond && fond.classList.contains('open')) fond.classList.remove('open');
+  if(document.body.classList.contains('nav-open')) document.body.classList.remove('nav-open');
+}
+
+/* mes deux onglets n'imposent plus de style en ligne */
+window.agvOuvrirFacturation = function(){
+  montrerVue('view-facturation', 'nav-facturation');
+  try{ currentView = 'facturation'; }catch(e){}
+  window.currentView = 'facturation';
+  if(typeof window.agvRendreFactures === 'function') window.agvRendreFactures(true);
+};
+window.agvOuvrirCaisse = function(){
+  montrerVue('view-caisse', 'nav-caisse');
+  try{ currentView = 'caisse'; }catch(e){}
+  window.currentView = 'caisse';
+  if(typeof window.agvCaisseRendre === 'function') window.agvCaisseRendre();
+};
+
+/* la navigation d'origine efface tout reliquat d'affichage en ligne */
+(function suivreShowView(){
+  function poser(){
+    if(typeof window.showView !== 'function'){ setTimeout(poser, 400); return; }
+    if(window._agvV20ShowView) return;
+    window._agvV20ShowView = true;
+    var original = window.showView;
+    window.showView = function(v){
+      nettoyerAffichageEnLigne();
+      var r;
+      try{ r = original.apply(this, arguments); }
+      catch(e){
+        console.error('[AGV] showView :', e);
+        montrerVue('view-' + v, 'nav-' + v);
+        try{ currentView = v; }catch(x){}
+        window.currentView = v;
+      }
+      fermerTiroir();
+      /* garde-fou : si aucune vue n'est active, on la force */
+      setTimeout(function(){
+        if(!document.querySelector('.view.active')) montrerVue('view-' + v, 'nav-' + v);
+      }, 60);
+      return r;
+    };
+  }
+  poser();
+})();
+
+/* ============================================================
+   3. FILET DE SECURITE : un onglet qui ne repond pas
+   ------------------------------------------------------------
+   Si un clic sur un onglet ne change pas la vue en 400 ms, on
+   applique le changement nous-memes. Cela couvre le cas ou un
+   element invisible intercepte le clic ou ou une erreur bloque
+   la fonction d'origine.
+   ============================================================ */
+document.addEventListener('click', function(ev){
+  var b = ev.target && ev.target.closest ? ev.target.closest('.nav-item') : null;
+  if(!b || !b.id) return;
+  var cible = b.id.replace(/^nav-/, '');
+  var avant = document.querySelector('.view.active');
+  setTimeout(function(){
+    var apres = document.querySelector('.view.active');
+    if(apres && apres.id === 'view-' + cible) return;      /* tout va bien */
+    if(document.getElementById('view-' + cible)){
+      montrerVue('view-' + cible, b.id);
+      try{ currentView = cible; }catch(e){}
+      window.currentView = cible;
+      if(typeof window.agvRafraichirEcran === 'function') window.agvRafraichirEcran();
+      console.warn('[AGV] onglet « ' + cible +' » force par le filet de securite');
+    }
+  }, 400);
+}, true);
+
+/* ============================================================
+   4. TELEPHONE : le bouton flottant ne doit rien recouvrir
+   ============================================================ */
+(function ajusterBouton(){
+  function petit(){
+    try{ return Math.min(window.innerWidth, window.innerHeight) < 820
+      && (('ontouchstart' in window) || navigator.maxTouchPoints > 0); }
+    catch(e){ return false; }
+  }
+  setInterval(function(){
+    var b = document.getElementById('agv-fab-ventes');
+    if(!b) return;
+    if(!petit()){ b.style.padding = ''; b.style.fontSize = ''; return; }
+    /* sur telephone : bouton compact, remonte au dessus des barres du bas */
+    b.style.padding = '9px 13px';
+    b.style.fontSize = '11.5px';
+    b.style.bottom = '78px';
+    b.style.opacity = '0.94';
+  }, 2500);
+})();
+
+/* ============================================================
+   5. TELEPHONE : LES REDESSINS NE SE BOUSCULENT PLUS
+   ------------------------------------------------------------
+   Depuis l'affichage instantane (module v18), chaque arrivee de
+   donnees demande un redessin. Sur un telephone modeste, plusieurs
+   redessins lances coup sur coup — tableau des produits,
+   inventaire, historique des ventes — occupent le processeur en
+   continu : l'ecran ne repond plus aux clics et parait fige.
+
+   Les fonctions d'affichage lourdes sont donc regroupees : si
+   elles sont rappelees dans la foulee, un seul rendu final est
+   execute au lieu de dix. Rien n'est perdu, tout est simplement
+   fait une fois.
+   ============================================================ */
+(function regrouperRendus(){
+  var LOURDES = ['renderTable','renderInventaire','renderVentesView','renderDashboard',
+                 'refreshVentesHistory','renderJournalier','renderCommandesList',
+                 'renderFournisseurs','renderClientsListe','renderFacturesList'];
+  var DELAI = 700;
+  LOURDES.forEach(function(nom){
+    (function(n){
+      function poser(){
+        if(typeof window[n] !== 'function'){ setTimeout(poser, 500); return; }
+        if(window['_agvGroupe_' + n]) return;
+        window['_agvGroupe_' + n] = true;
+        var original = window[n];
+        var dernier = 0, minuterie = null, enCours = false;
+        window[n] = function(){
+          var self = this, args = arguments;
+          if(enCours) return;                       /* pas de rendu dans un rendu */
+          var maintenant = Date.now();
+          if(maintenant - dernier >= DELAI){
+            dernier = maintenant;
+            enCours = true;
+            try{ return original.apply(self, args); }
+            finally{ enCours = false; }
+          }
+          if(minuterie) return;                     /* un rendu final est deja prevu */
+          minuterie = setTimeout(function(){
+            minuterie = null;
+            dernier = Date.now();
+            enCours = true;
+            try{ original.apply(self, args); }
+            catch(e){ console.error('[AGV] rendu ' + n + ' :', e); }
+            finally{ enCours = false; }
+          }, DELAI);
+        };
+      }
+      poser();
+    })(nom);
+  });
+})();
+
+})();
+</script>
+
+
+<!-- ============================================================
+     MODULE v21 — CREATION DE BOUTIQUE (App AGV)
+     ------------------------------------------------------------
+     POURQUOI LA CREATION N'EN FINISSAIT PAS
+
+     1. LA VERIFICATION DE L'EMAIL LISAIT TOUTE LA BASE
+        agvRegister commencait par :
+          db.ref('gdv_shops').orderByChild('email').equalTo(email)
+        Sans index declare sur « email » dans les regles Firebase,
+        le tri est fait PAR LE TELEPHONE : Firebase lui envoie donc
+        la TOTALITE de gdv_shops — toutes les boutiques, avec leurs
+        produits, leurs ventes et leurs logos en base64 de plusieurs
+        megaoctets. Sur une connexion mobile, cette lecture peut
+        durer des minutes ou ne jamais aboutir : le bouton restait
+        sur « Creation... » indefiniment.
+
+     2. LE LOGO PARTAIT EN PLEINE RESOLUTION
+        La photo choisie etait enregistree telle quelle en base64
+        (souvent 2 a 5 Mo), ce qui allongeait encore l'ecriture.
+
+     3. AUCUNE SORTIE DE SECOURS
+        Aucun delai maximum : si une etape se bloquait, rien ne le
+        signalait. Et si la bibliotheque d'email n'etait pas
+        chargee, l'erreur remontait dans le .catch de Firebase et
+        l'ecran de succes ne s'affichait jamais, alors que la
+        boutique venait bien d'etre creee.
+
+     CE QUE FAIT CE MODULE
+     - verification de l'email par lecture « shallow » (quelques
+       octets) puis lecture des seuls champs email, en parallele,
+       avec un delai maximum : la creation n'est jamais bloquee par
+       la verification ;
+     - logo redimensionne a 512 px avant envoi (quelques dizaines
+       de Ko au lieu de plusieurs Mo) ;
+     - avancement affiche a chaque etape et delai maximum sur
+       chaque ecriture, avec message clair en cas d'echec ;
+     - envoi de l'email de bienvenue apres l'ecran de succes, sans
+       jamais pouvoir l'empecher.
+
+     CE QUI EST ECRIT EST STRICTEMENT IDENTIQUE A AVANT :
+     gdv_shops/<uid>/info et gdv_codes/<code>, memes champs.
+     Aucune donnee existante n'est lue en ecriture ni modifiee,
+     aucune structure changee.
+     ============================================================ -->
+<script>
+(function(){
+'use strict';
+
+function val(id){ var e = document.getElementById(id); return e ? String(e.value || '').trim() : ''; }
+function DB(){ return (window.db && typeof window.db.ref === 'function') ? window.db : null; }
+function msg(t, ok){ if(typeof window.agvMsg === 'function') window.agvMsg(t, ok); }
+function bouton(){ return document.getElementById('r-btn'); }
+function actif(){ var b = bouton(); if(b){ b.disabled = false; b.textContent = 'Creer mon compte'; } }
+function occupe(t){ var b = bouton(); if(b){ b.disabled = true; b.textContent = t || 'Creation...'; } }
+
+function avecDelai(p, ms, quoi){
+  return new Promise(function(res, rej){
+    var fini = false;
+    var t = setTimeout(function(){
+      if(!fini){ fini = true; rej(new Error('Delai depasse : ' + quoi)); }
+    }, ms);
+    Promise.resolve(p).then(function(v){
+      if(!fini){ fini = true; clearTimeout(t); res(v); }
+    }, function(e){
+      if(!fini){ fini = true; clearTimeout(t); rej(e); }
+    });
+  });
+}
+
+/* ------------------------------------------------------------
+   Logo : redimensionne avant envoi
+   ------------------------------------------------------------ */
+function preparerLogo(fichier){
+  return new Promise(function(res){
+    if(!fichier) return res('');
+    var lecteur = new FileReader();
+    lecteur.onerror = function(){ res(''); };
+    lecteur.onload = function(e){
+      var brut = e.target.result;
+      var img = new Image();
+      img.onerror = function(){ res(brut.length > 400000 ? '' : brut); };
+      img.onload = function(){
+        try{
+          var max = 512;
+          var l = img.width, h = img.height;
+          if(l > max || h > max){
+            if(l >= h){ h = Math.round(h * max / l); l = max; }
+            else{ l = Math.round(l * max / h); h = max; }
+          }
+          var c = document.createElement('canvas');
+          c.width = l; c.height = h;
+          var ctx = c.getContext('2d');
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(0, 0, l, h);
+          ctx.drawImage(img, 0, 0, l, h);
+          var petit = c.toDataURL('image/jpeg', 0.82);
+          res(petit.length < brut.length ? petit : brut);
+        }catch(x){ res(brut.length > 400000 ? '' : brut); }
+      };
+      img.src = brut;
+    };
+    lecteur.readAsDataURL(fichier);
+  });
+}
+
+/* ------------------------------------------------------------
+   Verification de l'email — legere et bornee dans le temps
+   ------------------------------------------------------------ */
+function adresseBase(){
+  try{
+    var u = firebase.app().options.databaseURL;
+    return u ? String(u).replace(/\/+$/, '') : null;
+  }catch(e){ return null; }
+}
+
+function emailDejaUtilise(email){
+  var d = DB();
+  if(!d) return Promise.resolve(false);
+  var base = adresseBase();
+
+  /* repli : l'index des codes donne aussi les identifiants */
+  function parIndexDesCodes(){
+    return d.ref('gdv_codes').once('value').then(function(s){
+      var v = s.val() || {}, vus = {}, out = [];
+      Object.keys(v).forEach(function(k){ if(v[k] && !vus[v[k]]){ vus[v[k]] = 1; out.push(v[k]); } });
+      return out;
+    }, function(){ return []; });
+  }
+
+  var listeUids;
+  if(base && typeof fetch === 'function'){
+    /* quelques octets : uniquement les identifiants des boutiques */
+    listeUids = fetch(base + '/gdv_shops.json?shallow=true', { cache:'no-store' })
+      .then(function(r){ if(!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      .then(function(o){ return o ? Object.keys(o) : []; })
+      .catch(parIndexDesCodes);          /* la lecture legere a echoue : on passe par l'index */
+  }else{
+    listeUids = parIndexDesCodes();
+  }
+
+  return listeUids.then(function(uids){
+    if(!uids || !uids.length) return false;
+    var cherche = String(email).toLowerCase();
+    var lots = [];
+    for(var i=0;i<uids.length;i+=25) lots.push(uids.slice(i, i+25));
+    var trouve = false;
+    return lots.reduce(function(chaine, lot){
+      return chaine.then(function(){
+        if(trouve) return null;
+        return Promise.all(lot.map(function(u){
+          /* on ne lit QUE le champ email, pas la boutique entiere */
+          return d.ref('gdv_shops/' + u + '/info/email').once('value')
+            .then(function(s){
+              if(String(s.val() || '').toLowerCase() === cherche) trouve = true;
+            }, function(){});
+        }));
+      });
+    }, Promise.resolve()).then(function(){ return trouve; });
+  });
+}
+
+/* ------------------------------------------------------------
+   Creation
+   ------------------------------------------------------------ */
+function code(){
+  if(typeof window.agvGenCode === 'function') return window.agvGenCode();
+  var c = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789', r = 'AGV-';
+  for(var i=0;i<4;i++) r += c[Math.floor(Math.random()*c.length)];
+  r += '-';
+  for(var j=0;j<4;j++) r += c[Math.floor(Math.random()*c.length)];
+  return r;
+}
+
+window.agvRegister = function(){
+  var prenom = val('r-prenom'), nom = val('r-nom'), ent = val('r-ent'),
+      email = val('r-email'), tel = val('r-tel'), ville = val('r-ville'),
+      fondCode = val('r-fondateur-code');
+
+  if(!prenom || !nom || !ent || !email || !tel || !fondCode)
+    return msg('Remplissez tous les champs obligatoires (*)', false);
+  if(email.indexOf('@') < 0) return msg('Email invalide', false);
+  if(fondCode.length < 3) return msg('Le code fondateur doit faire au moins 3 caracteres', false);
+
+  var d = DB();
+  if(!d) return msg('Connexion indisponible — verifiez Internet et reessayez', false);
+
+  occupe('Verification...');
+  msg('Verification de votre email...', true);
+
+  var champLogo = document.getElementById('r-logo');
+  var fichier = (champLogo && champLogo.files && champLogo.files[0]) ? champLogo.files[0] : null;
+
+  /* la preparation du logo se fait pendant la verification */
+  var logoPret = preparerLogo(fichier);
+
+  /* la verification ne peut pas bloquer la creation : 6 secondes au plus */
+  var verif = avecDelai(emailDejaUtilise(email), 6000, 'verification de l\'email')
+    .catch(function(e){
+      console.warn('[AGV] verification email ignoree :', e.message);
+      return false;                       /* on continue : mieux vaut creer que bloquer */
+    });
+
+  verif.then(function(existe){
+    if(existe){
+      actif();
+      return msg('Cet email est deja utilise. Connectez-vous.', false);
+    }
+    occupe('Preparation...');
+    return logoPret.then(function(logo){
+      occupe('Enregistrement...');
+      msg('Creation de votre boutique...', true);
+
+      var codeAcces = code();
+      var uid = 'shop_' + Date.now() + '_' + Math.random().toString(36).substr(2,5);
+      var maintenant = new Date();
+      var expiration = new Date(maintenant.getTime() + 60*24*60*60*1000);
+      var shop = {
+        uid: uid, nom: prenom + ' ' + nom, prenom: prenom, nomFamille: nom,
+        entreprise: ent, email: email, tel: tel, ville: ville, logo: logo || '',
+        codeAcces: codeAcces, codeFondateur: fondCode,
+        dateCreation: maintenant.toISOString(),
+        dateExpiration: expiration.toISOString(),
+        licenceStatut: 'essai', licencePeriode: 'essai_60j'
+      };
+
+      /* les deux ecritures partent ensemble, avec un delai maximum */
+      return avecDelai(Promise.all([
+        d.ref('gdv_shops/' + uid + '/info').set(shop),
+        d.ref('gdv_codes/' + codeAcces).set(uid)
+      ]), 20000, 'enregistrement de la boutique').then(function(){
+        window._lastCreatedShop = shop;
+        if(typeof window.agvShowSuccess === 'function') window.agvShowSuccess(shop, codeAcces);
+        else msg('Boutique creee — code d\'acces : ' + codeAcces, true);
+        actif();
+        /* l'email de bienvenue part apres, et ne peut rien bloquer */
+        setTimeout(function(){
+          try{
+            if(typeof emailjs === 'undefined' || !emailjs.send) return;
+            emailjs.send('service_xl8rdum', 'gdv_welcome', {
+              to_name: prenom + ' ' + nom, to_email: email, entreprise: ent,
+              code_acces: codeAcces, code_fondateur: fondCode, login_url: window.location.href
+            }).then(function(){ console.log('[AGV] email de bienvenue envoye'); },
+                    function(e){ console.warn('[AGV] email de bienvenue :', e); });
+          }catch(e){ console.warn('[AGV] email de bienvenue :', e); }
+        }, 400);
+      });
+    });
+  }).catch(function(e){
+    actif();
+    var t = (e && e.message) ? e.message : String(e);
+    if(/Delai depasse/.test(t)){
+      msg('La connexion est trop lente : la boutique n\'a pas pu etre enregistree. '
+        + 'Rapprochez-vous d\'un meilleur reseau et reessayez — rien n\'a ete perdu.', false);
+    }else if(/permission|denied/i.test(t)){
+      msg('Enregistrement refuse par la base. Contactez le concepteur.', false);
+    }else{
+      msg('Creation impossible : ' + t, false);
+    }
+    console.error('[AGV] creation de boutique :', e);
+  });
+};
+
+/* les modules charges apres ne doivent pas reprendre l'ancienne version */
+var mienne = window.agvRegister;
+setInterval(function(){
+  if(window.agvRegister !== mienne) window.agvRegister = mienne;
+}, 4000);
+
+})();
+</script>
+
 </body></html>
