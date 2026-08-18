@@ -24743,7 +24743,7 @@ function factureDe(s, montant){
   var f = {
     numero: numeroSuivant(),
     uid: s.uid, boutique: s.entreprise || '', code: s.codeAcces || '',
-    formule: s.licencePeriode || '', montant: nb(montant),
+    formule: s.licencePeriode || '', montant: nb(montant), montantSaisi: false,
     datePaiement: s.dateDernierPaiement || null,
     expiration: s.dateExpiration || null,
     creeLe: Date.now()
@@ -24755,6 +24755,9 @@ function factureDe(s, montant){
 /* montant : celui du paiement enregistre, sinon la carte de licence */
 var tarifs = null, paiements = null;
 function montantDe(s){
+  /* [v25] le montant fixe a la main par le concepteur prime sur tout */
+  var fx = factures[cleFacture(s)];
+  if(fx && fx.montantSaisi === true) return nb(fx.montant);
   if(paiements){
     var trouve = 0;
     Object.keys(paiements).forEach(function(k){
@@ -24887,7 +24890,17 @@ window.agvFacturesLicenceRendre = function(){
           + ' · paye le ' + jour(s.dateDernierPaiement) + ' · expire le ' + jour(s.dateExpiration)
           + (f ? ' · facture ' + esc(f.numero) : '') + '</div>'
       + '</div>'
-      + '<div style="font-weight:800;color:#93c5fd;white-space:nowrap">' + argent(m) + '</div>'
+      + '<div style="display:flex;align-items:center;gap:5px;white-space:nowrap">'
+        + '<input id="agvfl-m-' + esc(s.uid) + '" type="number" min="0" value="' + nb(m) + '"'
+          + ' title="Montant paye par cette boutique"'
+          + ' onkeydown="if(event.key===\'Enter\')agvFactureLicenceMontant(\'' + esc(s.uid) + '\')"'
+          + ' style="width:112px;padding:6px 8px;background:#0a1628;border:1px solid rgba(37,99,235,0.35);'
+          + 'border-radius:6px;color:#93c5fd;font-size:12px;font-weight:700;font-family:inherit;'
+          + 'text-align:right;outline:none">'
+        + '<span style="font-size:10px;color:#64748b">GNF</span>'
+        + '<button class="cdb-btn ok" onclick="agvFactureLicenceMontant(\'' + esc(s.uid) + '\')">Appliquer</button>'
+        + (f && f.montantSaisi ? '<span style="font-size:9.5px;color:#fbbf24">montant saisi</span>' : '')
+      + '</div>'
       + '<div style="display:flex;gap:5px;flex-wrap:wrap">'
         + '<button class="cdb-btn" onclick="agvFactureLicenceImprimer(\'' + esc(s.uid) + '\')">Facture</button>'
         + (s.tel ? '<button class="cdb-btn wa" onclick="agvFactureLicenceWhatsapp(\'' + esc(s.uid) + '\')">WhatsApp</button>' : '')
@@ -24914,6 +24927,31 @@ function emetteur(c){
     email: c.mailAdresse || 'souleymane0403@gmail.com'
   };
 }
+
+/* [v25] le concepteur fixe le montant paye ; il s'applique aussitot
+   a la facture imprimee, au message WhatsApp et a l'email */
+window.agvFactureLicenceMontant = function(uid){
+  var s = boutiqueDe(uid);
+  if(!s) return;
+  var champ = document.getElementById('agvfl-m-' + uid);
+  if(!champ) return;
+  var montant = nb(champ.value);
+  if(montant < 0) return note('Montant invalide.', false);
+  var avant = montantDe(s);          /* le montant precedent, avant modification */
+  factureDe(s, montant).then(function(f){
+    f.montant = montant;
+    f.montantSaisi = true;
+    f.montantMajLe = Date.now();
+    return platSet('facturesLicence/' + cleFacture(s), f).then(function(){
+      note('Montant de ' + (s.entreprise || '') + ' : ' + argent(avant) + ' \u2192 ' + argent(montant)
+        + ' — applique a la facture ' + f.numero + '.', true);
+      window.agvFacturesLicenceRendre();
+    });
+  }).catch(function(e){
+    note('Enregistrement refuse : ' + (e && e.message ? e.message : e)
+      + ' — verifiez que le noeud agv_platform est autorise dans les regles.', false);
+  });
+};
 
 window.agvFactureLicenceImprimer = function(uid){
   var s = boutiqueDe(uid);
