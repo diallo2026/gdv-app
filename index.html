@@ -24252,4 +24252,1071 @@ setInterval(function(){
 })();
 </script>
 
+
+<!-- ============================================================
+     MODULE v22 — CREATION DE BOUTIQUE : ROBUSTE ET BAVARDE
+     ------------------------------------------------------------
+     La creation echoue encore et le message affiche ne dit pas
+     pourquoi. Ce module reecrit la creation en trois principes :
+
+     1. ELLE DIT CE QU'ELLE FAIT
+        Chaque etape s'affiche sous le bouton avec son resultat,
+        et l'erreur exacte renvoyee par Firebase (son code et son
+        message) est montree telle quelle. Plus de « Creation... »
+        qui tourne sans fin.
+
+     2. LA FICHE DE LA BOUTIQUE PASSE EN PREMIER
+        L'ecriture essentielle — gdv_shops/<uid>/info — est faite
+        seule, en premier. L'index gdv_codes/<code> vient ensuite,
+        separement : s'il est refuse (regles de la base), la
+        boutique existe quand meme, l'ecran de succes s'affiche, et
+        l'index manquant est mis en attente puis repose
+        automatiquement des que la base l'autorise.
+
+     3. RIEN NE PEUT LA BLOQUER
+        Verification de l'email : 4 secondes au plus, ignoree si
+        elle traine. Logo : reduit avant envoi, et abandonne s'il
+        pose probleme. Email de bienvenue : apres coup, isole.
+        Chaque etape a son delai maximum.
+
+     Ce qui est ecrit reste STRICTEMENT identique a l'origine :
+     gdv_shops/<uid>/info et gdv_codes/<code>, memes champs.
+     Aucune donnee existante n'est lue en ecriture, modifiee ni
+     supprimee ; aucune structure changee.
+     ============================================================ -->
+<script>
+(function(){
+'use strict';
+
+var ATTENTE = 'agv_codes_en_attente';
+
+function val(id){ var e = document.getElementById(id); return e ? String(e.value || '').trim() : ''; }
+function DB(){ return (window.db && typeof window.db.ref === 'function') ? window.db : null; }
+function bouton(){ return document.getElementById('r-btn'); }
+function actif(){ var b = bouton(); if(b){ b.disabled = false; b.textContent = 'Creer mon compte'; } }
+function occupe(t){ var b = bouton(); if(b){ b.disabled = true; b.textContent = t || 'Creation...'; } }
+function detail(e){
+  if(!e) return 'erreur inconnue';
+  var c = e.code ? '[' + e.code + '] ' : '';
+  return c + (e.message || String(e));
+}
+
+/* ------------------------------------------------------------
+   Journal visible sous le bouton
+   ------------------------------------------------------------ */
+function journal(){
+  var z = document.getElementById('agv-journal-creation');
+  if(z) return z;
+  var b = bouton();
+  if(!b || !b.parentNode) return null;
+  z = document.createElement('div');
+  z.id = 'agv-journal-creation';
+  z.style.cssText = 'margin-top:12px;padding:10px 12px;border-radius:8px;background:rgba(37,99,235,0.08);'
+    + 'border:1px solid rgba(37,99,235,0.25);font-size:12px;line-height:1.8;color:#94a3b8;display:none';
+  b.parentNode.insertBefore(z, b.nextSibling);
+  return z;
+}
+function viderJournal(){
+  var z = journal();
+  if(z){ z.innerHTML = ''; z.style.display = 'block'; }
+}
+function etape(texte, etat, precision){
+  var z = journal();
+  if(!z) return;
+  z.style.display = 'block';
+  var signe = etat === 'ok' ? '✔' : etat === 'ko' ? '✖' : etat === 'saut' ? '•' : '…';
+  var couleur = etat === 'ok' ? '#22c55e' : etat === 'ko' ? '#ef4444' : etat === 'saut' ? '#64748b' : '#60a5fa';
+  var ligne = document.createElement('div');
+  ligne.innerHTML = '<span style="color:' + couleur + ';font-weight:700">' + signe + '</span> ' + texte
+    + (precision ? '<div style="color:#64748b;font-size:11px;margin-left:16px;word-break:break-word">'
+        + String(precision).replace(/</g,'&lt;') + '</div>' : '');
+  z.appendChild(ligne);
+  z.scrollTop = z.scrollHeight;
+}
+function message(t, ok){
+  if(typeof window.agvMsg === 'function') window.agvMsg(t, ok);
+}
+
+function avecDelai(p, ms, quoi){
+  return new Promise(function(res, rej){
+    var fini = false;
+    var t = setTimeout(function(){
+      if(!fini){ fini = true; rej(new Error('Delai depasse (' + quoi + ')')); }
+    }, ms);
+    Promise.resolve(p).then(
+      function(v){ if(!fini){ fini = true; clearTimeout(t); res(v); } },
+      function(e){ if(!fini){ fini = true; clearTimeout(t); rej(e); } });
+  });
+}
+
+/* ------------------------------------------------------------
+   Logo reduit — abandonne au moindre souci
+   ------------------------------------------------------------ */
+function preparerLogo(fichier){
+  return new Promise(function(res){
+    if(!fichier) return res('');
+    var abandon = setTimeout(function(){ res(''); }, 6000);
+    try{
+      var lecteur = new FileReader();
+      lecteur.onerror = function(){ clearTimeout(abandon); res(''); };
+      lecteur.onload = function(e){
+        var brut = e.target.result;
+        var img = new Image();
+        img.onerror = function(){ clearTimeout(abandon); res(''); };
+        img.onload = function(){
+          clearTimeout(abandon);
+          try{
+            var max = 512, l = img.width, h = img.height;
+            if(l > max || h > max){
+              if(l >= h){ h = Math.round(h * max / l); l = max; }
+              else{ l = Math.round(l * max / h); h = max; }
+            }
+            var c = document.createElement('canvas');
+            c.width = l; c.height = h;
+            var ctx = c.getContext('2d');
+            ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, l, h);
+            ctx.drawImage(img, 0, 0, l, h);
+            var petit = c.toDataURL('image/jpeg', 0.82);
+            res(petit.length < brut.length ? petit : (brut.length > 400000 ? '' : brut));
+          }catch(x){ res(''); }
+        };
+        img.src = brut;
+      };
+      lecteur.readAsDataURL(fichier);
+    }catch(x){ clearTimeout(abandon); res(''); }
+  });
+}
+
+/* ------------------------------------------------------------
+   Verification legere de l'email (jamais bloquante)
+   ------------------------------------------------------------ */
+function adresseBase(){
+  try{
+    var u = firebase.app().options.databaseURL;
+    return u ? String(u).replace(/\/+$/, '') : null;
+  }catch(e){ return null; }
+}
+function emailDejaUtilise(email){
+  var d = DB();
+  if(!d) return Promise.resolve(false);
+  function parIndex(){
+    return d.ref('gdv_codes').once('value').then(function(s){
+      var v = s.val() || {}, vus = {}, out = [];
+      Object.keys(v).forEach(function(k){ if(v[k] && !vus[v[k]]){ vus[v[k]] = 1; out.push(v[k]); } });
+      return out;
+    }, function(){ return []; });
+  }
+  var base = adresseBase();
+  var uids = (base && typeof fetch === 'function')
+    ? fetch(base + '/gdv_shops.json?shallow=true', { cache:'no-store' })
+        .then(function(r){ if(!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+        .then(function(o){ return o ? Object.keys(o) : []; })
+        .catch(parIndex)
+    : parIndex();
+
+  return uids.then(function(l){
+    if(!l || !l.length) return false;
+    var cherche = String(email).toLowerCase();
+    var trouve = false;
+    var lots = [];
+    for(var i=0;i<l.length;i+=25) lots.push(l.slice(i, i+25));
+    return lots.reduce(function(chaine, lot){
+      return chaine.then(function(){
+        if(trouve) return null;
+        return Promise.all(lot.map(function(u){
+          return d.ref('gdv_shops/' + u + '/info/email').once('value')
+            .then(function(s){ if(String(s.val() || '').toLowerCase() === cherche) trouve = true; },
+                  function(){});
+        }));
+      });
+    }, Promise.resolve()).then(function(){ return trouve; });
+  });
+}
+
+/* ------------------------------------------------------------
+   Index des codes : mis en attente si refuse, repose plus tard
+   ------------------------------------------------------------ */
+function enAttente(){
+  try{ return JSON.parse(localStorage.getItem(ATTENTE) || '[]'); }catch(e){ return []; }
+}
+function noterEnAttente(code, uid){
+  try{
+    var l = enAttente();
+    if(!l.some(function(x){ return x.code === code; })) l.push({ code: code, uid: uid, le: Date.now() });
+    localStorage.setItem(ATTENTE, JSON.stringify(l));
+  }catch(e){}
+}
+function rejouerAttente(){
+  var d = DB();
+  var l = enAttente();
+  if(!d || !l.length) return;
+  var restants = [];
+  var suite = Promise.resolve();
+  l.forEach(function(x){
+    suite = suite.then(function(){
+      return d.ref('gdv_codes/' + x.code).set(x.uid).then(
+        function(){ console.log('[AGV] index du code ' + x.code + ' enfin enregistre'); },
+        function(){ restants.push(x); });
+    });
+  });
+  suite.then(function(){
+    try{ localStorage.setItem(ATTENTE, JSON.stringify(restants)); }catch(e){}
+  });
+}
+setTimeout(rejouerAttente, 6000);
+setInterval(rejouerAttente, 120000);
+
+function code(){
+  var c = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789', r = 'AGV-';
+  for(var i=0;i<4;i++) r += c[Math.floor(Math.random()*c.length)];
+  r += '-';
+  for(var j=0;j<4;j++) r += c[Math.floor(Math.random()*c.length)];
+  return r;
+}
+
+/* ============================================================
+   CREATION
+   ============================================================ */
+function creer(){
+  var prenom = val('r-prenom'), nom = val('r-nom'), ent = val('r-ent'),
+      email = val('r-email'), tel = val('r-tel'), ville = val('r-ville'),
+      fondCode = val('r-fondateur-code');
+
+  if(!prenom || !nom || !ent || !email || !tel || !fondCode)
+    return message('Remplissez tous les champs obligatoires (*)', false);
+  if(email.indexOf('@') < 0) return message('Email invalide', false);
+  if(fondCode.length < 3) return message('Le code fondateur doit faire au moins 3 caracteres', false);
+
+  var d = DB();
+  viderJournal();
+  if(!d){
+    etape('Connexion a la base', 'ko', 'Firebase n\'est pas charge sur cet appareil');
+    return message('Connexion indisponible — verifiez Internet puis reessayez', false);
+  }
+  etape('Connexion a la base', 'ok');
+
+  occupe('Verification...');
+  var champLogo = document.getElementById('r-logo');
+  var fichier = (champLogo && champLogo.files && champLogo.files[0]) ? champLogo.files[0] : null;
+  var logoPret = preparerLogo(fichier);
+
+  avecDelai(emailDejaUtilise(email), 4000, 'verification de l\'email')
+    .then(function(existe){ return existe; },
+          function(e){ etape('Verification de l\'email', 'saut', 'ignoree : ' + detail(e)); return false; })
+    .then(function(existe){
+      if(existe){
+        etape('Verification de l\'email', 'ko', 'cet email est deja utilise');
+        actif();
+        message('Cet email est deja utilise. Connectez-vous.', false);
+        return null;
+      }
+      etape('Verification de l\'email', 'ok');
+      occupe('Preparation...');
+      return logoPret.then(function(logo){
+        if(fichier) etape('Preparation du logo', logo ? 'ok' : 'saut',
+          logo ? Math.round(logo.length/1024) + ' Ko' : 'logo ignore, la boutique est creee sans');
+        return logo || '';
+      });
+    })
+    .then(function(logo){
+      if(logo === null) return null;
+      occupe('Enregistrement...');
+      var codeAcces = code();
+      var uid = 'shop_' + Date.now() + '_' + Math.random().toString(36).substr(2,5);
+      var maintenant = new Date();
+      var expiration = new Date(maintenant.getTime() + 60*24*60*60*1000);
+      var shop = {
+        uid: uid, nom: prenom + ' ' + nom, prenom: prenom, nomFamille: nom,
+        entreprise: ent, email: email, tel: tel, ville: ville, logo: logo,
+        codeAcces: codeAcces, codeFondateur: fondCode,
+        dateCreation: maintenant.toISOString(),
+        dateExpiration: expiration.toISOString(),
+        licenceStatut: 'essai', licencePeriode: 'essai_60j'
+      };
+
+      /* 1) la fiche de la boutique — c'est l'ecriture essentielle */
+      return avecDelai(d.ref('gdv_shops/' + uid + '/info').set(shop), 20000, 'fiche de la boutique')
+        .then(function(){
+          etape('Enregistrement de la boutique', 'ok', 'code d\'acces : ' + codeAcces);
+          /* 2) l'index du code — separement : son echec ne perd pas la boutique */
+          return avecDelai(d.ref('gdv_codes/' + codeAcces).set(uid), 12000, 'index du code')
+            .then(function(){ etape('Enregistrement du code d\'acces', 'ok'); return true; },
+                  function(e){
+                    noterEnAttente(codeAcces, uid);
+                    etape('Enregistrement du code d\'acces', 'ko', detail(e)
+                      + ' — la boutique est creee ; le code sera repose automatiquement des que la base l\'autorisera');
+                    return false;
+                  });
+        })
+        .then(function(indexOk){
+          window._lastCreatedShop = shop;
+          actif();
+          if(typeof window.agvShowSuccess === 'function'){
+            window.agvShowSuccess(shop, codeAcces);
+          }else{
+            message('Boutique creee — code d\'acces : ' + codeAcces, true);
+          }
+          if(!indexOk){
+            setTimeout(function(){
+              alert('La boutique « ' + ent + ' » est bien creee.\n\n'
+                + 'Code d\'acces : ' + codeAcces + '\n'
+                + 'Code fondateur : ' + fondCode + '\n\n'
+                + 'Attention : l\'index du code n\'a pas pu etre enregistre (regles de la base). '
+                + 'La connexion par ce code ne fonctionnera qu\'une fois ce point regle. '
+                + 'Notez bien ces deux codes.');
+            }, 600);
+          }
+          /* l'email de bienvenue, apres coup et isole */
+          setTimeout(function(){
+            try{
+              if(typeof emailjs === 'undefined' || !emailjs.send) return;
+              emailjs.send('service_xl8rdum', 'gdv_welcome', {
+                to_name: prenom + ' ' + nom, to_email: email, entreprise: ent,
+                code_acces: codeAcces, code_fondateur: fondCode, login_url: window.location.href
+              }).catch(function(){});
+            }catch(e){}
+          }, 500);
+          return true;
+        });
+    })
+    .catch(function(e){
+      actif();
+      etape('Enregistrement de la boutique', 'ko', detail(e));
+      var t = detail(e);
+      if(/permission|denied|PERMISSION/i.test(t)){
+        message('La base a refuse l\'enregistrement (regles de securite). '
+          + 'Detail affiche ci-dessous — transmettez-le au concepteur.', false);
+      }else if(/Delai depasse/.test(t)){
+        message('Connexion trop lente : l\'enregistrement n\'a pas abouti. Reessayez avec un meilleur reseau.', false);
+      }else{
+        message('Creation impossible : ' + t, false);
+      }
+      console.error('[AGV] creation de boutique :', e);
+    });
+}
+
+window.agvRegister = creer;
+setInterval(function(){ if(window.agvRegister !== creer) window.agvRegister = creer; }, 4000);
+
+/* ------------------------------------------------------------
+   Verification a la demande, sans rien ecrire
+   ------------------------------------------------------------ */
+window.agvTesterCreation = function(){
+  var d = DB();
+  viderJournal();
+  etape('Firebase charge', d ? 'ok' : 'ko');
+  if(!d) return;
+  etape('Adresse de la base', adresseBase() ? 'ok' : 'ko', adresseBase() || '');
+  d.ref('gdv_codes').once('value').then(
+    function(s){ etape('Lecture de gdv_codes', 'ok', Object.keys(s.val() || {}).length + ' code(s) enregistre(s)'); },
+    function(e){ etape('Lecture de gdv_codes', 'ko', detail(e)); });
+  var l = enAttente();
+  etape('Codes en attente sur cet appareil', l.length ? 'ko' : 'ok',
+    l.length ? l.map(function(x){ return x.code; }).join(', ') : 'aucun');
+};
+
+})();
+</script>
+
+
+<!-- ============================================================
+     MODULE v23 — FACTURES DE LICENCE A ENVOYER (App AGV)
+     ------------------------------------------------------------
+     L'espace concepteur savait imprimer un recu, mais rien ne
+     permettait d'ENVOYER sa facture a une boutique qui a paye sa
+     licence. Ce module ajoute, dans l'onglet Licences :
+
+     - la liste des boutiques ayant paye (licence active ou date
+       de dernier paiement connue), avec leur formule, leur montant
+       et leur echeance ;
+     - pour chacune : « Facture » (impression / PDF), « WhatsApp »
+       et « Email » ;
+     - une facture numerotee FL-annee-sequence, conservee pour que
+       le meme document garde toujours le meme numero ;
+     - un envoi groupe a toutes les boutiques de la liste.
+
+     OU SONT ECRITES LES DONNEES
+     Uniquement dans agv_platform/facturesLicence — le noeud de la
+     plateforme, celui du concepteur. Les fiches des boutiques sont
+     LUES seulement (entreprise, telephone, email, licence) :
+     aucune ecriture dans gdv_shops, aucune structure modifiee,
+     aucune donnee de boutique touchee.
+     ============================================================ -->
+<script>
+(function(){
+'use strict';
+
+function nb(v){ var n = parseFloat(v); return isNaN(n) ? 0 : n; }
+function esc(v){
+  if(v === null || v === undefined) return '';
+  return String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+                  .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+function argent(n){ return Number(nb(n)).toLocaleString('fr-FR') + ' GNF'; }
+function DB(){ return (window.db && typeof window.db.ref === 'function') ? window.db : null; }
+function jour(d){
+  if(!d) return '—';
+  var x = (typeof d === 'number') ? new Date(d) : new Date(String(d));
+  return isNaN(x.getTime()) ? '—' : x.toLocaleDateString('fr-FR');
+}
+function platGet(chemin){
+  var d = DB();
+  if(!d) return Promise.reject(new Error('Firebase indisponible'));
+  return d.ref('agv_platform' + (chemin ? '/' + chemin : '')).once('value').then(function(s){ return s.val(); });
+}
+function platSet(chemin, v){
+  var d = DB();
+  if(!d) return Promise.reject(new Error('Firebase indisponible'));
+  return d.ref('agv_platform/' + chemin).set(v);
+}
+function adresseBase(){
+  try{
+    var u = firebase.app().options.databaseURL;
+    return u ? String(u).replace(/\/+$/, '') : null;
+  }catch(e){ return null; }
+}
+
+var CHAMPS = ['entreprise','nom','email','tel','ville','codeAcces','licenceStatut',
+              'licencePeriode','dateDernierPaiement','dateExpiration','blocked'];
+
+/* ------------------------------------------------------------
+   Lecture LEGERE des boutiques (aucune ecriture)
+   ------------------------------------------------------------ */
+function listeUids(){
+  var d = DB();
+  var base = adresseBase();
+  function parIndex(){
+    return d.ref('gdv_codes').once('value').then(function(s){
+      var v = s.val() || {}, vus = {}, out = [];
+      Object.keys(v).forEach(function(k){ if(v[k] && !vus[v[k]]){ vus[v[k]] = 1; out.push(v[k]); } });
+      return out;
+    }, function(){ return []; });
+  }
+  if(base && typeof fetch === 'function'){
+    return fetch(base + '/gdv_shops.json?shallow=true', { cache:'no-store' })
+      .then(function(r){ if(!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      .then(function(o){ return o ? Object.keys(o) : []; })
+      .catch(parIndex);
+  }
+  return parIndex();
+}
+function ficheLegere(uid){
+  var d = DB();
+  return Promise.all(CHAMPS.map(function(c){
+    return d.ref('gdv_shops/' + uid + '/info/' + c).once('value')
+      .then(function(s){ return s.val(); }, function(){ return null; });
+  })).then(function(vals){
+    var o = { uid: uid };
+    CHAMPS.forEach(function(c, i){ o[c] = vals[i]; });
+    return o;
+  });
+}
+
+/* une boutique « ayant paye » : licence active ou paiement connu */
+function aPaye(s){
+  if(!s) return false;
+  if(s.dateDernierPaiement) return true;
+  if(s.licenceStatut === 'actif') return true;
+  return false;
+}
+
+/* ------------------------------------------------------------
+   Numerotation stable des factures de licence
+   ------------------------------------------------------------ */
+var factures = {};      /* cle -> { numero, ... } */
+
+function cleFacture(s){
+  var quand = s.dateDernierPaiement ? String(s.dateDernierPaiement).slice(0,10) : 'sansdate';
+  return String(s.uid) + '_' + quand;
+}
+function numeroSuivant(){
+  var an = new Date().getFullYear(), max = 0;
+  Object.keys(factures).forEach(function(k){
+    var m = /^FL-(\d{4})-(\d+)$/.exec(String(factures[k] && factures[k].numero || ''));
+    if(m && Number(m[1]) === an) max = Math.max(max, Number(m[2]));
+  });
+  return 'FL-' + an + '-' + String(max + 1).padStart(4, '0');
+}
+function factureDe(s, montant){
+  var cle = cleFacture(s);
+  if(factures[cle]) return Promise.resolve(factures[cle]);
+  var f = {
+    numero: numeroSuivant(),
+    uid: s.uid, boutique: s.entreprise || '', code: s.codeAcces || '',
+    formule: s.licencePeriode || '', montant: nb(montant),
+    datePaiement: s.dateDernierPaiement || null,
+    expiration: s.dateExpiration || null,
+    creeLe: Date.now()
+  };
+  factures[cle] = f;
+  return platSet('facturesLicence/' + cle, f).then(function(){ return f; }, function(){ return f; });
+}
+
+/* montant : celui du paiement enregistre, sinon la carte de licence */
+var tarifs = null, paiements = null;
+function montantDe(s){
+  if(paiements){
+    var trouve = 0;
+    Object.keys(paiements).forEach(function(k){
+      var p = paiements[k];
+      if(!p) return;
+      if(String(p.uid) === String(s.uid) || (p.boutiqueCode && p.boutiqueCode === s.codeAcces)){
+        if(nb(p.montant) > 0) trouve = nb(p.montant);
+      }
+    });
+    if(trouve) return trouve;
+  }
+  if(tarifs && tarifs.cartes){
+    var c = null;
+    tarifs.cartes.forEach(function(x){
+      if(!c && x && String(x.nom).toLowerCase() === String(s.licencePeriode || '').toLowerCase()) c = x;
+    });
+    if(c) return nb(c.prix);
+  }
+  return 0;
+}
+
+/* ------------------------------------------------------------
+   Fenetre : boutiques ayant paye
+   ------------------------------------------------------------ */
+var boutiques = [];
+
+window.agvFacturesLicenceFermer = function(){
+  var o = document.getElementById('agvfl-overlay');
+  if(o) o.remove();
+};
+
+window.agvFacturesLicence = function(){
+  window.agvFacturesLicenceFermer();
+  var ov = document.createElement('div');
+  ov.id = 'agvfl-overlay';
+  ov.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.9);display:flex;'
+    + 'align-items:center;justify-content:center;padding:10px';
+  ov.innerHTML = '<div style="background:#0a1628;border:1px solid rgba(37,99,235,0.35);border-radius:14px;'
+      + 'padding:18px;width:100%;max-width:900px;height:92vh;display:flex;flex-direction:column;'
+      + 'color:#cbd5e1;font-family:inherit;font-size:13px">'
+    + '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:6px">'
+      + '<div><div style="font-size:15px;font-weight:700;color:#e2e8f0">Factures de licence</div>'
+      + '<div id="agvfl-sous" style="font-size:11.5px;color:#64748b">Chargement des boutiques...</div></div>'
+      + '<button class="cdb-btn" onclick="agvFacturesLicenceFermer()">Fermer</button></div>'
+    + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin:10px 0">'
+      + '<input id="agvfl-recherche" placeholder="Rechercher une boutique..." oninput="agvFacturesLicenceRendre()"'
+        + ' style="flex:1;min-width:180px;padding:9px 11px;background:#060d24;border:1px solid rgba(37,99,235,0.3);'
+        + 'border-radius:8px;color:#e2e8f0;font-size:13px;font-family:inherit;outline:none">'
+      + '<button class="cdb-btn wa" onclick="agvEnvoiGroupeLicence()">Envoyer a toutes (WhatsApp)</button>'
+    + '</div>'
+    + '<div id="agvfl-liste" style="flex:1;overflow:auto"></div>'
+    + '<div id="agvfl-note" style="font-size:11.5px;color:#64748b;margin-top:8px;min-height:16px"></div>'
+    + '</div>';
+  ov.onclick = function(e){ if(e.target === ov) window.agvFacturesLicenceFermer(); };
+  document.body.appendChild(ov);
+  charger();
+};
+
+function note(t, ok){
+  var n = document.getElementById('agvfl-note');
+  if(n){ n.style.color = ok ? '#4ade80' : '#f87171'; n.textContent = t; }
+}
+
+function charger(){
+  var zone = document.getElementById('agvfl-liste');
+  if(zone) zone.innerHTML = '<div style="padding:22px;text-align:center;color:#64748b">Lecture des boutiques...</div>';
+  Promise.all([platGet('tarifs'), platGet('paiements'), platGet('facturesLicence')])
+    .then(function(r){
+      tarifs = r[0]; paiements = r[1]; factures = r[2] || {};
+      return listeUids();
+    })
+    .then(function(uids){
+      if(!uids.length) return [];
+      var out = [], i = 0, actifs = 0, faits = 0;
+      return new Promise(function(res){
+        function pomper(){
+          while(actifs < 6 && i < uids.length){
+            var u = uids[i]; i++; actifs++;
+            ficheLegere(u).then(function(o){ if(o && o.entreprise) out.push(o); })
+              .catch(function(){})
+              .then(function(){
+                actifs--; faits++;
+                var s = document.getElementById('agvfl-sous');
+                if(s) s.textContent = 'Lecture ' + faits + ' / ' + uids.length + '...';
+                if(faits === uids.length) res(out); else pomper();
+              });
+          }
+        }
+        pomper();
+      });
+    })
+    .then(function(l){
+      boutiques = (l || []).filter(aPaye);
+      var s = document.getElementById('agvfl-sous');
+      if(s) s.textContent = boutiques.length + ' boutique(s) avec une licence payee';
+      window.agvFacturesLicenceRendre();
+    })
+    .catch(function(e){
+      if(zone) zone.innerHTML = '<div style="padding:22px;text-align:center;color:#f87171">'
+        + 'Lecture impossible : ' + esc(e.message || e) + '</div>';
+    });
+}
+
+window.agvFacturesLicenceRendre = function(){
+  var zone = document.getElementById('agvfl-liste');
+  if(!zone) return;
+  var q = String((document.getElementById('agvfl-recherche') || {}).value || '').toLowerCase().trim();
+  var l = boutiques.filter(function(s){
+    if(!q) return true;
+    return ((s.entreprise || '') + ' ' + (s.codeAcces || '') + ' ' + (s.tel || '') + ' ' + (s.ville || ''))
+      .toLowerCase().indexOf(q) >= 0;
+  });
+  if(!l.length){
+    zone.innerHTML = '<div style="padding:22px;text-align:center;color:#64748b">'
+      + (boutiques.length ? 'Aucune boutique ne correspond.' : 'Aucune boutique n\'a encore paye de licence.')
+      + '</div>';
+    return;
+  }
+  zone.innerHTML = l.map(function(s){
+    var m = montantDe(s);
+    var cle = cleFacture(s);
+    var f = factures[cle];
+    return '<div style="background:#060d24;border:1px solid rgba(37,99,235,0.18);border-radius:10px;'
+        + 'padding:11px;margin-bottom:8px;display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center">'
+      + '<div style="min-width:180px;flex:1">'
+        + '<div style="font-weight:700;color:#e2e8f0">' + esc(s.entreprise) + '</div>'
+        + '<div style="font-size:11px;color:#64748b">' + esc(s.codeAcces || '')
+          + (s.tel ? ' · ' + esc(s.tel) : '') + (s.email ? ' · ' + esc(s.email) : '') + '</div>'
+        + '<div style="font-size:11px;color:#64748b">' + esc(s.licencePeriode || 'licence')
+          + ' · paye le ' + jour(s.dateDernierPaiement) + ' · expire le ' + jour(s.dateExpiration)
+          + (f ? ' · facture ' + esc(f.numero) : '') + '</div>'
+      + '</div>'
+      + '<div style="font-weight:800;color:#93c5fd;white-space:nowrap">' + argent(m) + '</div>'
+      + '<div style="display:flex;gap:5px;flex-wrap:wrap">'
+        + '<button class="cdb-btn" onclick="agvFactureLicenceImprimer(\'' + esc(s.uid) + '\')">Facture</button>'
+        + (s.tel ? '<button class="cdb-btn wa" onclick="agvFactureLicenceWhatsapp(\'' + esc(s.uid) + '\')">WhatsApp</button>' : '')
+        + (s.email ? '<button class="cdb-btn" onclick="agvFactureLicenceEmail(\'' + esc(s.uid) + '\')">Email</button>' : '')
+      + '</div></div>';
+  }).join('');
+};
+
+function boutiqueDe(uid){
+  var t = null;
+  boutiques.forEach(function(s){ if(!t && String(s.uid) === String(uid)) t = s; });
+  return t;
+}
+
+/* ------------------------------------------------------------
+   Le document
+   ------------------------------------------------------------ */
+function emetteur(c){
+  c = c || {};
+  return {
+    raison: c.raisonSociale || 'NEINDI MULTI-SERVICES',
+    adresse: c.adresseFacturation || 'Damakania, Kindia — Guinee',
+    nif: c.nif || '', tel: c.whatsapp || '224623030403',
+    email: c.mailAdresse || 'souleymane0403@gmail.com'
+  };
+}
+
+window.agvFactureLicenceImprimer = function(uid){
+  var s = boutiqueDe(uid);
+  if(!s) return;
+  var m = montantDe(s);
+  Promise.all([factureDe(s, m), platGet('config')]).then(function(r){
+    var f = r[0], e = emetteur(r[1]);
+    var css = 'body{font-family:Arial,Helvetica,sans-serif;color:#111;margin:0;padding:28px;font-size:13px}'
+      + '.tete{display:flex;justify-content:space-between;border-bottom:3px solid #1d4ed8;padding-bottom:12px;margin-bottom:18px}'
+      + '.tete h1{margin:0;font-size:19px;color:#1d4ed8}'
+      + '.petit{font-size:11.5px;color:#555;line-height:1.6}'
+      + 'table{width:100%;border-collapse:collapse;margin-top:14px}'
+      + 'th,td{border:1px solid #cbd5e1;padding:9px 10px;text-align:left}'
+      + 'th{background:#eff6ff;color:#1e3a8a}'
+      + 'td.d{text-align:right}'
+      + '.total{margin-top:14px;text-align:right;font-size:16px;font-weight:800}'
+      + '.paye{margin-top:10px;display:inline-block;padding:6px 14px;border:2px solid #15803d;color:#15803d;'
+      + 'border-radius:6px;font-weight:800;transform:rotate(-3deg)}'
+      + '.pied{margin-top:32px;display:flex;justify-content:space-between;font-size:11.5px;color:#555;'
+      + 'border-top:1px solid #cbd5e1;padding-top:10px}'
+      + '@media print{.np{display:none}}';
+    var corps = '<div class="tete"><div><h1>' + esc(e.raison) + '</h1>'
+        + '<div class="petit">' + esc(e.adresse) + '<br>' + esc(e.tel)
+        + (e.email ? ' · ' + esc(e.email) : '') + (e.nif ? '<br>NIF / RCCM : ' + esc(e.nif) : '') + '</div></div>'
+      + '<div style="text-align:right"><div style="font-size:18px;font-weight:700">FACTURE DE LICENCE</div>'
+        + '<div class="petit">N&deg; ' + esc(f.numero) + '<br>' + jour(f.datePaiement || f.creeLe) + '</div></div></div>'
+      + '<div class="petit"><strong>Client</strong><br>' + esc(s.entreprise)
+        + '<br>Code boutique : ' + esc(s.codeAcces || '—')
+        + (s.tel ? '<br>' + esc(s.tel) : '') + (s.email ? '<br>' + esc(s.email) : '')
+        + (s.ville ? '<br>' + esc(s.ville) : '') + '</div>'
+      + '<table><thead><tr><th>Designation</th><th>Periode</th><th>Montant</th></tr></thead><tbody>'
+        + '<tr><td>Licence d\'utilisation de l\'application App AGV</td>'
+        + '<td>' + esc(s.licencePeriode || '—')
+        + (s.dateExpiration ? '<br><span style="font-size:11px;color:#555">jusqu\'au '
+            + jour(s.dateExpiration) + '</span>' : '') + '</td>'
+        + '<td class="d">' + argent(f.montant) + '</td></tr></tbody></table>'
+      + '<div class="total">Total : ' + argent(f.montant) + '</div>'
+      + '<div style="text-align:right"><span class="paye">PAYEE</span></div>'
+      + '<div class="pied"><span>Merci de votre confiance.</span><span>Signature et cachet</span></div>'
+      + '<div class="np" style="margin-top:22px"><button onclick="window.print()" style="padding:9px 18px;'
+        + 'background:#1d4ed8;color:#fff;border:none;border-radius:6px;font-size:13px;font-weight:700;'
+        + 'cursor:pointer">Imprimer / PDF</button></div>';
+    var w = window.open('', '_blank');
+    if(!w) return note('Autorisez les fenetres pour imprimer la facture.', false);
+    w.document.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Facture ' + esc(f.numero)
+      + '</title><style>' + css + '</style></head><body>' + corps + '</body></html>');
+    w.document.close();
+    window.agvFacturesLicenceRendre();
+  });
+};
+
+/* ------------------------------------------------------------
+   Envois
+   ------------------------------------------------------------ */
+function texteFacture(s, f){
+  return 'FACTURE DE LICENCE — App AGV\n'
+    + 'N° ' + f.numero + '\n\n'
+    + 'Boutique : ' + (s.entreprise || '') + '\n'
+    + 'Code : ' + (s.codeAcces || '') + '\n'
+    + 'Formule : ' + (s.licencePeriode || 'licence') + '\n'
+    + 'Montant : ' + argent(f.montant) + '\n'
+    + 'Paye le : ' + jour(f.datePaiement) + '\n'
+    + 'Licence valable jusqu\'au : ' + jour(s.dateExpiration) + '\n\n'
+    + 'Statut : PAYEE — merci de votre confiance.';
+}
+function numeroWhatsapp(n){
+  var s = String(n || '').replace(/[^0-9]/g, '');
+  if(!s) return '';
+  if(s.length === 9) s = '224' + s;
+  return s;
+}
+
+window.agvFactureLicenceWhatsapp = function(uid){
+  var s = boutiqueDe(uid);
+  if(!s) return;
+  factureDe(s, montantDe(s)).then(function(f){
+    var n = numeroWhatsapp(s.tel);
+    if(!n) return note('Cette boutique n\'a pas de numero enregistre.', false);
+    window.open('https://wa.me/' + n + '?text=' + encodeURIComponent(texteFacture(s, f)), '_blank');
+    note('WhatsApp ouvert pour ' + (s.entreprise || '') + ' — facture ' + f.numero, true);
+    window.agvFacturesLicenceRendre();
+  });
+};
+
+window.agvFactureLicenceEmail = function(uid){
+  var s = boutiqueDe(uid);
+  if(!s) return;
+  Promise.all([factureDe(s, montantDe(s)), platGet('config')]).then(function(r){
+    var f = r[0], c = r[1] || {};
+    var sujet = 'Facture de licence App AGV — ' + f.numero;
+    var corps = texteFacture(s, f);
+    if(c.mailService && c.mailTemplate && c.mailCle && typeof emailjs !== 'undefined' && emailjs.send){
+      try{
+        if(emailjs.init) emailjs.init(c.mailCle);
+        emailjs.send(c.mailService, c.mailTemplate, {
+          to_name: s.entreprise || '', to_email: s.email, entreprise: s.entreprise || '',
+          subject: sujet, message: corps, numero: f.numero, montant: argent(f.montant)
+        }).then(function(){ note('Facture ' + f.numero + ' envoyee a ' + s.email, true); },
+                function(e){
+                  note('Envoi automatique impossible (' + (e && e.text ? e.text : 'erreur')
+                    + ') — la messagerie s\'ouvre.', false);
+                  ouvrirMailto(s.email, sujet, corps);
+                });
+        return;
+      }catch(e){}
+    }
+    ouvrirMailto(s.email, sujet, corps);
+    note('Messagerie ouverte pour ' + s.email + ' — facture ' + f.numero, true);
+  });
+};
+
+function ouvrirMailto(email, sujet, corps){
+  window.location.href = 'mailto:' + encodeURIComponent(email)
+    + '?subject=' + encodeURIComponent(sujet) + '&body=' + encodeURIComponent(corps);
+}
+
+/* envoi groupe : une fenetre WhatsApp apres l'autre, a la demande */
+window.agvEnvoiGroupeLicence = function(){
+  var q = String((document.getElementById('agvfl-recherche') || {}).value || '').toLowerCase().trim();
+  var l = boutiques.filter(function(s){
+    if(!s.tel) return false;
+    if(!q) return true;
+    return ((s.entreprise || '') + ' ' + (s.codeAcces || '')).toLowerCase().indexOf(q) >= 0;
+  });
+  if(!l.length) return note('Aucune boutique avec un numero WhatsApp.', false);
+  if(!confirm('Ouvrir WhatsApp pour ' + l.length + ' boutique(s) ?\n'
+    + 'Une fenetre s\'ouvre par boutique : vous appuyez sur Envoyer a chaque fois.')) return;
+  var i = 0;
+  (function suivant(){
+    if(i >= l.length){ note(l.length + ' facture(s) preparee(s).', true); return; }
+    var s = l[i]; i++;
+    factureDe(s, montantDe(s)).then(function(f){
+      window.open('https://wa.me/' + numeroWhatsapp(s.tel) + '?text='
+        + encodeURIComponent(texteFacture(s, f)), '_blank');
+      note('Facture ' + f.numero + ' — ' + (s.entreprise || '') + ' (' + i + '/' + l.length + ')', true);
+      setTimeout(suivant, 1200);
+    });
+  })();
+};
+
+/* ------------------------------------------------------------
+   Bouton dans l'onglet Licences de l'espace concepteur
+   ------------------------------------------------------------ */
+setInterval(function(){
+  var vue = document.getElementById('cdbVue-licences');
+  if(!vue || vue.style.display === 'none') return;
+  if(document.getElementById('agvfl-bouton')) return;
+  var b = document.createElement('button');
+  b.id = 'agvfl-bouton';
+  b.className = 'cdb-btn';
+  b.style.cssText = 'margin:0 0 10px 6px';
+  b.textContent = 'Factures de licence a envoyer';
+  b.onclick = function(){ window.agvFacturesLicence(); };
+  var ancre = document.getElementById('agvrl-bouton');
+  if(ancre && ancre.parentNode) ancre.parentNode.insertBefore(b, ancre.nextSibling);
+  else{
+    var titre = vue.querySelector('.cdb-sec');
+    if(titre && titre.parentNode) titre.parentNode.insertBefore(b, titre);
+  }
+}, 1500);
+
+})();
+</script>
+
+
+<!-- ============================================================
+     MODULE v24 — TARIFS DE LICENCE DANS LES PARAMETRES
+     ------------------------------------------------------------
+     Chaque boutique voit desormais, dans son onglet Parametres :
+
+     - l'etat de SA licence : formule en cours, date d'expiration,
+       jours restants, avec un bandeau de couleur (active, bientot
+       expiree, expiree) ;
+     - la grille tarifaire publiee par le concepteur : chaque carte
+       avec sa duree, son prix, et le prix ramene au mois pour
+       comparer ;
+     - les instructions de paiement saisies par le concepteur ;
+     - un bouton WhatsApp pour le contacter, avec un message
+       pre-rempli mentionnant la boutique et la formule choisie.
+
+     LECTURE SEULE, DES DEUX COTES :
+     - agv_platform/tarifs et agv_platform/config sont LUS ;
+     - gdv_shops/<uid>/info est LU (licence, nom, code) ;
+     - AUCUNE ecriture nulle part, aucune structure modifiee,
+       aucune donnee de boutique touchee.
+
+     Les tarifs n'apparaissent que si le concepteur les a PUBLIES
+     (case « Publier les tarifs » de l'espace concepteur). Tant
+     qu'ils ne le sont pas, la boutique ne voit que l'etat de sa
+     licence.
+     ============================================================ -->
+<script>
+(function(){
+'use strict';
+
+function nb(v){ var n = parseFloat(v); return isNaN(n) ? 0 : n; }
+function esc(v){
+  if(v === null || v === undefined) return '';
+  return String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+                  .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+function argent(n){
+  try{ if(typeof window.fmtGNF === 'function') return window.fmtGNF(n || 0); }catch(e){}
+  return Number(nb(n)).toLocaleString('fr-FR') + ' GNF';
+}
+function DB(){ return (window.db && typeof window.db.ref === 'function') ? window.db : null; }
+function boutique(){ return window._currentShop || {}; }
+function jour(d){
+  if(!d) return '—';
+  var x = (typeof d === 'number') ? new Date(d) : new Date(String(d));
+  return isNaN(x.getTime()) ? '—' : x.toLocaleDateString('fr-FR');
+}
+function joursRestants(d){
+  if(!d) return null;
+  var x = new Date(d);
+  if(isNaN(x.getTime())) return null;
+  return Math.ceil((x - new Date()) / 86400000);
+}
+function numeroWhatsapp(n){
+  var s = String(n || '').replace(/[^0-9]/g, '');
+  if(!s) return '';
+  if(s.length === 9) s = '224' + s;
+  return s;
+}
+
+var tarifs = null, config = null, chargement = null;
+
+function charger(){
+  var d = DB();
+  if(!d) return Promise.resolve(null);
+  if(chargement) return chargement;
+  chargement = Promise.all([
+    d.ref('agv_platform/tarifs').once('value').then(function(s){ return s.val(); }, function(){ return null; }),
+    d.ref('agv_platform/config').once('value').then(function(s){ return s.val(); }, function(){ return null; })
+  ]).then(function(r){
+    tarifs = r[0]; config = r[1];
+    return true;
+  });
+  return chargement;
+}
+
+/* la licence de CETTE boutique, relue a la source (lecture seule) */
+function licence(){
+  var s = boutique();
+  var d = DB();
+  if(!d || !s.uid){
+    return Promise.resolve({
+      statut: s.licenceStatut || null, periode: s.licencePeriode || null,
+      expiration: s.dateExpiration || null, bloquee: s.blocked === true
+    });
+  }
+  return Promise.all(['licenceStatut','licencePeriode','dateExpiration','blocked'].map(function(c){
+    return d.ref('gdv_shops/' + s.uid + '/info/' + c).once('value')
+      .then(function(x){ return x.val(); }, function(){ return null; });
+  })).then(function(v){
+    return { statut: v[0], periode: v[1], expiration: v[2], bloquee: v[3] === true };
+  });
+}
+
+function bandeauLicence(l){
+  var j = joursRestants(l.expiration);
+  var fond, couleur, titre, detail;
+  if(l.bloquee){
+    fond = 'rgba(239,68,68,0.12)'; couleur = 'var(--red)';
+    titre = 'Acces suspendu';
+    detail = 'Contactez le concepteur pour retablir votre acces.';
+  }else if(j === null){
+    fond = 'rgba(37,99,235,0.10)'; couleur = 'var(--accent)';
+    titre = 'Licence ' + (l.statut || 'en cours');
+    detail = 'Aucune date d\'echeance enregistree.';
+  }else if(j <= 0){
+    fond = 'rgba(239,68,68,0.12)'; couleur = 'var(--red)';
+    titre = 'Licence expiree';
+    detail = 'Echeance depassee depuis le ' + jour(l.expiration) + '.';
+  }else if(j <= 15){
+    fond = 'rgba(245,158,11,0.12)'; couleur = 'var(--amber)';
+    titre = 'Licence bientot expiree';
+    detail = 'Il reste ' + j + ' jour(s) — jusqu\'au ' + jour(l.expiration) + '.';
+  }else{
+    fond = 'rgba(34,197,94,0.12)'; couleur = 'var(--green)';
+    titre = 'Licence active';
+    detail = 'Valable jusqu\'au ' + jour(l.expiration) + ' — ' + j + ' jour(s) restant(s).';
+  }
+  return '<div style="background:' + fond + ';border-radius:10px;padding:12px 14px;margin-bottom:14px">'
+    + '<div style="font-weight:700;color:' + couleur + ';font-size:13px">' + titre + '</div>'
+    + '<div style="font-size:12px;color:var(--text2);margin-top:2px">' + detail + '</div>'
+    + (l.periode ? '<div style="font-size:11.5px;color:var(--text3);margin-top:4px">Formule en cours : '
+        + esc(l.periode) + '</div>' : '')
+    + '</div>';
+}
+
+function messageWhatsapp(nomCarte){
+  var s = boutique();
+  return 'Bonjour, je suis ' + (s.entreprise || 'une boutique') + ' (code ' + (s.codeAcces || '—') + ').\n'
+    + (nomCarte ? 'Je souhaite prendre la formule « ' + nomCarte +' » pour ma licence App AGV.'
+                : 'Je souhaite renouveler ma licence App AGV.')
+    + '\nMerci de m\'indiquer la marche a suivre.';
+}
+
+function rendre(){
+  var vue = document.getElementById('view-parametres');
+  if(!vue) return;
+  var zone = document.getElementById('agvtl-bloc');
+  if(!zone){
+    zone = document.createElement('div');
+    zone.id = 'agvtl-bloc';
+    zone.className = 'card';
+    zone.style.cssText = 'max-width:600px;margin:16px auto 0';
+    vue.appendChild(zone);
+  }
+  zone.innerHTML = '<h3 style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:14px">'
+    + 'Licence et tarification</h3><div style="color:var(--text3);font-size:12px">Chargement...</div>';
+
+  Promise.all([charger(), licence()]).then(function(r){
+    var l = r[1] || {};
+    var html = '<h3 style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:14px">'
+      + 'Licence et tarification</h3>' + bandeauLicence(l);
+
+    var publie = tarifs && tarifs.publie && tarifs.cartes && tarifs.cartes.length;
+    if(!publie){
+      html += '<div style="font-size:12px;color:var(--text3);line-height:1.7">'
+        + 'La grille tarifaire n\'est pas encore publiee. '
+        + 'Contactez le concepteur pour connaitre les conditions de renouvellement.</div>';
+    }else{
+      var cartes = tarifs.cartes.filter(function(c){ return c && c.active !== false; });
+      html += '<div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.05em;'
+        + 'margin-bottom:8px">Formules disponibles</div>'
+        + '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px">'
+        + cartes.map(function(c){
+            var mois = nb(c.jours) / 30;
+            var parMois = mois >= 1 ? nb(c.prix) / mois : 0;
+            var courante = String(l.periode || '').toLowerCase() === String(c.nom).toLowerCase();
+            return '<div style="background:var(--surface2);border:1px solid '
+                + (courante ? 'var(--accent)' : 'var(--border)') + ';border-radius:10px;padding:12px">'
+              + '<div style="font-weight:700;font-size:13px;color:var(--text)">' + esc(c.nom)
+                + (courante ? ' <span style="font-size:10px;color:var(--accent)">(en cours)</span>' : '') + '</div>'
+              + '<div style="font-size:11px;color:var(--text3);margin:2px 0 6px">' + nb(c.jours) + ' jours</div>'
+              + '<div style="font-size:16px;font-weight:800;color:var(--accent)">' + argent(c.prix) + '</div>'
+              + (parMois ? '<div style="font-size:10.5px;color:var(--text3)">soit ' + argent(Math.round(parMois))
+                  + ' / mois</div>' : '')
+              + '</div>';
+          }).join('')
+        + '</div>';
+
+      if(tarifs.essaiJours){
+        html += '<div style="font-size:11.5px;color:var(--text3);margin-top:10px">'
+          + 'Periode d\'essai offerte aux nouvelles boutiques : ' + nb(tarifs.essaiJours) + ' jours.</div>';
+      }
+      if(tarifs.instructions){
+        html += '<div style="margin-top:14px;padding:12px;background:var(--surface2);border-radius:10px">'
+          + '<div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.05em;'
+          + 'margin-bottom:5px">Comment payer</div>'
+          + '<div style="font-size:12.5px;color:var(--text2);line-height:1.7;white-space:pre-wrap">'
+          + esc(tarifs.instructions) + '</div></div>';
+      }
+    }
+
+    var numero = numeroWhatsapp((config && config.whatsapp) || '224623030403');
+    html += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px">'
+      + '<a href="https://wa.me/' + numero + '?text=' + encodeURIComponent(messageWhatsapp(''))
+      + '" target="_blank" style="display:inline-flex;align-items:center;gap:6px;padding:9px 16px;'
+      + 'background:#25D366;border-radius:8px;color:#fff;font-size:12.5px;font-weight:700;text-decoration:none">'
+      + 'Contacter le concepteur</a>'
+      + (tarifs && tarifs.majLe ? '<span style="font-size:11px;color:var(--text3);align-self:center">'
+          + 'Tarifs mis a jour le ' + jour(tarifs.majLe) + '</span>' : '')
+      + '</div>';
+
+    zone.innerHTML = html;
+  }).catch(function(e){
+    zone.innerHTML = '<h3 style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:10px">'
+      + 'Licence et tarification</h3>'
+      + '<div style="font-size:12px;color:var(--text3)">Informations indisponibles pour le moment.</div>';
+    console.warn('[AGV] tarifs de licence :', e);
+  });
+}
+window.agvTarifsLicenceRendre = rendre;
+
+/* le bloc se pose quand l'onglet Parametres est ouvert */
+setInterval(function(){
+  var vue = document.getElementById('view-parametres');
+  if(!vue || !vue.classList.contains('active')) return;
+  if(!window._currentShop) return;
+  if(document.getElementById('agvtl-bloc')) return;
+  rendre();
+}, 1200);
+
+/* la vue est aussi rafraichie quand l'application la redessine */
+(function suivre(){
+  function poser(){
+    if(typeof window.renderParametresBoutique !== 'function'){ setTimeout(poser, 500); return; }
+    if(window._agvSuitParametres) return;
+    window._agvSuitParametres = true;
+    var original = window.renderParametresBoutique;
+    window.renderParametresBoutique = function(){
+      var r = original.apply(this, arguments);
+      setTimeout(function(){ if(document.getElementById('view-parametres')) rendre(); }, 150);
+      return r;
+    };
+  }
+  poser();
+})();
+
+})();
+</script>
+
 </body></html>
