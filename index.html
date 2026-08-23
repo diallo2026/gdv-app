@@ -22295,6 +22295,14 @@ function surveillerNuage(){
   });
 }
 
+/* [v25] une vente (ou sa facture) volontairement supprimee ne doit JAMAIS
+   etre reintegree par le garde-fou : sinon la suppression ne tient pas */
+function ecartee(k, v){
+  try{
+    if(typeof window.agvEntreeSupprimee === 'function') return !!window.agvEntreeSupprimee(k, v);
+  }catch(e){}
+  return false;
+}
 function fusionner(locales, distantes){
   var vus = {}, out = [];
   locales.forEach(function(v){ if(!v) return; var k = cle(v); if(!vus[k]){ vus[k] = 1; out.push(v); } });
@@ -22303,6 +22311,7 @@ function fusionner(locales, distantes){
     if(!v) return;
     var k = cle(v);
     if(vus[k]) return;
+    if(ecartee(k, v)) return;
     vus[k] = 1; out.push(v); ajoutees++;
   });
   return { liste: out, ajoutees: ajoutees };
@@ -22413,6 +22422,7 @@ function analyser(){
       s.liste.forEach(function(v){
         var k = cle(v);
         if(connues[k]) return;
+        if(ecartee(k, v)) return;   /* [v25] supprimee volontairement */
         s.absentes++;
         if(vus[k]) return;
         vus[k] = 1;
@@ -22479,6 +22489,7 @@ window.agvRestaurerVentes = function(){
   var n = 0;
   manquantes.forEach(function(v){
     if(connues[cle(v)]) return;
+    if(ecartee(cle(v), v)) return;   /* [v25] supprimee volontairement */
     var copie = {};
     for(var p in v){ if(p !== '_source' && p !== '_reconstituee') copie[p] = v[p]; }
     l.push(copie);
@@ -25353,6 +25364,310 @@ setInterval(function(){
   }
   poser();
 })();
+
+})();
+</script>
+
+<!-- ============================================================
+     MODULE v25 — LA SUPPRESSION D'UNE VENTE TIENT VRAIMENT (App AGV)
+     ------------------------------------------------------------
+     LE PROBLEME CONSTATE
+     Une boutique supprime une vente : le message « Vente supprimee —
+     stock retabli » s'affiche, le stock revient bien, mais la vente
+     reste dans le tableau, le chiffre d'affaires ne bouge pas et le
+     benefice ne disparait pas.
+
+     LA CAUSE REELLE (et non le symptome)
+     Le module v17 avait pose un garde-fou : avant chaque sauvegarde,
+     il refusionne dans la memoire toutes les ventes presentes dans le
+     nuage, pour qu'aucune sauvegarde ne puisse effacer une vente
+     saisie sur un autre appareil. Ce garde-fou ne faisait aucune
+     difference entre « vente perdue par accident » et « vente
+     supprimee volontairement ». Lors d'une suppression, la sequence
+     etait donc :
+       1. la vente est retiree de la memoire, le stock est rendu ;
+       2. saveAll() -> sauvegarderFirebase() ;
+       3. le garde-fou voit la vente encore presente dans le nuage
+          (elle n'a pas encore ete reecrite) et la REMET en memoire ;
+       4. la sauvegarde repart donc avec la vente, et l'ecran est
+          redessine juste apres : la vente est toujours la.
+     Le stock, lui, avait deja ete rendu — d'ou l'incoherence.
+
+     LA CORRECTION
+     Une corbeille locale enregistre l'identifiant des ventes (et des
+     factures liees) reellement supprimees. Le garde-fou du module v17
+     et l'outil de recuperation consultent desormais cette corbeille et
+     ne reintegrent plus ce qui a ete supprime volontairement. Toutes
+     les protections contre la perte accidentelle de ventes restent
+     intactes.
+
+     Si l'utilisateur annule la confirmation, l'inscription en
+     corbeille est aussitot retiree : rien n'est supprime.
+
+     AUCUNE modification de la structure de la base de donnees.
+     AUCUNE ecriture supplementaire dans Firebase : la corbeille vit
+     uniquement dans le localStorage de l'appareil.
+     ============================================================ -->
+<script>
+(function(){
+'use strict';
+
+var GARDE_MS = 45 * 24 * 3600 * 1000;   /* duree de vie d'une inscription */
+var MAX      = 4000;                    /* taille maximale de la corbeille */
+var FRAIS_MS = 15 * 60 * 1000;          /* fenetre de nettoyage automatique */
+
+function nb(v){ var n = parseFloat(v); return isNaN(n) ? 0 : n; }
+function meme(a, b){
+  if(a === null || a === undefined || b === null || b === undefined) return false;
+  return String(a) === String(b);
+}
+function toast(t){ try{ if(typeof window.showToast === 'function') window.showToast(t); }catch(e){} }
+function uid(){ var s = window._currentShop || {}; return s.uid || null; }
+
+function enTableau(v){
+  if(!v) return [];
+  return Array.isArray(v) ? v.filter(Boolean) : Object.keys(v).map(function(k){ return v[k]; }).filter(Boolean);
+}
+function lesVentes(){
+  var v;
+  try{ v = ventes; }catch(e){ v = window.ventes; }
+  if(!Array.isArray(v)){ v = enTableau(v); try{ ventes = v; }catch(e){ window.ventes = v; } }
+  return v;
+}
+function lesFactures(){
+  var v;
+  try{ v = factureVentes; }catch(e){ v = window.factureVentes; }
+  if(!Array.isArray(v)){ v = enTableau(v); try{ factureVentes = v; }catch(e){ window.factureVentes = v; } }
+  return v;
+}
+
+/* ------------------------------------------------------------
+   CLE : strictement la meme que celle du module v17,
+   sinon le garde-fou ne reconnaitrait pas la vente supprimee
+   ------------------------------------------------------------ */
+function jourDe(v){
+  var t = v && (v.ts || v.date);
+  if(typeof t === 'number') return new Date(t);
+  var d = new Date(String(t));
+  return isNaN(d.getTime()) ? null : d;
+}
+function cle(v){
+  if(v && v.id !== undefined && v.id !== null && v.id !== '') return 'id:' + String(v.id);
+  var d = jourDe(v);
+  return 'sig:' + [(v && (v.name || v.produit)) || '', nb(v && v.qty || v && v.qte),
+                   nb(v && v.total), d ? d.toISOString().slice(0,16) : ''].join('|');
+}
+
+/* ------------------------------------------------------------
+   CORBEILLE LOCALE (localStorage uniquement — rien dans Firebase)
+   ------------------------------------------------------------ */
+function nomCle(){ return 'agv_ventes_supprimees_' + (uid() || 'local'); }
+
+var corbeille = null, corbeilleUid = null;
+
+function charger(){
+  try{
+    var brut = localStorage.getItem(nomCle());
+    var o = brut ? JSON.parse(brut) : {};
+    return (o && typeof o === 'object' && !Array.isArray(o)) ? o : {};
+  }catch(e){ return {}; }
+}
+function enregistrerCorbeille(){
+  try{ localStorage.setItem(nomCle(), JSON.stringify(corbeille || {})); }catch(e){}
+}
+function C(){
+  var u = uid();
+  if(corbeille === null || corbeilleUid !== u){
+    corbeille = charger();
+    corbeilleUid = u;
+    /* les inscriptions trop anciennes s'effacent d'elles-memes */
+    var maintenant = Date.now(), change = false;
+    Object.keys(corbeille).forEach(function(k){
+      if(maintenant - nb(corbeille[k]) > GARDE_MS){ delete corbeille[k]; change = true; }
+    });
+    if(change) enregistrerCorbeille();
+  }
+  return corbeille;
+}
+function inscrire(k){
+  if(!k) return false;
+  var c = C();
+  if(c[k]) return false;            /* deja inscrite : on ne la revendique pas */
+  c[k] = Date.now();
+  var cles = Object.keys(c);
+  if(cles.length > MAX){
+    cles.sort(function(a, b){ return nb(c[a]) - nb(c[b]); });
+    cles.slice(0, cles.length - MAX).forEach(function(x){ delete c[x]; });
+  }
+  enregistrerCorbeille();
+  return true;
+}
+function retirer(cles){
+  if(!cles || !cles.length) return;
+  var c = C(), change = false;
+  cles.forEach(function(k){ if(c[k]){ delete c[k]; change = true; } });
+  if(change) enregistrerCorbeille();
+}
+
+/* predicat consulte par le garde-fou du module v17 */
+window.agvEntreeSupprimee = function(k, v){
+  var c = C();
+  if(k && c[k]) return true;
+  if(v){ var k2 = cle(v); if(c[k2]) return true; }
+  return false;
+};
+window.agvVenteEstSupprimee = function(v){ return window.agvEntreeSupprimee(cle(v), v); };
+
+/* ------------------------------------------------------------
+   INSCRIPTION D'UNE VENTE ET DE SA FACTURE
+   ------------------------------------------------------------ */
+function inscrireVente(v){
+  var poses = [];
+  if(!v) return poses;
+  if(inscrire(cle(v))) poses.push(cle(v));
+  if(v.id !== undefined && v.id !== null && v.id !== ''){
+    var kf = 'id:V' + v.id;                 /* ancienne facture engendree par la vente */
+    if(inscrire(kf)) poses.push(kf);
+    lesFactures().forEach(function(f){      /* facture a identifiant stable (VS...) */
+      if(!f) return;
+      if(meme(f.venteId, v.id) || meme(f.id, 'V' + v.id)){
+        var k = cle(f);
+        if(inscrire(k)) poses.push(k);
+      }
+    });
+  }
+  return poses;
+}
+
+/* ------------------------------------------------------------
+   NETTOYAGE : rien de supprime ne doit rester ou revenir
+   ------------------------------------------------------------ */
+function recent(k){
+  var c = C();
+  return c[k] && (Date.now() - nb(c[k]) < FRAIS_MS);
+}
+function nettoyer(tout){
+  var n = 0, i;
+  var l = lesVentes();
+  for(i = l.length - 1; i >= 0; i--){
+    if(!l[i]) continue;
+    var k = cle(l[i]);
+    if(tout ? window.agvEntreeSupprimee(k, l[i]) : recent(k)){ l.splice(i, 1); n++; }
+  }
+  var f = lesFactures();
+  for(i = f.length - 1; i >= 0; i--){
+    if(!f[i]) continue;
+    var kf = cle(f[i]);
+    if(tout ? window.agvEntreeSupprimee(kf, f[i]) : recent(kf)){ f.splice(i, 1); n++; }
+  }
+  return n;
+}
+window.agvNettoyerVentesSupprimees = function(){ return nettoyer(true); };
+
+function redessiner(){
+  ['renderDashboard','refreshVentesHistory','renderVentesView','renderTable',
+   'renderInventaire','renderJournalier'].forEach(function(f){
+    try{ if(typeof window[f] === 'function') window[f](); }catch(e){}
+  });
+  try{ if(typeof window.agvRendreFactures === 'function' && window.currentView === 'facturation') window.agvRendreFactures(); }catch(e){}
+  try{ if(typeof window.agvCorrigerRendre === 'function') window.agvCorrigerRendre(); }catch(e){}
+  try{ if(typeof window.agvRafraichirEcran === 'function') window.agvRafraichirEcran(); }catch(e){}
+}
+
+/* apres une suppression, le nuage peut encore renvoyer l'ancienne copie
+   pendant une poignee de secondes : on repasse derriere */
+function apresSuppression(){
+  [200, 900, 2200, 4500, 8000, 13000].forEach(function(ms){
+    setTimeout(function(){ if(nettoyer(false)) redessiner(); }, ms);
+  });
+  redessiner();
+}
+
+/* filet permanent, mais borne aux suppressions recentes */
+setInterval(function(){
+  try{
+    var c = C(), maintenant = Date.now(), utile = false;
+    for(var k in c){ if(maintenant - nb(c[k]) < FRAIS_MS){ utile = true; break; } }
+    if(utile && nettoyer(false)) redessiner();
+  }catch(e){}
+}, 4000);
+
+/* ------------------------------------------------------------
+   ON ENTOURE LES POINTS DE SUPPRESSION EXISTANTS
+   ------------------------------------------------------------ */
+function venteParId(id){
+  var t = null;
+  lesVentes().forEach(function(v){ if(!t && meme(v.id, id)) t = v; });
+  return t;
+}
+
+function entourer(nom){
+  var origine = window[nom];
+  if(typeof origine !== 'function' || origine.__agvCorbeille) return false;
+  var enveloppe = function(id){
+    var v = venteParId(id);
+    /* on inscrit AVANT : le garde-fou de sauvegarde doit deja le savoir */
+    var poses = v ? inscrireVente(v) : [];
+    var r;
+    try{
+      r = origine.apply(this, arguments);
+    }catch(e){
+      retirer(poses);
+      throw e;
+    }
+    /* la confirmation a pu etre annulee : dans ce cas on retire l'inscription */
+    if(venteParId(id)){
+      retirer(poses);
+    }else if(v){
+      nettoyer(false);
+      apresSuppression();
+    }
+    return r;
+  };
+  enveloppe.__agvCorbeille = true;
+  window[nom] = enveloppe;
+  return true;
+}
+
+(function poser(){
+  var faits = window._agvCorbeillePosee || {};
+  ['agvVenteSupprimer', 'deleteVente', 'delJV'].forEach(function(n){
+    if(!faits[n] && entourer(n)) faits[n] = 1;
+  });
+  window._agvCorbeillePosee = faits;
+  if(!(faits.agvVenteSupprimer && faits.deleteVente && faits.delJV)) setTimeout(poser, 400);
+})();
+
+/* une sauvegarde ne doit jamais repartir avec une vente supprimee */
+(function suivreSauvegarde(){
+  function poser(){
+    if(typeof window.saveAll !== 'function'){ setTimeout(poser, 400); return; }
+    if(window._agvCorbeilleSaveAll) return;
+    window._agvCorbeilleSaveAll = true;
+    var origine = window.saveAll;
+    window.saveAll = function(){
+      try{ nettoyer(false); }catch(e){}
+      return origine.apply(this, arguments);
+    };
+  }
+  poser();
+})();
+
+/* ------------------------------------------------------------
+   VERIFICATION EN CONSOLE : agvEtatCorbeille()
+   ------------------------------------------------------------ */
+window.agvEtatCorbeille = function(){
+  var c = C();
+  var cles = Object.keys(c);
+  console.log('[AGV v25] boutique : ' + (uid() || '—'));
+  console.log('[AGV v25] ventes/factures inscrites en corbeille : ' + cles.length);
+  cles.slice(-15).forEach(function(k){
+    console.log('   ' + k + '  (' + new Date(nb(c[k])).toLocaleString('fr-FR') + ')');
+  });
+  console.log('[AGV v25] ventes en memoire : ' + lesVentes().length
+    + ' — factures : ' + lesFactures().length);
+  return cles.length;
+};
 
 })();
 </script>
