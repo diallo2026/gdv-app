@@ -38835,4 +38835,2371 @@ window.agvStocks = function(){
 })();
 </script>
 
+
+
+<!-- ==================================================================
+     MODULES AJOUTES — App AGV
+     1. agv-performance   : sauvegarde differentielle, regroupement des rendus, index memoire
+     2. agv-factures      : numerotation sequentielle, vendeur, dates, remise/frais, livraison, pagination
+     3. agv-portail       : entree directe en un clic, suppression reelle d un bloc
+     4. agv-dettes        : boule de neige, cache cloisonne, doublons Direction, nettoyage de bloc
+     Desactivation individuelle depuis la console :
+        AGV_PERF.actif = false;    AGV_FACT.actif = false;
+        AGV_PORTAIL.actif = false; AGV_DETTES.actif = false;
+     ================================================================== -->
+<script>
+/* =============================================================================
+   APP AGV — MODULE DE PERFORMANCE  (v1.0)
+   -----------------------------------------------------------------------------
+   INSTALLATION :
+   Colle ce fichier dans un <script> JUSTE AVANT </body> dans index.html,
+   c'est-a-dire APRES tous les autres scripts :
+
+       <script src="agv-performance.js"><\/script>
+       </body>
+
+   ... ou colle son contenu directement entre <script> et <\/script>.
+
+   AUCUNE DONNEE N'EST MODIFIEE, DEPLACEE OU SUPPRIMEE.
+   Le module se contente de remplacer 5 mecanismes internes par des versions
+   plus rapides. Si une fonction attendue n'existe pas, le module se desactive
+   tout seul et l'application continue comme avant.
+
+   Pour desactiver : mettre AGV_PERF.actif = false dans la console.
+   ============================================================================= */
+(function () {
+  'use strict';
+
+  var CFG = {
+    DEBOUNCE_SAVE: 500,      // ms d'attente avant envoi Firebase (regroupe les rafales)
+    RETRY_MS: 4000,          // reessai si echec reseau
+    LOG: true                // passer a false pour couper les logs console
+  };
+
+  var API = window.AGV_PERF = {
+    actif: true,
+    version: '1.0',
+    stats: { octetsEvites: 0, ecrituresEvitees: 0, rendusEvites: 0, envois: 0 }
+  };
+
+  function log() {
+    if (!CFG.LOG) return;
+    try { console.log.apply(console, ['[AGV-PERF]'].concat([].slice.call(arguments))); } catch (e) {}
+  }
+
+  /* ==========================================================================
+     1. SAUVEGARDE INTELLIGENTE  —  le gain le plus important
+     --------------------------------------------------------------------------
+     AVANT : chaque vente, chaque depense, chaque clic declenchait
+             db.ref('gdv_shops/<uid>/data').set({ TOUTES LES DONNEES })
+             => la base entiere (produits + ventes + factures + dettes + ...)
+             etait re-televersee. Sur une connexion mobile guineenne, avec
+             quelques milliers de ventes, cela represente plusieurs Mo par clic.
+
+     APRES : on compare chaque branche a son dernier etat envoye et on
+             n'envoie QUE les branches reellement modifiees, via update().
+             Les appels rapproches sont regroupes (debounce).
+     ========================================================================== */
+
+  var BRANCHES = ['products', 'ventes', 'depenses', 'gerants', 'entrees', 'appros',
+    'repConfig', 'dettes', 'clients', 'factureVentes', 'fournisseurs', 'commandes'];
+
+  var DERNIER = {};        // branche -> JSON de la derniere version envoyee
+  var minuterie = null;
+  var envoiEnCours = false;
+  var redemande = false;
+
+  // Lit une variable globale declaree en `let` dans un autre <script>.
+  // Les `let` de haut niveau ne sont PAS sur window : on passe par
+  // window._boutique (deja expose par l'application) puis par eval indirect,
+  // avec repli sur window si la politique de securite interdit eval.
+  var evalOK = true;
+  function lire(nom) {
+    var b = window._boutique;
+    if (b && nom in b) { try { return b[nom]; } catch (e) {} }
+    if (evalOK) {
+      try { return (0, eval)(nom); }
+      catch (e) { if (e instanceof EvalError || /unsafe-eval|CSP/i.test(e.message || '')) evalOK = false; }
+    }
+    return window[nom];
+  }
+
+  function cheminData() {
+    var s = window._currentShop;
+    return (s && s.uid) ? ('gdv_shops/' + s.uid + '/data') : null;
+  }
+
+  // Amorce DERNIER depuis le cache local : evite un premier envoi complet inutile
+  function amorcerReference() {
+    try {
+      var s = window._currentShop;
+      if (!s || !s.uid) return;
+      var brut = localStorage.getItem('agv_cache_' + s.uid);
+      if (!brut) return;
+      var d = JSON.parse(brut);
+      BRANCHES.forEach(function (b) {
+        if (d && d[b] != null) DERNIER[b] = JSON.stringify(normaliser(d[b]));
+      });
+      log('reference amorcee depuis le cache local');
+    } catch (e) {}
+  }
+
+  function normaliser(v) {
+    if (!v) return [];
+    if (Array.isArray(v)) return v;
+    try { return Object.values(v); } catch (e) { return []; }
+  }
+
+  function indicateur(txt, couleur) {
+    var el = document.getElementById('syncIndicator');
+    if (!el) return;
+    el.textContent = txt;
+    el.style.color = couleur;
+  }
+
+  function envoyerMaintenant() {
+    if (!API.actif) return;
+    if (!window._AGV_READY) return;                 // garde d'origine conservee
+    if (!window.db || typeof window.db.ref !== 'function') return;
+
+    var chemin = cheminData();
+    if (!chemin) return;
+
+    if (envoiEnCours) { redemande = true; return; }
+
+    var maj = {};
+    var poidsTotal = 0, poidsEnvoye = 0;
+
+    BRANCHES.forEach(function (b) {
+      var valeur = normaliser(lire(b));
+      var txt;
+      try { txt = JSON.stringify(valeur); } catch (e) { return; }
+      poidsTotal += txt.length;
+      if (DERNIER[b] !== txt) {
+        // JSON.parse supprime les `undefined` -> evite l'erreur Firebase
+        // "contains undefined" qui faisait echouer des sauvegardes silencieusement
+        try { maj[b] = JSON.parse(txt); } catch (e) { return; }
+        DERNIER[b] = txt;
+        poidsEnvoye += txt.length;
+      }
+    });
+
+    var cles = Object.keys(maj);
+    if (!cles.length) {
+      API.stats.ecrituresEvitees++;
+      API.stats.octetsEvites += poidsTotal;
+      log('rien de modifie -> aucun envoi (' + Math.round(poidsTotal / 1024) + ' Ko economises)');
+      indicateur('Cloud actif', '#2563eb');
+      return;
+    }
+
+    API.stats.octetsEvites += (poidsTotal - poidsEnvoye);
+    API.stats.envois++;
+    envoiEnCours = true;
+    indicateur('Sauvegarde...', '#f59e0b');
+
+    window.db.ref(chemin).update(maj).then(function () {
+      envoiEnCours = false;
+      indicateur('Sauvegarde OK', '#22c55e');
+      setTimeout(function () { indicateur('Cloud actif', '#2563eb'); }, 1500);
+      log('envoye: ' + cles.join(', ') + ' (' + Math.round(poidsEnvoye / 1024) +
+          ' Ko au lieu de ' + Math.round(poidsTotal / 1024) + ' Ko)');
+      if (redemande) { redemande = false; programmer(); }
+    }).catch(function (err) {
+      envoiEnCours = false;
+      // Echec : on annule la reference pour que la prochaine tentative renvoie
+      cles.forEach(function (k) { delete DERNIER[k]; });
+      indicateur('Hors ligne — nouvelle tentative...', '#ef4444');
+      log('echec envoi, nouvelle tentative dans ' + CFG.RETRY_MS + 'ms', err && err.message);
+      setTimeout(programmer, CFG.RETRY_MS);
+    });
+  }
+
+  function programmer() {
+    if (!API.actif) return;
+    clearTimeout(minuterie);
+    minuterie = setTimeout(envoyerMaintenant, CFG.DEBOUNCE_SAVE);
+  }
+
+  // Sauvegarde immediate forcee (a appeler avant deconnexion / fermeture)
+  API.viderFileAttente = function () {
+    clearTimeout(minuterie);
+    envoyerMaintenant();
+  };
+
+  /* ==========================================================================
+     2. SUPPRESSION DE L'ECOUTEUR ORPHELIN  db.ref('boutique')
+     --------------------------------------------------------------------------
+     Le fichier contient encore agvAttachBoutiqueListener() qui ecoute le chemin
+     GLOBAL 'boutique' — heritage de la version mono-boutique. Ce chemin n'est
+     plus jamais ecrit (les sauvegardes vont vers gdv_shops/<uid>/data) mais
+     l'ecouteur reste attache : il telecharge des donnees inutiles et declenche
+     un second cycle de rendu complet (appliquerDonneesFirebase) a chaque
+     evenement. Deux rendus complets au lieu d'un.
+     ========================================================================== */
+  function couperEcouteurOrphelin() {
+    // Empeche les futures re-tentatives
+    try { window.agvAttachBoutiqueListener = function () {}; } catch (e) {}
+    try {
+      if (window.db && typeof window.db.ref === 'function') {
+        window.db.ref('boutique').off();
+        log("ecouteur orphelin 'boutique' detache");
+        return true;
+      }
+    } catch (e) {}
+    return false;
+  }
+
+  /* ==========================================================================
+     3. REGROUPEMENT DES RENDUS (coalescing)
+     --------------------------------------------------------------------------
+     AVANT : chaque snapshot Firebase appelait a la suite renderDashboard(),
+             renderAlerts(), buildCatFilters(), buildDatalist(), renderDepenses(),
+             renderDettes(), renderGerants(), renderTable()... soit une dizaine
+             de reconstructions DOM completes. Et comme chaque sauvegarde
+             declenche un snapshot en retour, une seule vente provoquait
+             2 cycles x 10 rendus.
+
+     APRES : tous les appels emis dans la meme frame sont fusionnes en un seul
+             rendu par fonction, execute au prochain rafraichissement ecran.
+     ========================================================================== */
+
+  var A_RENDRE = ['renderDashboard', 'renderAlerts', 'renderAlertes', 'buildCatFilters',
+    'buildDatalist', 'buildMonthFilters', 'renderDepenses', 'renderDettes',
+    'renderGerants', 'renderTable', 'renderInventaire', 'renderVentesHistory',
+    'renderFacturesList', 'renderClientsListe', 'renderCommandesList',
+    'renderFournisseurs', 'renderJournalier', 'renderRepartition', 'renderSalaires',
+    'refreshVentesHistory'];
+
+  var enAttente = Object.create(null);
+  var frameArmee = false;
+
+  function planifier() {
+    if (frameArmee) return;
+    frameArmee = true;
+    var lancer = window.requestAnimationFrame || function (f) { return setTimeout(f, 16); };
+    lancer(function () {
+      frameArmee = false;
+      var liste = enAttente;
+      enAttente = Object.create(null);
+      for (var nom in liste) {
+        try { liste[nom](); } catch (e) { log('erreur rendu ' + nom, e && e.message); }
+      }
+    });
+  }
+
+  function regrouperRendus() {
+    var n = 0;
+    A_RENDRE.forEach(function (nom) {
+      var orig = window[nom];
+      if (typeof orig !== 'function' || orig.__agvWrapped) return;
+      var enveloppe = function () {
+        // Appel avec arguments -> execution immediate (on ne prend pas de risque)
+        if (arguments.length) return orig.apply(this, arguments);
+        if (enAttente[nom]) { API.stats.rendusEvites++; return; }
+        enAttente[nom] = orig;
+        planifier();
+      };
+      enveloppe.__agvWrapped = true;
+      enveloppe.__agvOrig = orig;
+      window[nom] = enveloppe;
+      n++;
+    });
+    log(n + ' fonctions de rendu regroupees');
+  }
+
+  /* ==========================================================================
+     4. INDEX MEMOIRE  —  fin des recherches lineaires
+     --------------------------------------------------------------------------
+     getProductFromInput() et _findProd() font un products.find() a chaque
+     frappe clavier et a chaque ligne de tableau. getSoldeClient() /
+     getTotalAchatsClient() re-parcourent TOUTES les factures pour CHAQUE
+     client affiche (comportement quadratique : 200 clients x 3000 factures
+     = 600 000 comparaisons par affichage de la liste clients).
+
+     On construit des index (Map) reconstruits uniquement quand les donnees
+     changent reellement.
+     ========================================================================== */
+
+  var IDX = { refProduit: null, nomProduit: null, soldeClient: null, achatsClient: null };
+  var empreinteProduits = '', empreinteFactures = '';
+
+  function empreinte(arr) {
+    arr = normaliser(arr);
+    if (!arr.length) return '0';
+    var d = arr[0], f = arr[arr.length - 1];
+    return arr.length + '|' + (d && (d.id || d.reference || '')) + '|' + (f && (f.id || f.reference || ''));
+  }
+
+  function indexProduits() {
+    var prods = normaliser(lire('products'));
+    var emp = empreinte(prods) + '|' + prods.length;
+    if (IDX.refProduit && emp === empreinteProduits) return;
+    empreinteProduits = emp;
+    IDX.refProduit = new Map();
+    IDX.nomProduit = new Map();
+    prods.forEach(function (p) {
+      if (!p) return;
+      if (p.reference) IDX.refProduit.set(String(p.reference), p);
+      if (p.ref) IDX.refProduit.set(String(p.ref), p);
+      if (p.designation) IDX.nomProduit.set(String(p.designation).toLowerCase(), p);
+    });
+  }
+
+  function indexFactures() {
+    var facts = normaliser(lire('factureVentes'));
+    var emp = empreinte(facts) + '|' + facts.length + '|' + (API.stats.envois);
+    if (IDX.soldeClient && emp === empreinteFactures) return;
+    empreinteFactures = emp;
+    IDX.soldeClient = new Map();
+    IDX.achatsClient = new Map();
+    facts.forEach(function (f) {
+      if (!f) return;
+      var c = String(f.clientId);
+      IDX.soldeClient.set(c, (IDX.soldeClient.get(c) || 0) + (f.soldeRestant || 0));
+      IDX.achatsClient.set(c, (IDX.achatsClient.get(c) || 0) + (f.montantTotal || 0));
+    });
+  }
+
+  function poserIndex() {
+    if (typeof window.getProductFromInput === 'function' && !window.getProductFromInput.__agvWrapped) {
+      var origGPI = window.getProductFromInput;
+      var f1 = function (val) {
+        try {
+          indexProduits();
+          if (typeof val !== 'string') return origGPI(val);
+          var m = val.match(/\(([^)]+)\)$/);
+          if (m) return IDX.refProduit.get(m[1]) || undefined;
+          return IDX.nomProduit.get(val.toLowerCase()) || undefined;
+        } catch (e) { return origGPI(val); }
+      };
+      f1.__agvWrapped = true; window.getProductFromInput = f1;
+    }
+
+    if (typeof window.getSoldeClient === 'function' && !window.getSoldeClient.__agvWrapped) {
+      var origSolde = window.getSoldeClient;
+      var f2 = function (id) {
+        try { indexFactures(); return IDX.soldeClient.get(String(id)) || 0; }
+        catch (e) { return origSolde(id); }
+      };
+      f2.__agvWrapped = true; window.getSoldeClient = f2;
+    }
+
+    if (typeof window.getTotalAchatsClient === 'function' && !window.getTotalAchatsClient.__agvWrapped) {
+      var origAchats = window.getTotalAchatsClient;
+      var f3 = function (id) {
+        try { indexFactures(); return IDX.achatsClient.get(String(id)) || 0; }
+        catch (e) { return origAchats(id); }
+      };
+      f3.__agvWrapped = true; window.getTotalAchatsClient = f3;
+    }
+    log('index memoire installes');
+  }
+
+  /* ==========================================================================
+     5. ECRITURE DU CACHE LOCAL HORS DU CHEMIN CRITIQUE
+     --------------------------------------------------------------------------
+     L'ecouteur fait localStorage.setItem('agv_cache_<uid>', JSON.stringify(data))
+     a chaque snapshot. Sur plusieurs Mo, cette ecriture est SYNCHRONE et gele
+     l'interface (l'utilisateur voit l'application "bloquer" une seconde).
+     On la reporte au temps mort du navigateur et on ne garde que la derniere.
+     ========================================================================== */
+  function differerCache() {
+    if (localStorage.setItem.__agvWrapped) return;
+    var orig = localStorage.setItem.bind(localStorage);
+    var enAttenteCache = null, armee = false;
+    var repos = window.requestIdleCallback || function (f) { return setTimeout(f, 200); };
+    var remplacement = function (cle, valeur) {
+      if (typeof cle === 'string' && cle.indexOf('agv_cache_') === 0) {
+        enAttenteCache = [cle, valeur];
+        if (!armee) {
+          armee = true;
+          repos(function () {
+            armee = false;
+            var t = enAttenteCache; enAttenteCache = null;
+            if (t) { try { orig(t[0], t[1]); } catch (e) {} }
+          });
+        }
+        return;
+      }
+      return orig(cle, valeur);
+    };
+    remplacement.__agvWrapped = true;
+    try {
+      localStorage.setItem = remplacement;
+      log('ecriture du cache local differee');
+    } catch (e) {}
+  }
+
+  /* ==========================================================================
+     ACTIVATION
+     ========================================================================== */
+
+  function activer() {
+    if (typeof window.sauvegarderFirebase === 'function' && !window.sauvegarderFirebase.__agvWrapped) {
+      var origine = window.sauvegarderFirebase;
+      var nouvelle = function () {
+        if (!API.actif) return origine.apply(this, arguments);
+        programmer();
+      };
+      nouvelle.__agvWrapped = true;
+      nouvelle.__agvOrig = origine;
+      window.sauvegarderFirebase = nouvelle;
+      amorcerReference();
+      log('sauvegarde intelligente activee');
+      return true;
+    }
+    return false;
+  }
+
+  // On attend que l'application soit lancee (sauvegarderFirebase n'existe
+  // qu'apres la connexion a une boutique).
+  var essais = 0;
+  var attente = setInterval(function () {
+    essais++;
+    var pret = activer();
+    couperEcouteurOrphelin();
+    if (pret) {
+      regrouperRendus();
+      poserIndex();
+      differerCache();
+      clearInterval(attente);
+      log('module actif — v' + API.version);
+    }
+    if (essais > 600) clearInterval(attente);   // abandon apres 5 min
+  }, 500);
+
+  // Filet de securite : ne jamais perdre une modification en attente
+  window.addEventListener('beforeunload', function () {
+    if (minuterie) API.viderFileAttente();
+  });
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'hidden' && minuterie) API.viderFileAttente();
+  });
+
+  // Rapport de gains, a taper dans la console : AGV_PERF.rapport()
+  API.rapport = function () {
+    var s = API.stats;
+    console.table({
+      'Envois Firebase reels': s.envois,
+      'Envois evites (rien de change)': s.ecrituresEvitees,
+      'Rendus DOM evites': s.rendusEvites,
+      'Donnees non televersees (Ko)': Math.round(s.octetsEvites / 1024)
+    });
+    return s;
+  };
+
+})();
+
+</script>
+<script>
+/* =============================================================================
+   APP AGV — MODULE 2 : INTEGRITE DES FACTURES  (v1.0)
+   -----------------------------------------------------------------------------
+   Ajoute a vos factures les 5 champs manquants reperes chez Logescom :
+
+     1. numero      -> N° de facture sequentiel et lisible  (ex: AGV-26-0042)
+     2. vendeurNom  -> qui a emis la facture (Fondateur ou gerant)
+     3. dateSaisie  -> horodatage reel de la saisie, distinct de dateOp
+     4. remise / frais -> remise accordee et frais annexes, separes du total
+     5. livraison   -> etat de livraison, independant de l'etat de paiement
+
+   Ajoute aussi la PAGINATION et la ligne CUMUL sur la liste des factures,
+   qui affichait jusqu'ici toutes les factures d'un seul bloc.
+
+   AUCUNE DONNEE N'EST SUPPRIMEE NI MODIFIEE DANS SON SENS.
+   Les factures existantes sont completees (migration additive, idempotente) :
+   elles recoivent un numero attribue dans l'ordre chronologique reel, et les
+   nouveaux champs sont initialises a une valeur neutre.
+
+   INSTALLATION : charger APRES agv-performance.js, juste avant </body>.
+   DESACTIVATION : AGV_FACT.actif = false dans la console.
+   ============================================================================= */
+(function () {
+  'use strict';
+
+  var API = window.AGV_FACT = { actif: true, version: '1.0', PAR_PAGE: 25, page: 1 };
+  var ORIG = {};
+
+  function log() {
+    try { console.log.apply(console, ['[AGV-FACT]'].concat([].slice.call(arguments))); } catch (e) {}
+  }
+
+  /* ---- acces securise aux variables globales de l'application ------------- */
+  function F() { try { return factureVentes || []; } catch (e) { return []; } }
+  function C() { try { return clients || []; } catch (e) { return []; } }
+  function P() { try { return products || []; } catch (e) { return []; } }
+  function G() { try { return gerants || []; } catch (e) { return []; } }
+  function argent(n) { try { return fmtGNF(n || 0); } catch (e) { return (n || 0) + ' GNF'; } }
+  function dire(m) { try { showToast(m); } catch (e) { alert(m); } }
+  function val(id) { var e = document.getElementById(id); return e ? e.value : ''; }
+  function nb(id) { return parseFloat(val(id)) || 0; }
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+
+  /* =========================================================================
+     1. NUMEROTATION SEQUENTIELLE
+     -------------------------------------------------------------------------
+     Format : PPP-YY-NNNN   (ex. AGV-26-0042)
+       PPP  = 3 lettres tirees du nom de la boutique
+       YY   = annee sur 2 chiffres
+       NNNN = rang de la facture DANS l'annee, jamais reutilise
+
+     Interet : avec un id = Date.now(), rien ne permet de voir qu'une facture
+     a ete supprimee. Avec une suite continue, un trou se voit immediatement.
+     ========================================================================= */
+
+  function prefixeBoutique() {
+    var s = window._currentShop || {};
+    var nom = (s.entreprise || s.nom || 'AGV').toUpperCase().replace(/[^A-Z0-9]/g, '');
+    return (nom.slice(0, 3) || 'AGV');
+  }
+
+  function anneeDe(d) {
+    var dt = new Date(d || Date.now());
+    if (isNaN(dt.getTime())) dt = new Date();
+    return dt.getFullYear();
+  }
+
+  function formerNumero(annee, seq) {
+    return prefixeBoutique() + '-' + String(annee).slice(-2) + '-' + String(seq).padStart(4, '0');
+  }
+
+  // Rang suivant disponible pour une annee donnee
+  function prochainRang(annee) {
+    var max = 0;
+    F().forEach(function (f) {
+      if (!f) return;
+      var a = f.annee || anneeDe(f.dateOp || f.date || f.createdAt);
+      if (Number(a) !== Number(annee)) return;
+      var s = Number(f.seq || 0);
+      if (s > max) max = s;
+    });
+    return max + 1;
+  }
+
+  /* =========================================================================
+     2. MIGRATION DES FACTURES EXISTANTES  (additive, idempotente)
+     ========================================================================= */
+
+  var migrationFaite = false;
+
+  function migrer() {
+    if (migrationFaite || !API.actif) return;
+    var list = F();
+    if (!list.length) { return; }              // rien a migrer, on reessaiera
+    if (!window._AGV_READY) return;            // donnees pas encore chargees
+
+    var aTraiter = list.filter(function (f) { return f && !f.numero; });
+    if (!aTraiter.length) { migrationFaite = true; log('aucune migration necessaire'); return; }
+
+    // Ordre chronologique reel : la date de creation fait foi
+    aTraiter.sort(function (a, b) {
+      return new Date(a.createdAt || a.date || 0) - new Date(b.createdAt || b.date || 0);
+    });
+
+    var compteurs = {};
+    aTraiter.forEach(function (f) {
+      var an = anneeDe(f.date || f.createdAt);
+      if (compteurs[an] == null) compteurs[an] = prochainRang(an);
+      f.annee = an;
+      f.seq = compteurs[an]++;
+      f.numero = formerNumero(an, f.seq);
+
+      // Champs nouveaux, valeurs neutres : rien n'est invente
+      if (f.dateSaisie == null) f.dateSaisie = f.createdAt || f.date || new Date().toISOString();
+      if (f.dateOp == null) f.dateOp = f.date || (f.createdAt || '').slice(0, 10);
+      if (f.remise == null) f.remise = 0;
+      if (f.frais == null) f.frais = 0;
+      if (f.livraison == null) f.livraison = 'non_defini';
+      if (f.vendeurNom == null) f.vendeurNom = '';
+      if (f.totalLignes == null) {
+        f.totalLignes = (f.lignes || []).reduce(function (s, l) { return s + (l.total || 0); }, 0);
+      }
+    });
+
+    migrationFaite = true;
+    log(aTraiter.length + ' facture(s) numerotee(s) — la plus ancienne : ' + aTraiter[0].numero);
+    try { if (typeof sauvegarderFirebase === 'function') sauvegarderFirebase(); } catch (e) {}
+    try { if (typeof renderFacturesList === 'function') renderFacturesList(); } catch (e) {}
+    dire('📑 ' + aTraiter.length + ' facture(s) numerotée(s)');
+  }
+
+  /* =========================================================================
+     3. VENDEUR : qui a emis la facture
+     ========================================================================= */
+
+  function vendeurCourant() {
+    try {
+      if (typeof currentRole !== 'undefined' && currentRole === 'fondateur') {
+        return { id: 'fondateur', nom: 'Fondateur' };
+      }
+      var g = G().find(function (x) { return String(x.id) === String(currentGerantId); });
+      if (g) return { id: g.id, nom: g.nom };
+    } catch (e) {}
+    return { id: '', nom: '—' };
+  }
+
+  /* =========================================================================
+     4. NOUVEAUX CHAMPS DANS LA MODALE DE FACTURATION
+     ========================================================================= */
+
+  var LIVRAISONS = {
+    livre:       { label: 'Livré',      icone: '📦', fond: '#dcfce7', trait: '#16a34a' },
+    non_livre:   { label: 'Non livré',  icone: '⏸️', fond: '#fee2e2', trait: '#dc2626' },
+    partiel:     { label: 'Part. livré', icone: '🚚', fond: '#fef9c3', trait: '#ca8a04' },
+    non_defini:  { label: '—',          icone: '',   fond: '#e5e7eb', trait: '#6b7280' }
+  };
+
+  function injecterChamps() {
+    if (document.getElementById('fact-remise')) return true;
+    var ancre = document.getElementById('fact-versement');
+    if (!ancre) return false;
+    var bloc = ancre.closest('.form-group');
+    if (!bloc || !bloc.parentNode) return false;
+    var grille = bloc.parentNode;          // la grille 2 colonnes
+
+    var zone = document.createElement('div');
+    zone.id = 'agv-fact-extra';
+    zone.style.cssText = 'display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:4px';
+    zone.innerHTML =
+      '<div class="form-group">' +
+        '<label class="form-label">Remise (GNF)</label>' +
+        '<input type="number" class="form-input" id="fact-remise" placeholder="0" min="0" oninput="updateFactSolde()">' +
+      '</div>' +
+      '<div class="form-group">' +
+        '<label class="form-label">Frais / Transport</label>' +
+        '<input type="number" class="form-input" id="fact-frais" placeholder="0" min="0" oninput="updateFactSolde()">' +
+      '</div>' +
+      '<div class="form-group">' +
+        '<label class="form-label">État livraison</label>' +
+        '<select class="form-input" id="fact-livraison">' +
+          '<option value="livre">📦 Livré</option>' +
+          '<option value="non_livre">⏸️ Non livré</option>' +
+          '<option value="partiel">🚚 Partiellement livré</option>' +
+        '</select>' +
+      '</div>';
+    grille.parentNode.insertBefore(zone, grille);
+
+    // Bandeau d'identification : n° prevu + vendeur + horodatage de saisie
+    var bandeau = document.createElement('div');
+    bandeau.id = 'agv-fact-entete';
+    bandeau.style.cssText = 'display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;' +
+      'padding:8px 12px;background:var(--surface2);border-radius:8px;font-size:12px;margin-bottom:12px';
+    var titre = document.getElementById('facture-modal-title');
+    if (titre && titre.parentNode && titre.parentNode.parentNode) {
+      titre.parentNode.parentNode.insertBefore(bandeau, titre.parentNode.nextSibling);
+    }
+
+    // Le libelle de la date devient explicite : c'est la date d'operation
+    try {
+      var lab = document.getElementById('fact-date').previousElementSibling;
+      if (lab && lab.classList.contains('form-label')) lab.textContent = "Date d'opération";
+    } catch (e) {}
+
+    log('champs remise / frais / livraison injectes');
+    return true;
+  }
+
+  function majEntete() {
+    var el = document.getElementById('agv-fact-entete');
+    if (!el) return;
+    var editId = val('fact-edit-id');
+    var num, saisie;
+    if (editId) {
+      var f = F().find(function (x) { return String(x.id) === String(editId); }) || {};
+      num = f.numero || '(non numérotée)';
+      saisie = f.dateSaisie ? new Date(f.dateSaisie) : new Date();
+    } else {
+      var an = anneeDe(val('fact-date') || Date.now());
+      num = formerNumero(an, prochainRang(an)) + ' (prévu)';
+      saisie = new Date();
+    }
+    var v = vendeurCourant();
+    el.innerHTML =
+      '<span>🧾 <strong>' + esc(num) + '</strong></span>' +
+      '<span>👤 Vendeur : <strong>' + esc(v.nom) + '</strong></span>' +
+      '<span style="color:var(--text3)">🕐 Saisie : ' +
+        saisie.toLocaleDateString('fr-FR') + ' à ' +
+        saisie.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) + '</span>';
+  }
+
+  /* =========================================================================
+     5. CALCUL DU TOTAL AVEC REMISE ET FRAIS
+     ========================================================================= */
+
+  function calculer() {
+    var lignes = [];
+    try { lignes = getFactLignes(); } catch (e) {}
+    var totalLignes = lignes.reduce(function (s, l) { return s + (l.total || 0); }, 0);
+    var remise = Math.min(nb('fact-remise'), totalLignes);   // jamais superieure au total
+    var frais = nb('fact-frais');
+    var cid = val('fact-client-sel');
+    var dettePrev = 0;
+    try { dettePrev = cid ? getSoldeClient(cid) : 0; } catch (e) {}
+    var netArticles = totalLignes - remise + frais;
+    // [CORRECTIF DETTES] montantTotal est le montant PROPRE de cette facture.
+    // La dette anterieure reste une information d'affichage : l'inclure dans
+    // montantTotal puis sommer les soldes de toutes les factures revenait a
+    // compter la meme dette autant de fois qu'il y avait de factures.
+    var totalDu = netArticles + dettePrev;          // ce que le client doit en tout
+    var versement = nb('fact-versement');
+    var payeSurCetteFacture = Math.min(versement, netArticles);
+    var excedent = Math.max(0, versement - netArticles);   // ira sur les dettes anterieures
+    return {
+      lignes: lignes, totalLignes: totalLignes, remise: remise, frais: frais,
+      netArticles: netArticles, dettePrev: dettePrev,
+      montantTotal: netArticles,                    // propre a la facture
+      totalDu: totalDu,                             // affichage uniquement
+      versement: versement,
+      payeSurCetteFacture: payeSurCetteFacture,
+      excedent: excedent,
+      solde: Math.max(0, netArticles - payeSurCetteFacture),
+      soldeGlobal: Math.max(0, totalDu - versement)
+    };
+  }
+
+  function updateFactSolde_v2() {
+    if (!API.actif) return ORIG.updateFactSolde.apply(this, arguments);
+    var c = calculer();
+    var prev = document.getElementById('fact-total-preview');
+    if (prev) {
+      prev.innerHTML =
+        'Articles : <span style="color:var(--green)">' + argent(c.totalLignes) + '</span>' +
+        (c.remise > 0 ? ' − Remise : <span style="color:var(--accent)">' + argent(c.remise) + '</span>' : '') +
+        (c.frais > 0 ? ' + Frais : <span style="color:var(--text3)">' + argent(c.frais) + '</span>' : '') +
+        ' = <strong>' + argent(c.netArticles) + '</strong>' +
+        (c.dettePrev > 0
+          ? '<div style="font-size:12px;font-weight:400;margin-top:4px;color:var(--text3)">' +
+            'Dette antérieure : <span style="color:var(--red)">' + argent(c.dettePrev) + '</span>' +
+            ' → total dû par le client : <strong>' + argent(c.totalDu) + '</strong></div>'
+          : '');
+    }
+    var sEl = document.getElementById('fact-solde-preview');
+    if (sEl) {
+      sEl.innerHTML = 'Reste sur cette facture : <strong style="color:' +
+        (c.solde > 0 ? 'var(--red)' : 'var(--green)') + '">' + argent(c.solde) + '</strong>' +
+        (c.excedent > 0
+          ? '<div style="font-size:11px;font-weight:400;color:var(--green);margin-top:3px">' +
+            argent(c.excedent) + ' iront sur les dettes antérieures</div>'
+          : '') +
+        (c.solde <= 0 && c.netArticles > 0 && c.excedent === 0 ? ' ✅ Soldée' : '');
+    }
+    majEntete();
+  }
+
+  /* =========================================================================
+     6. ENREGISTREMENT
+     ========================================================================= */
+
+  function saveFacture_v2() {
+    if (!API.actif) return ORIG.saveFacture.apply(this, arguments);
+
+    var cid = val('fact-client-sel');
+    if (!cid) { dire('Choisissez un client'); return; }
+    var c = calculer();
+    if (!c.lignes.length) { dire('Ajoutez au moins un article'); return; }
+
+    var cl = C().find(function (x) { return String(x.id) === String(cid); });
+    var editId = val('fact-edit-id');
+    var maintenant = new Date().toISOString();
+    var dateOp = val('fact-date') || maintenant.slice(0, 10);
+    var v = vendeurCourant();
+    var ancienne = editId ? F().find(function (f) { return String(f.id) === String(editId); }) : null;
+
+    // Numero : conserve en modification, attribue en creation. Jamais reutilise.
+    var annee, seq, numero;
+    if (ancienne && ancienne.numero) {
+      annee = ancienne.annee; seq = ancienne.seq; numero = ancienne.numero;
+    } else {
+      annee = anneeDe(dateOp); seq = prochainRang(annee); numero = formerNumero(annee, seq);
+    }
+
+    var fact = {
+      id: editId || String(Date.now()),
+      numero: numero, annee: annee, seq: seq,
+      clientId: cid,
+      clientNom: cl ? cl.nom : '',
+      date: dateOp,                       // conserve pour compatibilite avec l'existant
+      dateOp: dateOp,                     // date de l'operation commerciale
+      dateSaisie: ancienne ? (ancienne.dateSaisie || maintenant) : maintenant,
+      dateModif: ancienne ? maintenant : null,
+      vendeurId: ancienne && ancienne.vendeurId ? ancienne.vendeurId : v.id,
+      vendeurNom: ancienne && ancienne.vendeurNom ? ancienne.vendeurNom : v.nom,
+      modifiePar: ancienne ? v.nom : null,
+      note: val('fact-note') || '',
+      lignes: c.lignes,
+      totalLignes: c.totalLignes,
+      remise: c.remise,
+      frais: c.frais,
+      netArticles: c.netArticles,
+      dettePrecedente: c.dettePrev,       // information : report affiche sur le document
+      totalDu: c.totalDu,                 // information : net + report
+      montantTotal: c.netArticles,        // montant PROPRE de cette facture
+      montantPaye: c.payeSurCetteFacture,
+      soldeRestant: c.solde,
+      statut: c.solde === 0 ? 'paye' : (c.payeSurCetteFacture > 0 ? 'partiel' : 'impaye'),
+      livraison: val('fact-livraison') || 'livre',
+      paiements: c.payeSurCetteFacture > 0
+        ? [{ date: maintenant.slice(0, 10), montant: c.payeSurCetteFacture, note: 'Versement initial', par: v.nom }]
+        : [],
+      createdAt: ancienne ? (ancienne.createdAt || maintenant) : maintenant
+    };
+
+    if (editId && ancienne) {
+      var idx = F().findIndex(function (f) { return String(f.id) === String(editId); });
+      fact.paiements = ancienne.paiements || [];
+      if (c.payeSurCetteFacture > 0) {
+        fact.paiements = fact.paiements.concat([
+          { date: maintenant.slice(0, 10), montant: c.payeSurCetteFacture, note: 'Versement', par: v.nom }
+        ]);
+      }
+      if (idx >= 0) factureVentes[idx] = fact; else factureVentes.unshift(fact);
+    } else {
+      factureVentes.unshift(fact);
+    }
+
+    // Un versement superieur au montant de la facture regle les dettes
+    // anterieures, de la plus ancienne a la plus recente. Sans cela, le
+    // trop-percu restait attache a cette facture et la dette du client
+    // ne bougeait pas.
+    var messageExcedent = '';
+    if (c.excedent > 0 && window.AGV_DETTES && typeof window.AGV_DETTES.repartir === 'function') {
+      var affecte = window.AGV_DETTES.repartir(cid, c.excedent, maintenant.slice(0, 10),
+        'Report du versement de la facture ' + fact.numero, v.nom, fact.id);
+      if (affecte > 0) messageExcedent = ' — ' + argent(affecte) + ' imputés aux factures antérieures';
+    }
+
+    try { if (typeof sauvegarderFirebase === 'function') sauvegarderFirebase(); } catch (e) {}
+    try { closeFactureModal(); } catch (e) {}
+    try { renderFacturesList(); } catch (e) {}
+    try { if (typeof renderClientsListe === 'function') renderClientsListe(); } catch (e) {}
+    dire('✅ Facture ' + fact.numero + ' enregistrée' +
+      (fact.soldeRestant > 0 ? ' — Reste : ' + argent(fact.soldeRestant) : '') + messageExcedent);
+  }
+
+  /* =========================================================================
+     7. OUVERTURE / EDITION : pre-remplir les nouveaux champs
+     ========================================================================= */
+
+  function openFactureModal_v2(clientId) {
+    var r = ORIG.openFactureModal.apply(this, arguments);
+    injecterChamps();
+    var rem = document.getElementById('fact-remise'); if (rem) rem.value = '';
+    var fr = document.getElementById('fact-frais'); if (fr) fr.value = '';
+    var lv = document.getElementById('fact-livraison'); if (lv) lv.value = 'livre';
+    majEntete();
+    updateFactSolde_v2();
+    return r;
+  }
+
+  function editFacture_v2(id) {
+    var r = ORIG.editFacture.apply(this, arguments);
+    injecterChamps();
+    var f = F().find(function (x) { return String(x.id) === String(id); });
+    if (f) {
+      var rem = document.getElementById('fact-remise'); if (rem) rem.value = f.remise || '';
+      var fr = document.getElementById('fact-frais'); if (fr) fr.value = f.frais || '';
+      var lv = document.getElementById('fact-livraison'); if (lv) lv.value = f.livraison && f.livraison !== 'non_defini' ? f.livraison : 'livre';
+      var dt = document.getElementById('fact-date'); if (dt) dt.value = f.dateOp || f.date || '';
+    }
+    majEntete();
+    updateFactSolde_v2();
+    return r;
+  }
+
+  /* =========================================================================
+     8. LISTE DES FACTURES : numero, vendeur, livraison, PAGINATION, CUMUL
+     -------------------------------------------------------------------------
+     L'ancienne version generait TOUTES les factures d'un coup, avec un
+     clients.find() par facture. On pagine par 25 et on indexe les clients.
+     ========================================================================= */
+
+  function badgeStatut(s) {
+    if (s === 'paye') return '<span style="background:#dcfce7;color:#16a34a;padding:2px 10px;border-radius:20px;font-size:11px;font-weight:700">✅ Payé</span>';
+    if (s === 'partiel') return '<span style="background:#fef9c3;color:#ca8a04;padding:2px 10px;border-radius:20px;font-size:11px;font-weight:700">⏳ Partiel</span>';
+    return '<span style="background:#fee2e2;color:#dc2626;padding:2px 10px;border-radius:20px;font-size:11px;font-weight:700">🔴 Impayé</span>';
+  }
+
+  function badgeLivraison(l) {
+    var d = LIVRAISONS[l || 'non_defini'] || LIVRAISONS.non_defini;
+    if (l === 'non_defini' || !l) return '';
+    return '<span style="background:' + d.fond + ';color:' + d.trait + ';padding:2px 10px;border-radius:20px;font-size:11px;font-weight:700;margin-left:5px">' + d.icone + ' ' + d.label + '</span>';
+  }
+
+  API.allerPage = function (n) { API.page = n; renderFacturesList(); var el = document.getElementById('factures-mgr-list'); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); };
+
+  function renderFacturesList_v2() {
+    if (!API.actif) return ORIG.renderFacturesList.apply(this, arguments);
+    var el = document.getElementById('factures-mgr-list');
+    if (!el) return;
+
+    var cid = val('fact-filter-client');
+    var statut = val('fact-filter-statut');
+    var from = val('fact-date-from');
+    var to = val('fact-date-to');
+
+    var list = F().filter(function (f) {
+      if (!f) return false;
+      if (cid && String(f.clientId) !== String(cid)) return false;
+      if (statut && f.statut !== statut) return false;
+      var d = f.dateOp || f.date || '';
+      if (from && d < from) return false;
+      if (to && d > to) return false;
+      return true;
+    }).slice().sort(function (a, b) {
+      return new Date(b.createdAt || b.date || 0) - new Date(a.createdAt || a.date || 0);
+    });
+
+    if (!list.length) {
+      el.innerHTML = '<div class="empty"><div class="empty-icon">🧾</div><div class="empty-text">Aucune facture</div></div>';
+      return;
+    }
+
+    // Index clients : une seule construction au lieu d'un find() par facture
+    var idxCli = new Map();
+    C().forEach(function (c) { if (c) idxCli.set(String(c.id), c); });
+
+    // CUMUL sur la totalite du filtre, pas seulement la page affichee
+    var cum = list.reduce(function (a, f) {
+      a.total += f.montantTotal || 0;
+      a.remise += f.remise || 0;
+      a.frais += f.frais || 0;
+      a.paye += f.montantPaye || 0;
+      a.solde += f.soldeRestant || 0;
+      return a;
+    }, { total: 0, remise: 0, frais: 0, paye: 0, solde: 0 });
+
+    var pages = Math.max(1, Math.ceil(list.length / API.PAR_PAGE));
+    if (API.page > pages) API.page = pages;
+    if (API.page < 1) API.page = 1;
+    var debut = (API.page - 1) * API.PAR_PAGE;
+    var tranche = list.slice(debut, debut + API.PAR_PAGE);
+
+    var enteteCumul =
+      '<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px;padding:12px;margin-bottom:14px;' +
+      'background:var(--accent-light);border-radius:10px;font-size:12px">' +
+      ['Total facturé|' + argent(cum.total) + '|var(--accent)',
+       'Remises|' + argent(cum.remise) + '|var(--text3)',
+       'Frais|' + argent(cum.frais) + '|var(--text3)',
+       'Encaissé|' + argent(cum.paye) + '|var(--green)',
+       'Reste dû|' + argent(cum.solde) + '|' + (cum.solde > 0 ? 'var(--red)' : 'var(--green)')
+      ].map(function (x) {
+        var p = x.split('|');
+        return '<div style="text-align:center"><div style="font-size:10px;color:var(--text3);text-transform:uppercase">' +
+          p[0] + '</div><div style="font-weight:700;color:' + p[2] + '">' + p[1] + '</div></div>';
+      }).join('') +
+      '</div>' +
+      '<div style="font-size:12px;color:var(--text3);margin-bottom:10px">' +
+      list.length + ' facture(s) — affichage ' + (debut + 1) + ' à ' + Math.min(debut + API.PAR_PAGE, list.length) +
+      '</div>';
+
+    var cartes = tranche.map(function (fact) {
+      var cl = idxCli.get(String(fact.clientId)) || { nom: fact.clientNom || '?' };
+      var lignesHtml = (fact.lignes || []).map(function (l) {
+        return '<div style="display:flex;justify-content:space-between;font-size:12px;padding:4px 0;border-bottom:1px solid var(--border)">' +
+          '<span><strong>' + esc(l.produit) + '</strong> × ' + l.qte + '</span>' +
+          '<span style="font-weight:700;color:var(--green)">' + argent(l.total || 0) + '</span></div>';
+      }).join('');
+
+      var saisie = fact.dateSaisie ? new Date(fact.dateSaisie) : null;
+      var dOp = fact.dateOp || fact.date;
+      var decale = saisie && dOp && saisie.toISOString().slice(0, 10) !== dOp;
+
+      return '<div class="card" style="margin-bottom:14px">' +
+        '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px">' +
+        '<div>' +
+        (fact.numero ? '<div style="font-family:monospace;font-size:12px;font-weight:700;color:var(--accent);letter-spacing:.5px">' + esc(fact.numero) + '</div>' : '') +
+        '<div style="font-weight:700;font-size:15px">' + esc(cl.nom) + '</div>' +
+        '<div style="font-size:12px;color:var(--text3)">📅 Op. ' + (dOp ? new Date(dOp).toLocaleDateString('fr-FR') : '—') +
+          (saisie ? ' · 🕐 saisie ' + saisie.toLocaleDateString('fr-FR') + ' à ' + saisie.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : '') +
+          (decale ? ' <span style="color:var(--red)" title="La date d\'opération diffère de la date de saisie">⚠</span>' : '') + '</div>' +
+        '<div style="font-size:12px;color:var(--text3)">👤 ' + esc(fact.vendeurNom || '—') +
+          (fact.modifiePar ? ' · modifiée par ' + esc(fact.modifiePar) : '') + '</div>' +
+        (fact.note ? '<div style="font-size:12px;color:var(--text3);font-style:italic">' + esc(fact.note) + '</div>' : '') +
+        '</div>' +
+        '<div style="text-align:right">' + badgeStatut(fact.statut) + badgeLivraison(fact.livraison) +
+        '<div style="margin-top:6px;font-size:12px"><span style="color:var(--text3)">Total : </span><strong>' + argent(fact.montantTotal || 0) + '</strong></div>' +
+        (fact.remise > 0 ? '<div style="font-size:11px;color:var(--accent)">remise : −' + argent(fact.remise) + '</div>' : '') +
+        (fact.frais > 0 ? '<div style="font-size:11px;color:var(--text3)">frais : +' + argent(fact.frais) + '</div>' : '') +
+        (fact.dettePrecedente > 0 ? '<div style="font-size:11px;color:var(--text3)">dont dette préc. : ' + argent(fact.dettePrecedente) + '</div>' : '') +
+        (fact.soldeRestant > 0 ? '<div style="font-size:12px;font-weight:700;color:var(--red)">Solde : ' + argent(fact.soldeRestant) + '</div>' : '') +
+        '</div></div>' +
+        '<div style="margin-bottom:12px">' + lignesHtml + '</div>' +
+        '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px;padding:10px;background:var(--surface2);border-radius:8px">' +
+        '<div style="text-align:center"><div style="font-size:10px;color:var(--text3);text-transform:uppercase">Montant</div><div style="font-weight:700">' + argent(fact.montantTotal || 0) + '</div></div>' +
+        '<div style="text-align:center"><div style="font-size:10px;color:var(--text3);text-transform:uppercase">Payé</div><div style="font-weight:700;color:var(--green)">' + argent(fact.montantPaye || 0) + '</div></div>' +
+        '<div style="text-align:center"><div style="font-size:10px;color:var(--text3);text-transform:uppercase">Solde dû</div><div style="font-weight:700;color:' + (fact.soldeRestant > 0 ? 'var(--red)' : 'var(--green)') + '">' + argent(fact.soldeRestant || 0) + (fact.soldeRestant === 0 ? ' ✅' : '') + '</div></div>' +
+        '</div>' +
+        '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
+        (fact.statut !== 'paye' ? '<button onclick="openVersementCliModal(\'' + fact.id + '\')" style="padding:5px 12px;border:1px solid var(--green-border);border-radius:8px;background:var(--green-bg);color:var(--green);font-family:inherit;font-size:12px;cursor:pointer;font-weight:600">💳 Versement</button>' : '') +
+        '<button onclick="imprimerFacture(\'' + fact.id + '\')" style="padding:5px 12px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text);font-family:inherit;font-size:12px;cursor:pointer">🖨️ PDF</button>' +
+        (cl.whatsapp ? '<button onclick="envoyerFactureClientWA(\'' + fact.id + '\')" style="padding:5px 12px;border:none;border-radius:8px;background:#25d366;color:#fff;font-family:inherit;font-size:12px;cursor:pointer">📱 WA</button>' : '') +
+        (fact.statut !== 'paye' ? '<button onclick="editFacture(\'' + fact.id + '\')" style="padding:5px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text);font-family:inherit;font-size:12px;cursor:pointer">✏️</button>' : '') +
+        '<button onclick="deleteFacture(\'' + fact.id + '\')" style="padding:5px 10px;border:none;border-radius:8px;background:var(--red-bg);color:var(--red);font-family:inherit;font-size:12px;cursor:pointer">🗑️</button>' +
+        '</div>' +
+        (fact.paiements && fact.paiements.length ?
+          '<div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border)">' +
+          '<div style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;margin-bottom:6px">Historique paiements</div>' +
+          fact.paiements.map(function (p) {
+            return '<div style="display:flex;justify-content:space-between;font-size:12px;padding:3px 0;border-bottom:1px solid var(--border)">' +
+              '<span>' + new Date(p.date).toLocaleDateString('fr-FR') + '</span>' +
+              (p.note ? '<span style="color:var(--text3)">' + esc(p.note) + (p.par ? ' · ' + esc(p.par) : '') + '</span>' : '') +
+              '<span style="font-weight:700;color:var(--green)">' + argent(p.montant) + '</span></div>';
+          }).join('') + '</div>' : '') +
+        '</div>';
+    }).join('');
+
+    var nav = '';
+    if (pages > 1) {
+      var b = function (n, txt, actif) {
+        return '<button onclick="AGV_FACT.allerPage(' + n + ')" style="padding:6px 12px;border:1px solid var(--border);border-radius:8px;' +
+          'background:' + (actif ? 'var(--accent)' : 'var(--surface2)') + ';color:' + (actif ? '#fff' : 'var(--text)') +
+          ';font-family:inherit;font-size:12px;cursor:pointer;font-weight:' + (actif ? '700' : '400') + '">' + txt + '</button>';
+      };
+      nav = '<div style="display:flex;gap:6px;justify-content:center;flex-wrap:wrap;margin-top:14px">';
+      if (API.page > 1) nav += b(API.page - 1, '‹ Préc.', false);
+      for (var i = 1; i <= pages; i++) {
+        if (i === 1 || i === pages || Math.abs(i - API.page) <= 1) nav += b(i, i, i === API.page);
+        else if (Math.abs(i - API.page) === 2) nav += '<span style="padding:6px 4px;color:var(--text3)">…</span>';
+      }
+      if (API.page < pages) nav += b(API.page + 1, 'Suiv. ›', false);
+      nav += '</div>';
+    }
+
+    el.innerHTML = enteteCumul + cartes + nav;
+  }
+
+  /* =========================================================================
+     9. IMPRESSION : le numero et le detail remise/frais sur le document
+     ========================================================================= */
+
+  function imprimerFacture_v2(factId) {
+    if (!API.actif) return ORIG.imprimerFacture.apply(this, arguments);
+
+    var fact, apercu = (factId === 'preview');
+    if (apercu) {
+      var c = calculer();
+      var cid = val('fact-client-sel');
+      var clp = C().find(function (x) { return String(x.id) === String(cid); });
+      var an = anneeDe(val('fact-date') || Date.now());
+      fact = {
+        id: 'PREVIEW', numero: formerNumero(an, prochainRang(an)) + ' (aperçu)',
+        clientId: cid, clientNom: clp ? clp.nom : 'Client',
+        dateOp: val('fact-date') || new Date().toISOString().slice(0, 10),
+        dateSaisie: new Date().toISOString(),
+        vendeurNom: vendeurCourant().nom,
+        lignes: c.lignes, totalLignes: c.totalLignes, remise: c.remise, frais: c.frais,
+        dettePrecedente: c.dettePrev, montantTotal: c.netArticles, totalDu: c.totalDu,
+        montantPaye: c.payeSurCetteFacture, soldeRestant: c.solde,
+        note: val('fact-note'), paiements: [],
+        livraison: val('fact-livraison') || 'livre', statut: 'preview'
+      };
+    } else {
+      fact = F().find(function (f) { return String(f.id) === String(factId); });
+      if (!fact) return;
+    }
+
+    var cl = C().find(function (x) { return String(x.id) === String(fact.clientId); }) || { nom: fact.clientNom || '?' };
+    var shop = window._currentShop || {};
+    var now = new Date();
+    var dSaisie = fact.dateSaisie ? new Date(fact.dateSaisie) : now;
+    var liv = LIVRAISONS[fact.livraison || 'non_defini'] || LIVRAISONS.non_defini;
+
+    var css = '@page{size:A4 portrait;margin:15mm 12mm}*{margin:0;padding:0;box-sizing:border-box}' +
+      'body{font-family:Arial,sans-serif;font-size:11px;color:#111;line-height:1.4}' +
+      '.header{display:flex;justify-content:space-between;padding-bottom:10px;border-bottom:2px solid #1e3a5f;margin-bottom:14px}' +
+      '.shop-name{font-size:16px;font-weight:700;color:#1e3a5f}' +
+      '.title{font-size:13px;font-weight:700;color:#1e3a5f;margin:12px 0 10px;text-transform:uppercase;border-bottom:1px solid #e0e0e0;padding-bottom:6px}' +
+      'table{width:100%;border-collapse:collapse;margin-bottom:14px}' +
+      'thead th{background:#1e3a5f;color:#fff;padding:6px 8px;font-size:9px;text-transform:uppercase;text-align:left}' +
+      'tbody td{padding:6px 8px;border-bottom:1px solid #ececec}tbody tr:nth-child(even){background:#f9f9f9}' +
+      '.total-row{background:#1e3a5f;color:#fff;font-weight:700}' +
+      '.footer{margin-top:20px;padding-top:8px;border-top:1px solid #e0e0e0;font-size:9px;color:#999;text-align:center}' +
+      '.signature{display:grid;grid-template-columns:1fr 1fr;gap:40px;margin-top:40px}' +
+      '.sig-box{border-top:1px solid #999;padding-top:8px;font-size:10px;color:#666}' +
+      '.meta{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:12px;font-size:10px}' +
+      '.meta div{padding:6px 8px;background:#f4f6fb;border-radius:4px}' +
+      '.meta b{display:block;color:#666;font-size:8px;text-transform:uppercase;font-weight:700}' +
+      '.no-print{display:none}@media screen{.no-print{display:block;position:fixed;top:10px;right:10px}}';
+
+    var body = '<div class="header"><div>' +
+      (shop.logo ? '<img src="' + shop.logo + '" style="width:48px;height:48px;object-fit:contain;border-radius:6px;float:left;margin-right:10px">' : '') +
+      '<div class="shop-name">' + esc(shop.entreprise || 'Boutique') + '</div>' +
+      (shop.adresse ? '<div style="font-size:10px;color:#666">📍 ' + esc(shop.adresse) + '</div>' : '') +
+      (shop.tel ? '<div style="font-size:10px;color:#666">📞 ' + esc(shop.tel) + '</div>' : '') +
+      '<div style="clear:both"></div></div>' +
+      '<div style="text-align:right">' +
+      '<div style="font-weight:700;font-size:15px;color:#1e3a5f;font-family:monospace">FACTURE ' + esc(fact.numero || fact.id) + '</div>' +
+      '<div style="margin-top:8px;padding:8px;background:#f0f4ff;border-radius:6px;text-align:left">' +
+      '<div style="font-size:10px;color:#666">Facturé à :</div>' +
+      '<div style="font-weight:700">' + esc(cl.nom) + '</div>' +
+      (cl.tel ? '<div style="font-size:10px;color:#666">' + esc(cl.tel) + '</div>' : '') +
+      (cl.adresse ? '<div style="font-size:10px;color:#666">' + esc(cl.adresse) + '</div>' : '') +
+      '</div></div></div>' +
+
+      '<div class="meta">' +
+      '<div><b>Date opération</b>' + (fact.dateOp || fact.date ? new Date(fact.dateOp || fact.date).toLocaleDateString('fr-FR') : '—') + '</div>' +
+      '<div><b>Date de saisie</b>' + dSaisie.toLocaleDateString('fr-FR') + ' à ' + dSaisie.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) + '</div>' +
+      '<div><b>Vendeur</b>' + esc(fact.vendeurNom || '—') + '</div>' +
+      '<div><b>Livraison</b>' + esc(liv.label) + '</div>' +
+      '</div>' +
+
+      (fact.note ? '<div class="title">' + esc(fact.note) + '</div>' : '') +
+      (fact.dettePrecedente > 0 ? '<div style="padding:8px 12px;background:#fee2e2;border-left:3px solid #dc2626;margin-bottom:12px;font-size:12px"><strong>⚠️ Dette antérieure du client : ' + argent(fact.dettePrecedente) + '</strong> — rappel, non inclus dans le total de cette facture</div>' : '') +
+
+      '<table><thead><tr><th>Article / Produit</th><th style="text-align:center">Qté</th><th style="text-align:right">Prix unitaire</th><th style="text-align:right">Total</th></tr></thead><tbody>' +
+      (fact.lignes || []).map(function (l) {
+        return '<tr><td style="font-weight:600">' + esc(l.produit) + '</td><td style="text-align:center">' + l.qte +
+          '</td><td style="text-align:right">' + argent(l.prixU || 0) +
+          '</td><td style="text-align:right;font-weight:700;color:#16a34a">' + argent(l.total || 0) + '</td></tr>';
+      }).join('') +
+      '<tr class="total-row"><td colspan="3">Sous-total articles</td><td style="text-align:right">' + argent(fact.totalLignes || 0) + '</td></tr>' +
+      (fact.remise > 0 ? '<tr style="background:#eef6ff"><td colspan="3" style="font-weight:700">− Remise accordée</td><td style="text-align:right;font-weight:700">−' + argent(fact.remise) + '</td></tr>' : '') +
+      (fact.frais > 0 ? '<tr style="background:#f7f7f7"><td colspan="3" style="font-weight:700">+ Frais / Transport</td><td style="text-align:right;font-weight:700">' + argent(fact.frais) + '</td></tr>' : '') +
+      '<tr class="total-row"><td colspan="3">TOTAL DE CETTE FACTURE</td><td style="text-align:right;font-size:13px">' + argent(fact.montantTotal || 0) + '</td></tr>' +
+      (fact.dettePrecedente > 0
+        ? '<tr style="background:#fee2e2"><td colspan="3" style="color:#dc2626;font-weight:700">Dette antérieure (factures précédentes)</td><td style="text-align:right;color:#dc2626;font-weight:700">' + argent(fact.dettePrecedente) + '</td></tr>' +
+          '<tr class="total-row"><td colspan="3">TOTAL DÛ PAR LE CLIENT</td><td style="text-align:right;font-size:14px">' + argent((fact.totalDu != null ? fact.totalDu : (fact.montantTotal || 0) + fact.dettePrecedente)) + '</td></tr>'
+        : '') +
+      '</tbody></table>' +
+
+      '<table style="width:50%;float:right"><thead><tr><th colspan="2">Situation paiement</th></tr></thead><tbody>' +
+      '<tr><td>Montant de la facture</td><td style="text-align:right;font-weight:700">' + argent(fact.montantTotal || 0) + '</td></tr>' +
+      '<tr><td>Montant payé</td><td style="text-align:right;color:#16a34a;font-weight:700">' + argent(fact.montantPaye || 0) + '</td></tr>' +
+      '<tr style="background:' + (fact.soldeRestant > 0 ? '#fee2e2' : '#dcfce7') + '"><td style="font-weight:700">' +
+      (fact.soldeRestant > 0 ? 'Reste sur cette facture' : '✅ Soldée') + '</td><td style="text-align:right;font-weight:700;color:' +
+      (fact.soldeRestant > 0 ? '#dc2626' : '#16a34a') + '">' + argent(fact.soldeRestant || 0) + '</td></tr>' +
+      (fact.dettePrecedente > 0
+        ? '<tr style="background:#fff7ed"><td style="font-weight:700">Total dû, report compris</td><td style="text-align:right;font-weight:700;color:#b45309">' + argent((fact.totalDu != null ? fact.totalDu : (fact.montantTotal || 0) + fact.dettePrecedente) - (fact.montantPaye || 0)) + '</td></tr>'
+        : '') +
+      '</tbody></table><div style="clear:both"></div>' +
+
+      (fact.paiements && fact.paiements.length ? '<div style="margin-top:10px;font-size:10px;color:#666">Paiements : ' +
+        fact.paiements.map(function (p) {
+          return new Date(p.date).toLocaleDateString('fr-FR') + ' : ' + argent(p.montant) + (p.note ? ' (' + esc(p.note) + ')' : '');
+        }).join(' | ') + '</div>' : '') +
+
+      '<div class="signature"><div class="sig-box">Signature du client : ' + esc(cl.nom) + '</div>' +
+      '<div class="sig-box">Cachet &amp; Signature de ' + esc(shop.entreprise || 'la boutique') + '</div></div>' +
+      '<div class="footer">Facture ' + esc(fact.numero || fact.id) + ' — émise par ' + esc(fact.vendeurNom || '—') +
+      ' — App AGV — ' + now.toLocaleDateString('fr-FR') + '</div>';
+
+    var win = window.open('', '_blank', 'width=900,height=700');
+    if (!win) { alert('Autorisez les popups'); return; }
+    win.document.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Facture ' + esc(fact.numero || '') + '</title><style>' + css + '</style></head><body>');
+    win.document.write(body);
+    win.document.write('<div class="no-print" style="display:flex;gap:8px"><button onclick="window.print()" style="padding:8px 18px;background:#1e3a5f;color:#fff;border:none;border-radius:6px;font-size:13px;font-weight:700;cursor:pointer">🖨️ Imprimer / PDF</button><button onclick="window.close()" style="padding:8px 14px;background:#eee;color:#333;border:none;border-radius:6px;font-size:13px;cursor:pointer">✕ Fermer</button></div>');
+    win.document.write('</body></html>');
+    win.document.close();
+    setTimeout(function () { win.focus(); win.print(); }, 500);
+  }
+
+  /* =========================================================================
+     ACTIVATION
+     ========================================================================= */
+
+  function remplacer(nom, neuve) {
+    if (typeof window[nom] !== 'function' || window[nom].__agvFact) return false;
+    ORIG[nom] = window[nom].__agvWrapped ? window[nom] : window[nom];
+    neuve.__agvFact = true;
+    window[nom] = neuve;
+    return true;
+  }
+
+  var essais = 0;
+  var horloge = setInterval(function () {
+    essais++;
+    if (typeof window.saveFacture !== 'function' || typeof window.renderFacturesList !== 'function') {
+      if (essais > 600) clearInterval(horloge);
+      return;
+    }
+    clearInterval(horloge);
+
+    remplacer('saveFacture', saveFacture_v2);
+    remplacer('updateFactSolde', updateFactSolde_v2);
+    remplacer('openFactureModal', openFactureModal_v2);
+    remplacer('editFacture', editFacture_v2);
+    remplacer('renderFacturesList', renderFacturesList_v2);
+    remplacer('imprimerFacture', imprimerFacture_v2);
+
+    injecterChamps();
+    log('module actif — v' + API.version);
+
+    // Migration : des que les donnees sont chargees
+    var m = setInterval(function () {
+      if (migrationFaite) { clearInterval(m); return; }
+      try { migrer(); } catch (e) { log('migration reportee', e && e.message); }
+    }, 1500);
+    setTimeout(function () { clearInterval(m); }, 120000);
+  }, 500);
+
+  // Outils console
+  API.migrer = function () { migrationFaite = false; migrer(); };
+  // Controle de continuite : detecte les numeros manquants, annee par annee.
+  // Un trou = une facture supprimee. C'est tout l'interet de la numerotation.
+  API.controle = function () {
+    var parAnnee = {};
+    F().forEach(function (f) {
+      if (!f || !f.seq) return;
+      var a = f.annee || anneeDe(f.dateOp || f.date);
+      (parAnnee[a] = parAnnee[a] || []).push(Number(f.seq));
+    });
+    var trous = [], sansNumero = F().filter(function (f) { return f && !f.numero; }).length;
+    Object.keys(parAnnee).sort().forEach(function (a) {
+      var s = parAnnee[a].sort(function (x, y) { return x - y; });
+      var max = s[s.length - 1];
+      var vus = new Set(s);
+      for (var i = 1; i <= max; i++) if (!vus.has(i)) trous.push(formerNumero(a, i));
+      var doublons = s.filter(function (v, i) { return i > 0 && v === s[i - 1]; });
+      if (doublons.length) console.warn('Année ' + a + ' — numéros en double : ' + doublons.join(', '));
+      console.log('Année ' + a + ' : ' + s.length + ' facture(s), dernier n° ' + formerNumero(a, max));
+    });
+    console.log('Numéros manquants : ' + (trous.length ? trous.join(', ') : 'aucun ✅') +
+      (sansNumero ? ' — ' + sansNumero + ' facture(s) non numérotée(s), lancez AGV_FACT.migrer()' : ''));
+    return trous;
+  };
+
+})();
+
+</script>
+<script>
+/* =============================================================================
+   APP AGV — MODULE 3 : PORTAIL DE CONNEXION ET GESTION DES BLOCS  (v1.0)
+   -----------------------------------------------------------------------------
+   Corrige deux comportements du portail :
+
+   A) ENTREE DIRECTE EN UN SEUL CLIC
+      Cause : apres agvBlocOuvrir(), la page se recharge, puis le module
+      « accueilAuLancement » rouvre systematiquement le portail (900 ms apres
+      agvLaunchApp). L'utilisateur retombait donc sur le portail, le bloc
+      marque « ouvert », et devait cliquer une seconde fois (Continuer).
+      Correction : on pose un jeton avant le rechargement ; au retour, la
+      premiere ouverture automatique du portail est sautee. Le portail reste
+      accessible normalement par la pastille et par la deconnexion.
+
+   B) SUPPRESSION REELLE D'UN BLOC
+      Cause : il n'existait que « Vider », qui remet les donnees a zero mais
+      laisse l'entree dans gdv_shops/<uid>/blocs/_meta. Or existe(b) teste
+      justement _meta[b] : le bloc restait donc affiche.
+      Correction : bouton « Supprimer » qui retire _meta/<b>, les donnees du
+      bloc et les rattachements de gerants. Un bloc rattache a une autre
+      boutique est seulement detache : ses donnees ne sont jamais touchees.
+
+   Garde-fous ajoutes : impossible de recreer par-dessus un bloc existant,
+   et la carte « Creer ce bloc » en double est retiree apres une suppression.
+
+   INSTALLATION : charger apres agv-performance.js et agv-factures.js.
+   DESACTIVATION : AGV_PORTAIL.actif = false
+   ============================================================================= */
+(function () {
+  'use strict';
+
+  var API = window.AGV_PORTAIL = { actif: true, version: '1.0' };
+  var CLE_DIRECT = 'agv_entree_directe';
+  var DELAI_JETON = 90000;   // 90 s : au-dela, le jeton est perime
+
+  function log() {
+    try { console.log.apply(console, ['[AGV-PORTAIL]'].concat([].slice.call(arguments))); } catch (e) {}
+  }
+  function dire(m) {
+    try { if (typeof showToast === 'function') return showToast(m); } catch (e) {}
+    try { if (typeof window.toast === 'function') return window.toast(m); } catch (e) {}
+    alert(m);
+  }
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+    });
+  }
+  function uid() {
+    var s = window._currentShop;
+    return (s && s.uid) ? s.uid : null;
+  }
+  function blocActif() {
+    try { if (typeof window.agvBlocActif === 'function') return window.agvBlocActif(); } catch (e) {}
+    return window._agvBloc || 'A';
+  }
+  function estFondateur() {
+    try { if (window.currentRole) return window.currentRole === 'fondateur'; } catch (e) {}
+    try { return currentRole === 'fondateur'; } catch (e) {}
+    return false;
+  }
+  function ref(chemin) {
+    try { return (window.db && window.db.ref) ? window.db.ref(chemin) : null; } catch (e) { return null; }
+  }
+  function tracer(action, detail) {
+    try { if (typeof window.agvJournaliser === 'function') window.agvJournaliser(action, detail); } catch (e) {}
+  }
+
+  /* =========================================================================
+     A. ENTREE DIRECTE DANS UN BLOC — UN SEUL CLIC
+     ========================================================================= */
+
+  function poserJeton(b) {
+    try {
+      sessionStorage.setItem(CLE_DIRECT, JSON.stringify({ bloc: b, t: Date.now() }));
+    } catch (e) {}
+  }
+
+  function prendreJeton() {
+    var j = null;
+    try { j = JSON.parse(sessionStorage.getItem(CLE_DIRECT) || 'null'); } catch (e) {}
+    if (!j || !j.bloc) return null;
+    try { sessionStorage.removeItem(CLE_DIRECT); } catch (e) {}
+    if (Date.now() - Number(j.t || 0) > DELAI_JETON) return null;
+    return j;
+  }
+
+  // Un retour explicite vers l'Administration doit continuer a rouvrir le portail
+  function retourAdministration() {
+    try { return sessionStorage.getItem('agv41_retour') === 'administration'; } catch (e) { return false; }
+  }
+
+  function brancherEntreeDirecte() {
+    // 1. On memorise l'intention juste avant le rechargement de page
+    if (typeof window.agvBlocOuvrir === 'function' && !window.agvBlocOuvrir.__agvPortail) {
+      var ouvrir = window.agvBlocOuvrir;
+      var neuf = function (b) {
+        if (API.actif && b && b !== blocActif()) poserJeton(b);
+        return ouvrir.apply(this, arguments);
+      };
+      neuf.__agvPortail = true;
+      window.agvBlocOuvrir = neuf;
+    }
+
+    // 2. Au retour, la premiere reouverture automatique du portail est sautee
+    if (typeof window.agvAccueilBoutiques === 'function' && !window.agvAccueilBoutiques.__agvPortail) {
+      var accueil = window.agvAccueilBoutiques;
+      var neuf2 = function () {
+        if (API.actif && !retourAdministration()) {
+          var j = prendreJeton();
+          if (j) {
+            log('entree directe dans le bloc ' + j.bloc + ' — portail non rouvert');
+            try { if (typeof window.agvAccueilFermer === 'function') window.agvAccueilFermer(); } catch (e) {}
+            return;
+          }
+        }
+        return accueil.apply(this, arguments);
+      };
+      neuf2.__agvPortail = true;
+      window.agvAccueilBoutiques = neuf2;
+    }
+  }
+
+  // Filet : si le portail a malgre tout ete pose avant que le wrapper soit en
+  // place, on le referme une seule fois tant que le jeton est valable.
+  var filetArme = true;
+  var filet = setInterval(function () {
+    if (!API.actif || !filetArme) return;
+    var j = null;
+    try { j = JSON.parse(sessionStorage.getItem(CLE_DIRECT) || 'null'); } catch (e) {}
+    if (!j || Date.now() - Number(j.t || 0) > DELAI_JETON) return;
+    var ov = document.getElementById('agv-accueil');
+    if (ov && blocActif() === j.bloc && !retourAdministration()) {
+      filetArme = false;
+      try { sessionStorage.removeItem(CLE_DIRECT); } catch (e) {}
+      try { window.agvAccueilFermer(); } catch (e) { ov.remove(); }
+      log('portail referme automatiquement (filet)');
+    }
+  }, 300);
+  setTimeout(function () { clearInterval(filet); }, DELAI_JETON);
+
+  /* =========================================================================
+     B. SUPPRESSION REELLE D'UN BLOC
+     ========================================================================= */
+
+  function lireMeta(cb) {
+    var u = uid();
+    var r = u ? ref('gdv_shops/' + u + '/blocs/_meta') : null;
+    if (!r) return cb(null);
+    r.once('value').then(function (s) { cb(s.val() || {}); }, function () { cb(null); });
+  }
+
+  function nomDuBloc(meta, b) {
+    var m = meta && meta[b];
+    return (m && m.nom) ? String(m.nom) : ('BLOC ' + b);
+  }
+
+  API.supprimer = function (b) {
+    if (!API.actif) return;
+    if (!estFondateur()) return dire('Réservé au fondateur');
+    var u = uid();
+    if (!u) return dire('Boutique non identifiée');
+    if (b === 'A') return dire("La boutique d'origine ne peut pas être supprimée");
+    if (b === blocActif()) return dire('Ouvrez un autre bloc avant de supprimer celui-ci');
+
+    lireMeta(function (meta) {
+      if (!meta) return dire('Base indisponible — réessayez');
+      if (!meta[b]) return dire('Ce bloc n\'existe pas');
+
+      var nom = nomDuBloc(meta, b);
+      var rattache = !!(meta[b] && meta[b].source);
+
+      var message = rattache
+        ? 'Le bloc « ' + nom + ' » est une boutique rattachée.\n\n' +
+          'La suppression ne fait que RETIRER LE LIEN : les données de cette ' +
+          'boutique lui appartiennent et ne seront pas touchées.\n\n' +
+          'Pour confirmer, recopiez exactement le nom du bloc :'
+        : 'Cette action supprime définitivement le bloc « ' + nom + ' » : ' +
+          'produits, ventes, dépenses, clients, dettes, factures, gérants.\n\n' +
+          'Le bloc disparaîtra de la liste. C\'est irréversible.\n\n' +
+          'Pour confirmer, recopiez exactement le nom du bloc :';
+
+      var saisi = prompt(message, '');
+      if (saisi === null) return;
+      if (String(saisi).trim() !== nom) return dire("Nom incorrect — rien n'a été supprimé");
+
+      var taches = [];
+
+      // 1. Retrait de la fiche du bloc : c'est elle qui le fait exister
+      taches.push(ref('gdv_shops/' + u + '/blocs/_meta/' + b).remove());
+
+      // 2. Donnees du bloc — jamais pour une boutique rattachee
+      if (!rattache) taches.push(ref('gdv_shops/' + u + '/blocs/' + b).remove());
+
+      // 3. Rattachements de gerants pointant vers ce bloc
+      var rAff = ref('gdv_shops/' + u + '/blocs/_affect');
+      if (rAff) {
+        taches.push(rAff.once('value').then(function (s) {
+          var v = s.val() || {}, maj = {};
+          Object.keys(v).forEach(function (gid) { if (v[gid] === b) maj[gid] = null; });
+          return Object.keys(maj).length ? rAff.update(maj) : null;
+        }));
+      }
+
+      Promise.all(taches).then(function () {
+        // Le bloc memorise localement ne doit plus pointer vers lui
+        try {
+          Object.keys(localStorage).forEach(function (k) {
+            if (k.indexOf('agv_bloc_') === 0 && localStorage.getItem(k) === b) localStorage.removeItem(k);
+          });
+        } catch (e) {}
+
+        tracer(rattache ? 'Boutique détachée' : 'Bloc supprimé', 'bloc ' + b + ' — ' + nom);
+        dire(rattache ? nom + ' a été détaché' : nom + ' a été supprimé');
+        log('bloc ' + b + ' supprimé (' + (rattache ? 'lien retiré' : 'données effacées') + ')');
+
+        // Rechargement complet du panneau : la liste des blocs est relue
+        setTimeout(function () {
+          try {
+            if (document.getElementById('agv-param-boutiques') &&
+                typeof window.agvParametrageBoutiques === 'function') {
+              window.agvParametrageBoutiques();
+            }
+            if (document.getElementById('agv-accueil')) {
+              var t = document.getElementById('agv39-tuiles'); if (t) t.remove();
+              var p = document.getElementById('agv39-portail'); if (p) p.remove();
+              window.agvAccueilFermer();
+              if (typeof window.agvAccueilBoutiques === 'function') window.agvAccueilBoutiques();
+            }
+          } catch (e) {}
+        }, 400);
+      }).catch(function (e) {
+        dire('Suppression impossible : ' + (e && e.message ? e.message : e));
+      });
+    });
+  };
+
+  /* =========================================================================
+     C. INJECTION DU BOUTON « SUPPRIMER » DANS LE PARAMETRAGE
+        ligneBloc() n'est pas accessible depuis l'exterieur : on complete
+        le rendu apres coup, sans toucher au code d'origine.
+     ========================================================================= */
+
+  function lettreDe(item, prefixe) {
+    var b = item.querySelector('button[onclick^="' + prefixe + '"]');
+    if (!b) return null;
+    var m = String(b.getAttribute('onclick') || '').match(/\('([A-Z])'\)/);
+    return m ? m[1] : null;
+  }
+
+  function completerParametrage() {
+    if (!API.actif) return;
+    var corps = document.getElementById('agv-param-corps');
+    if (!corps) return;
+
+    var items = corps.querySelectorAll('.b-item');
+    if (!items.length) return;
+
+    // Lettres des blocs reellement crees (ils portent un bouton Renommer)
+    var crees = {};
+    Array.prototype.forEach.call(items, function (it) {
+      var l = lettreDe(it, 'agvBlocRenommer');
+      if (l) crees[l] = true;
+    });
+
+    Array.prototype.forEach.call(items, function (it) {
+      // 1. Carte « Creer ce bloc » portant une lettre deja prise :
+      //    elle apparait apres la suppression d'un bloc intermediaire et
+      //    ecraserait le bloc existant. On la retire.
+      var lCreer = lettreDe(it, 'agvBlocFormulaire');
+      if (lCreer && crees[lCreer]) { it.remove(); return; }
+
+      // 2. Bouton Supprimer a cote de Vider
+      if (it.getAttribute('data-agv-portail')) return;
+      var l = lettreDe(it, 'agvBlocVider');
+      if (!l) return;
+      it.setAttribute('data-agv-portail', '1');
+
+      var zone = it.querySelector('button[onclick^="agvBlocVider"]').parentNode;
+      var actif = (l === blocActif());
+
+      var btn = document.createElement('button');
+      btn.className = 'b-soft';
+      btn.style.cssText = 'color:#fff;background:#b91c1c;border-color:#b91c1c';
+      btn.textContent = 'Supprimer';
+      btn.title = actif
+        ? 'Ouvrez un autre bloc avant de supprimer celui-ci'
+        : 'Retire définitivement ce bloc de la liste';
+      if (actif) { btn.style.opacity = '.45'; btn.style.cursor = 'not-allowed'; }
+      btn.onclick = function () {
+        if (actif) return dire('Ouvrez un autre bloc avant de supprimer celui-ci');
+        API.supprimer(l);
+      };
+      zone.appendChild(btn);
+    });
+
+    // 3. Note explicative : la confusion Vider / Supprimer etait la cause
+    //    du probleme signale.
+    if (!document.getElementById('agv-portail-aide')) {
+      var n = document.createElement('div');
+      n.id = 'agv-portail-aide';
+      n.className = 'aide';
+      n.style.cssText = 'margin:12px 0;padding:11px 13px;background:#fff7ed;border:1px solid #fed7aa;' +
+        'border-radius:10px;font-size:12.5px;color:#7c2d12;line-height:1.6';
+      n.innerHTML = '<b>Vider</b> remet le contenu du bloc à zéro mais le bloc reste dans la liste, ' +
+        'prêt à être réutilisé.<br><b>Supprimer</b> retire le bloc de la liste : il disparaît ' +
+        'complètement. Un bloc rattaché à une autre boutique est seulement détaché, ses données ' +
+        'ne sont jamais effacées.';
+      var premier = corps.querySelector('.b-item');
+      if (premier && premier.parentNode) premier.parentNode.insertBefore(n, premier);
+    }
+  }
+
+  setInterval(function () { try { completerParametrage(); } catch (e) {} }, 700);
+
+  /* =========================================================================
+     D. GARDE-FOU : ne jamais recreer par-dessus un bloc existant
+     ========================================================================= */
+
+  function protegerCreation() {
+    ['agvBlocFormulaire', 'agvBlocCreer'].forEach(function (nom) {
+      if (typeof window[nom] !== 'function' || window[nom].__agvPortail) return;
+      var origine = window[nom];
+      var neuf = function (b) {
+        if (API.actif && b && typeof b === 'string' && /^[A-Z]$/.test(b)) {
+          var corps = document.getElementById('agv-param-corps');
+          if (corps) {
+            var deja = corps.querySelector('button[onclick^="agvBlocRenommer(\'' + b + '\'"]');
+            if (deja) {
+              dire('Le BLOC ' + b + ' existe déjà — création refusée pour ne pas écraser ses données');
+              return;
+            }
+          }
+        }
+        return origine.apply(this, arguments);
+      };
+      neuf.__agvPortail = true;
+      window[nom] = neuf;
+    });
+  }
+
+  /* =========================================================================
+     ACTIVATION
+     ========================================================================= */
+
+  var essais = 0;
+  var horloge = setInterval(function () {
+    essais++;
+    brancherEntreeDirecte();
+    protegerCreation();
+    if (typeof window.agvBlocOuvrir === 'function' && typeof window.agvAccueilBoutiques === 'function') {
+      clearInterval(horloge);
+      log('module actif — v' + API.version);
+    }
+    if (essais > 600) clearInterval(horloge);
+  }, 500);
+
+  // Verification en console
+  API.etat = function () {
+    lireMeta(function (m) {
+      if (!m) { console.log('Base indisponible'); return; }
+      var l = ['A'].concat(Object.keys(m).filter(function (k) { return k !== 'A' && k.indexOf('_') !== 0; }).sort());
+      console.log('Bloc ouvert : ' + blocActif());
+      l.forEach(function (b) {
+        console.log('  ' + b + ' — ' + nomDuBloc(m, b) +
+          (m[b] && m[b].source ? ' (rattachée)' : '') +
+          (b === blocActif() ? '  ← ouvert' : ''));
+      });
+      console.log('Pour supprimer : AGV_PORTAIL.supprimer(\'B\')');
+    });
+    return 'lecture en cours...';
+  };
+
+})();
+
+</script>
+<script>
+/* =============================================================================
+   APP AGV — MODULE 4 : INTEGRITE DES DETTES ET CREANCES  (v1.0)
+   -----------------------------------------------------------------------------
+   Corrige trois defauts distincts qui faisaient apparaitre des dettes
+   inexistantes ou gonflees.
+
+   DEFAUT 1 — LA BOULE DE NEIGE
+     saveFacture() reporte la dette du client (dettePrecedente = somme des
+     soldeRestant) dans le total de la nouvelle facture, MAIS ne solde pas les
+     factures precedentes. getSoldeClient() additionne ensuite tous les
+     soldeRestant : l'ancien solde est donc compte deux fois, puis quatre...
+       Client : 100 000 + 50 000 + 30 000 = 180 000 de dette reelle
+       Affiche par l'application : 530 000
+     Correction : quand une facture reporte une dette, les factures qu'elle
+     absorbe sont marquees « reportee ». Un outil recalcule l'historique
+     existant a partir des lignes et des paiements, qui n'ont jamais ete
+     alteres. Rien n'est efface : les anciennes valeurs sont conservees.
+
+   DEFAUT 2 — LE CACHE PARTAGE ENTRE BLOCS
+     Le cache local s'appelle « agv_cache_<uid> » : la meme cle pour TOUS les
+     blocs d'une boutique. En ouvrant un nouveau bloc, l'application chargeait
+     donc instantanement les dettes, factures et clients du bloc precedent, et
+     posait _AGV_READY = true. Une seule saisie suffisait ensuite a ecrire ces
+     donnees etrangeres dans le nouveau bloc.
+     Correction : la cle devient propre a chaque bloc. Un bloc neuf demarre
+     reellement vide. Le BLOC A garde sa cle d'origine.
+
+   DEFAUT 3 — LA DETTE COMPTEE DEUX FOIS DANS LA DIRECTION
+     Une ancienne version de saveFacture creait, pour toute facture non soldee,
+     UNE DETTE CLIENT EN PLUS de la facture. La Direction additionne les deux
+     (chiffresDe : dettes client + soldeRestant des factures) : la meme creance
+     apparait deux fois. Correction : detection des dettes portant un
+     factureId qui double une facture existante, et retrait sur confirmation.
+
+   AUCUNE CORRECTION DE DONNEES N'EST APPLIQUEE SANS VOTRE ACCORD.
+   Le module detecte, chiffre, affiche — puis attend que vous validiez.
+
+   INSTALLATION : charger apres les modules 1, 2 et 3.
+   DESACTIVATION : AGV_DETTES.actif = false
+   ============================================================================= */
+(function () {
+  'use strict';
+
+  var API = window.AGV_DETTES = { actif: true, version: '1.1' };
+
+  function log() {
+    try { console.log.apply(console, ['[AGV-DETTES]'].concat([].slice.call(arguments))); } catch (e) {}
+  }
+  function F() { try { return factureVentes || []; } catch (e) { return []; } }
+  function D() { try { return dettes || []; } catch (e) { return []; } }
+  function C() { try { return clients || []; } catch (e) { return []; } }
+  function argent(k) { try { return fmtGNF(k || 0); } catch (e) { return Math.round(k || 0) + ' GNF'; } }
+  function dire(m) { try { showToast(m); } catch (e) { alert(m); } }
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+    });
+  }
+  function n(v) { var x = parseFloat(v); return isNaN(x) ? 0 : x; }
+  function tab(v) { if (!v) return []; if (Array.isArray(v)) return v; try { return Object.values(v); } catch (e) { return []; } }
+  function blocActif() {
+    try { if (typeof window.agvBlocActif === 'function') return window.agvBlocActif(); } catch (e) {}
+    return window._agvBloc || 'A';
+  }
+
+  /* =========================================================================
+     DEFAUT 2 — CACHE LOCAL PROPRE A CHAQUE BLOC
+     -------------------------------------------------------------------------
+     A appliquer le plus tot possible : c'est ce qui empeche un bloc neuf
+     d'heriter des dettes du bloc precedent.
+     ========================================================================= */
+
+  function cloisonnerCache() {
+    if (localStorage.getItem.__agvBloc) return;
+
+    function remap(cle) {
+      if (typeof cle !== 'string' || cle.indexOf('agv_cache_') !== 0) return cle;
+      var b = blocActif();
+      if (b === 'A') return cle;                     // le BLOC A garde sa cle historique
+      if (cle.indexOf('__bloc_') >= 0) return cle;
+      return cle + '__bloc_' + b;
+    }
+
+    var getOrig = localStorage.getItem.bind(localStorage);
+    var setOrig = localStorage.setItem.bind(localStorage);
+    var delOrig = localStorage.removeItem.bind(localStorage);
+
+    var g = function (cle) { return getOrig(remap(cle)); };
+    var s = function (cle, valeur) { return setOrig(remap(cle), valeur); };
+    var d = function (cle) { return delOrig(remap(cle)); };
+    g.__agvBloc = true; s.__agvBloc = true; d.__agvBloc = true;
+
+    try {
+      localStorage.getItem = g;
+      localStorage.setItem = s;
+      localStorage.removeItem = d;
+      log('cache local cloisonne par bloc (bloc courant : ' + blocActif() + ')');
+    } catch (e) { log('cloisonnement impossible', e && e.message); }
+  }
+  cloisonnerCache();
+
+  /* =========================================================================
+     DEFAUT 1 — RECONSTRUCTION DU VRAI SOLDE CLIENT
+     -------------------------------------------------------------------------
+     Les donnees jamais alterees sont : les lignes d'articles, la remise, les
+     frais et les paiements. On recalcule tout le reste a partir d'elles.
+     ========================================================================= */
+
+  function baseArticles(f) {
+    var t = f.totalLignes;
+    if (t == null) t = tab(f.lignes).reduce(function (s, l) { return s + n(l && l.total); }, 0);
+    return n(t) - n(f.remise) + n(f.frais);
+  }
+
+  function totalPaye(f) {
+    var p = tab(f.paiements);
+    if (p.length) return p.reduce(function (s, x) { return s + n(x && x.montant); }, 0);
+    return n(f.montantPaye);
+  }
+
+  function chronologie(a, b) {
+    return new Date(a.createdAt || a.dateOp || a.date || 0) - new Date(b.createdAt || b.dateOp || b.date || 0);
+  }
+
+  // Recalcule l'echeancier d'un client. Ne modifie rien : renvoie un plan.
+  function planClient(cid) {
+    var list = F().filter(function (f) { return f && String(f.clientId) === String(cid); })
+                  .slice().sort(chronologie);
+    var solde = 0, plan = [];
+    list.forEach(function (f, i) {
+      var base = baseArticles(f);
+      var paye = totalPaye(f);
+      var totalCorrige = base + solde;
+      var soldeCorrige = Math.max(0, totalCorrige - paye);
+      var derniere = (i === list.length - 1);
+      plan.push({
+        f: f,
+        apres: {
+          dettePrecedente: solde,
+          montantTotal: totalCorrige,
+          montantPaye: paye,
+          // seule la derniere facture porte le solde ; les precedentes sont reportees
+          soldeRestant: derniere ? soldeCorrige : 0,
+          reportee: !derniere && soldeCorrige > 0
+        }
+      });
+      solde = soldeCorrige;
+    });
+    return {
+      plan: plan,
+      soldeReel: solde,
+      soldeAffiche: list.reduce(function (s, f) { return s + n(f.soldeRestant); }, 0)
+    };
+  }
+
+  /* =========================================================================
+     DEFAUT 3 — DETTES CLIENT QUI DOUBLENT UNE FACTURE
+     ========================================================================= */
+
+  function doublons() {
+    var parFacture = {};
+    F().forEach(function (f) {
+      if (!f) return;
+      parFacture[String(f.id)] = f;
+      if (f.numero) parFacture[String(f.numero)] = f;
+      if (f.no) parFacture[String(f.no)] = f;
+    });
+    return D().filter(function (d) {
+      if (!d || d.type !== 'client') return false;
+      var ref = d.factureId != null ? String(d.factureId)
+              : (d.factureNo != null ? String(d.factureNo) : null);
+      return ref != null && !!parFacture[ref];
+    });
+  }
+
+  function resteDette(d) {
+    var paye = tab(d.paiements).reduce(function (s, p) { return s + n(p && p.montant); }, 0);
+    var r = n(d.montant) - paye;
+    return r > 0 ? r : 0;
+  }
+
+  /* =========================================================================
+     DIAGNOSTIC COMPLET
+     ========================================================================= */
+
+  function diagnostic() {
+    var idxCli = {};
+    C().forEach(function (c) { if (c) idxCli[String(c.id)] = c.nom; });
+
+    var ids = {};
+    F().forEach(function (f) { if (f && f.clientId != null) ids[String(f.clientId)] = true; });
+
+    var lignes = [], ecartTotal = 0;
+    Object.keys(ids).forEach(function (cid) {
+      var r = planClient(cid);
+      var ecart = r.soldeAffiche - r.soldeReel;
+      var reportees = r.plan.filter(function (p) { return p.apres.reportee; }).length;
+      if (Math.abs(ecart) >= 1 || reportees) {
+        ecartTotal += ecart;
+        var f0 = F().find(function (f) { return String(f.clientId) === String(cid); }) || {};
+        lignes.push({
+          cid: cid,
+          nom: idxCli[cid] || f0.clientNom || ('Client ' + cid),
+          affiche: r.soldeAffiche, reel: r.soldeReel, ecart: ecart,
+          factures: r.plan.length, reportees: reportees
+        });
+      }
+    });
+    lignes.sort(function (a, b) { return b.ecart - a.ecart; });
+
+    var dbl = doublons();
+    return {
+      clients: lignes, ecartTotal: ecartTotal,
+      doublons: dbl,
+      montantDoublons: dbl.reduce(function (s, d) { return s + resteDette(d); }, 0)
+    };
+  }
+
+  API.controle = function () {
+    var r = diagnostic();
+    console.log('--- Contrôle des créances clients — bloc ' + blocActif() + ' ---');
+    if (!r.clients.length) console.log('Aucun écart détecté sur les factures.');
+    r.clients.forEach(function (c) {
+      console.log('  ' + c.nom + ' : affiché ' + argent(c.affiche) + ' | réel ' + argent(c.reel) +
+        ' | écart ' + argent(c.ecart) + ' (' + c.factures + ' facture(s))');
+    });
+    console.log('Écart total : ' + argent(r.ecartTotal));
+    console.log('Dettes doublant une facture : ' + r.doublons.length + ' — ' + argent(r.montantDoublons));
+    console.log('Pour corriger : AGV_DETTES.panneau()');
+    return r;
+  };
+
+  /* =========================================================================
+     PANNEAU DE CORRECTION — rien n'est ecrit avant validation
+     ========================================================================= */
+
+  API.panneau = function () {
+    var r = diagnostic();
+    var vieux = document.getElementById('agv-dettes-panneau');
+    if (vieux) vieux.remove();
+
+    var ov = document.createElement('div');
+    ov.id = 'agv-dettes-panneau';
+    ov.style.cssText = 'position:fixed;inset:0;z-index:99996;background:rgba(15,23,42,.6);display:flex;' +
+      'align-items:center;justify-content:center;padding:14px;font-family:inherit';
+
+    var corps;
+    if (!r.clients.length && !r.doublons.length) {
+      corps = '<div style="padding:26px 4px;text-align:center;color:#16a34a;font-size:14px;font-weight:600">' +
+        'Aucune anomalie détectée. Vos créances sont cohérentes.</div>';
+    } else {
+      corps = '';
+      if (r.clients.length) {
+        corps += '<div style="font-size:13px;font-weight:800;color:#0f172a;margin:6px 0 8px">' +
+          'Créances gonflées par le report de dette</div>' +
+          '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12.5px">' +
+          '<thead><tr style="background:#f1f5f9;color:#475569">' +
+          '<th style="padding:7px 9px;text-align:left">Client</th>' +
+          '<th style="padding:7px 9px;text-align:right">Affiché</th>' +
+          '<th style="padding:7px 9px;text-align:right">Réel</th>' +
+          '<th style="padding:7px 9px;text-align:right">Écart</th></tr></thead><tbody>' +
+          r.clients.slice(0, 40).map(function (c) {
+            return '<tr style="border-bottom:1px solid #eef2f7">' +
+              '<td style="padding:7px 9px">' + esc(c.nom) + '</td>' +
+              '<td style="padding:7px 9px;text-align:right">' + argent(c.affiche) + '</td>' +
+              '<td style="padding:7px 9px;text-align:right;font-weight:700;color:#16a34a">' + argent(c.reel) + '</td>' +
+              '<td style="padding:7px 9px;text-align:right;color:#dc2626">−' + argent(c.ecart) + '</td></tr>';
+          }).join('') +
+          '<tr style="background:#0f2b5b;color:#fff;font-weight:800">' +
+          '<td style="padding:8px 9px">Total surestimé</td><td></td><td></td>' +
+          '<td style="padding:8px 9px;text-align:right">' + argent(r.ecartTotal) + '</td></tr>' +
+          '</tbody></table></div>' +
+          (r.clients.length > 40 ? '<div style="font-size:11.5px;color:#64748b;margin-top:6px">' +
+            (r.clients.length - 40) + ' autre(s) client(s) non affiché(s) — tous seront corrigés.</div>' : '');
+      }
+      if (r.doublons.length) {
+        corps += '<div style="font-size:13px;font-weight:800;color:#0f172a;margin:16px 0 8px">' +
+          'Dettes qui doublent une facture</div>' +
+          '<div style="font-size:12.5px;color:#475569;line-height:1.6">' +
+          r.doublons.length + ' dette(s) client portent une référence de facture qui existe déjà. ' +
+          'Elles totalisent <b>' + argent(r.montantDoublons) + '</b> et sont comptées une seconde fois ' +
+          'dans la Direction.</div>';
+      }
+    }
+
+    ov.innerHTML = '<div style="background:#fff;border-radius:16px;max-width:720px;width:100%;' +
+      'max-height:88vh;overflow-y:auto;padding:20px 22px;box-shadow:0 18px 50px rgba(0,0,0,.35)">' +
+      '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:6px">' +
+      '<div><div style="font-size:17px;font-weight:800;color:#0f172a">Contrôle des dettes et créances</div>' +
+      '<div style="font-size:12.5px;color:#64748b;margin-top:2px">Bloc ' + esc(blocActif()) +
+      ' — recalcul à partir des articles et des paiements</div></div>' +
+      '<button id="agv-dettes-x" style="padding:7px 13px;border:1px solid #cbd5e1;border-radius:9px;' +
+      'background:#f8fafc;font-family:inherit;font-size:13px;cursor:pointer">Fermer</button></div>' +
+      corps +
+      '<div style="margin-top:18px;padding:11px 13px;background:#fff7ed;border:1px solid #fed7aa;' +
+      'border-radius:10px;font-size:12.5px;color:#7c2d12;line-height:1.6">' +
+      'La correction ne supprime rien : chaque facture conserve ses anciennes valeurs dans un champ ' +
+      '<code>_avant</code>, et les factures absorbées par un report sont marquées « reportée » au lieu ' +
+      'd\'être effacées. Les articles, les prix et les paiements ne sont jamais touchés. ' +
+      'Retour en arrière possible : <code>AGV_DETTES.annulerCorrection()</code>.</div>' +
+      (r.clients.length || r.doublons.length
+        ? '<div style="display:flex;gap:9px;margin-top:16px;flex-wrap:wrap">' +
+          (r.clients.length ? '<button id="agv-dettes-go" style="flex:1;min-width:190px;padding:11px;border:none;' +
+            'border-radius:10px;background:#16a34a;color:#fff;font-family:inherit;font-size:13.5px;' +
+            'font-weight:700;cursor:pointer">Corriger les créances</button>' : '') +
+          (r.doublons.length ? '<button id="agv-dettes-dbl" style="flex:1;min-width:190px;padding:11px;border:none;' +
+            'border-radius:10px;background:#b91c1c;color:#fff;font-family:inherit;font-size:13.5px;' +
+            'font-weight:700;cursor:pointer">Retirer les ' + r.doublons.length + ' doublon(s)</button>' : '') +
+          '</div>'
+        : '') +
+      '</div>';
+
+    document.body.appendChild(ov);
+    ov.onclick = function (e) { if (e.target === ov) ov.remove(); };
+    document.getElementById('agv-dettes-x').onclick = function () { ov.remove(); };
+
+    var go = document.getElementById('agv-dettes-go');
+    if (go) go.onclick = function () {
+      if (!confirm('Corriger les créances de ' + r.clients.length + ' client(s) ?\n\n' +
+        'Total surestimé retiré : ' + argent(r.ecartTotal))) return;
+      var k = API.corriger();
+      ov.remove();
+      dire('✅ ' + k + ' facture(s) corrigée(s)');
+    };
+
+    var dbl = document.getElementById('agv-dettes-dbl');
+    if (dbl) dbl.onclick = function () {
+      if (!confirm('Retirer ' + r.doublons.length + ' dette(s) qui doublent une facture ?\n\n' +
+        'Montant concerné : ' + argent(r.montantDoublons) + '\n' +
+        'La facture correspondante reste intacte et continue de porter la créance.')) return;
+      var k = API.retirerDoublons();
+      ov.remove();
+      dire('✅ ' + k + ' doublon(s) retiré(s)');
+    };
+  };
+
+  /* =========================================================================
+     APPLICATION DES CORRECTIONS
+     ========================================================================= */
+
+  function memoriserAvant(f) {
+    if (f._avant) return;
+    f._avant = {
+      montantTotal: n(f.montantTotal),
+      soldeRestant: n(f.soldeRestant),
+      dettePrecedente: n(f.dettePrecedente),
+      statut: f.statut || null,
+      corrigeLe: new Date().toISOString()
+    };
+  }
+
+  API.corriger = function () {
+    var ids = {};
+    F().forEach(function (f) { if (f && f.clientId != null) ids[String(f.clientId)] = true; });
+    var touchees = 0;
+
+    Object.keys(ids).forEach(function (cid) {
+      var r = planClient(cid);
+      r.plan.forEach(function (p) {
+        var f = p.f, a = p.apres;
+        var change = n(f.montantTotal) !== a.montantTotal ||
+                     n(f.soldeRestant) !== a.soldeRestant ||
+                     n(f.dettePrecedente) !== a.dettePrecedente;
+        if (!change) return;
+        memoriserAvant(f);
+        f.dettePrecedente = a.dettePrecedente;
+        f.montantTotal = a.montantTotal;
+        f.montantPaye = a.montantPaye;
+        f.soldeRestant = a.soldeRestant;
+        if (a.reportee) {
+          f.reportee = true;
+          f.statut = 'reporte';
+        } else {
+          f.reportee = false;
+          f.statut = a.soldeRestant === 0 ? 'paye' : (a.montantPaye > 0 ? 'partiel' : 'impaye');
+        }
+        touchees++;
+      });
+    });
+
+    if (touchees) {
+      try { if (typeof sauvegarderFirebase === 'function') sauvegarderFirebase(); } catch (e) {}
+      try { if (typeof renderFacturesList === 'function') renderFacturesList(); } catch (e) {}
+      try { if (typeof renderClientsListe === 'function') renderClientsListe(); } catch (e) {}
+      try { if (typeof renderDettes === 'function') renderDettes(); } catch (e) {}
+      try {
+        if (typeof window.agvJournaliser === 'function') {
+          window.agvJournaliser('Correction des créances', touchees + ' facture(s) recalculée(s)');
+        }
+      } catch (e) {}
+      log(touchees + ' facture(s) corrigee(s)');
+    }
+    return touchees;
+  };
+
+  API.retirerDoublons = function () {
+    var dbl = doublons();
+    if (!dbl.length) return 0;
+    var aRetirer = {};
+    dbl.forEach(function (d) { aRetirer[String(d.id)] = true; });
+    var restant = D().filter(function (d) { return !(d && aRetirer[String(d.id)]); });
+    try { dettes = restant; } catch (e) { window.dettes = restant; }
+
+    try { if (typeof sauvegarderFirebase === 'function') sauvegarderFirebase(); } catch (e) {}
+    try { if (typeof renderDettes === 'function') renderDettes(); } catch (e) {}
+    try {
+      if (typeof window.agvJournaliser === 'function') {
+        window.agvJournaliser('Doublons de dettes retirés', dbl.length + ' dette(s) doublant une facture');
+      }
+    } catch (e) {}
+    log(dbl.length + ' doublon(s) retire(s)');
+    return dbl.length;
+  };
+
+  // Retour en arriere : restaure les valeurs conservees dans _avant
+  API.annulerCorrection = function () {
+    var k = 0;
+    F().forEach(function (f) {
+      if (!f || !f._avant) return;
+      f.montantTotal = f._avant.montantTotal;
+      f.soldeRestant = f._avant.soldeRestant;
+      f.dettePrecedente = f._avant.dettePrecedente;
+      if (f._avant.statut) f.statut = f._avant.statut;
+      f.reportee = false;
+      delete f._avant;
+      k++;
+    });
+    if (k) {
+      try { if (typeof sauvegarderFirebase === 'function') sauvegarderFirebase(); } catch (e) {}
+      try { if (typeof renderFacturesList === 'function') renderFacturesList(); } catch (e) {}
+    }
+    log(k + ' facture(s) restauree(s)');
+    return k;
+  };
+
+  /* =========================================================================
+     PREVENTION — la boule de neige ne repart pas
+     -------------------------------------------------------------------------
+     Des qu'une facture reporte une dette, les factures qu'elle absorbe sont
+     soldees et marquees « reportee ». getSoldeClient cesse donc de les
+     additionner.
+     ========================================================================= */
+
+  function solderReportees(cid, courante) {
+    if (cid == null) return 0;
+    var num = courante && (courante.numero || courante.id);
+    var k = 0;
+    F().forEach(function (f) {
+      if (!f || String(f.clientId) !== String(cid)) return;
+      if (courante && String(f.id) === String(courante.id)) return;
+      if (n(f.soldeRestant) <= 0) return;
+      memoriserAvant(f);
+      f.soldeRestant = 0;
+      f.reportee = true;
+      f.reporteVers = num || null;
+      f.statut = 'reporte';
+      k++;
+    });
+    return k;
+  }
+  API.solderReportees = solderReportees;
+
+  function brancherPrevention() {
+    if (typeof window.saveFacture !== 'function' || window.saveFacture.__agvDettes) return false;
+
+    var origine = window.saveFacture;
+    var neuve = function () {
+      var avant = F().length;
+      var r = origine.apply(this, arguments);
+      if (!API.actif) return r;
+      try {
+        // La facture qui vient d'etre posee est en tete de liste
+        var f = F()[0];
+        if (f && F().length > avant && n(f.dettePrecedente) > 0) {
+          var k = solderReportees(f.clientId, f);
+          if (k) {
+            if (typeof sauvegarderFirebase === 'function') sauvegarderFirebase();
+            if (typeof renderFacturesList === 'function') renderFacturesList();
+            log(k + ' facture(s) anterieure(s) marquee(s) « reportee » — pas de double comptage');
+          }
+        }
+      } catch (e) { log('prevention', e && e.message); }
+      return r;
+    };
+    neuve.__agvDettes = true;
+    window.saveFacture = neuve;
+
+    // Un versement ne doit plus viser une facture deja reportee
+    if (typeof window.openVersementCliModal === 'function' && !window.openVersementCliModal.__agvDettes) {
+      var ov = window.openVersementCliModal;
+      var nv = function (id) {
+        var f = F().find(function (x) { return String(x.id) === String(id); });
+        if (API.actif && f && f.reportee) {
+          dire('Cette facture a été reportée sur une facture plus récente — enregistrez le versement sur celle-ci');
+          return;
+        }
+        return ov.apply(this, arguments);
+      };
+      nv.__agvDettes = true;
+      window.openVersementCliModal = nv;
+    }
+    return true;
+  }
+
+  /* =========================================================================
+     BANDEAU D'ALERTE SUR LA LISTE DES FACTURES
+     ========================================================================= */
+
+  var dernierControle = 0;
+  setInterval(function () {
+    if (!API.actif) return;
+    var zone = document.getElementById('factures-mgr-list');
+    if (!zone || !zone.innerHTML) return;
+    if (Date.now() - dernierControle < 20000) return;
+    dernierControle = Date.now();
+    try {
+      var r = diagnostic();
+      var vieux = document.getElementById('agv-dettes-alerte');
+      if (!r.clients.length && !r.doublons.length) { if (vieux) vieux.remove(); return; }
+      if (vieux) return;
+      var d = document.createElement('div');
+      d.id = 'agv-dettes-alerte';
+      d.style.cssText = 'padding:12px 14px;margin-bottom:12px;background:rgba(239,68,68,.1);' +
+        'border:1px solid var(--red);border-radius:10px;font-size:13px;color:var(--red);line-height:1.55';
+      d.innerHTML = '<b>Créances surestimées de ' + argent(r.ecartTotal) + '</b> sur ' +
+        r.clients.length + ' client(s)' +
+        (r.doublons.length ? ' — et ' + r.doublons.length + ' dette(s) doublant une facture' : '') + '.' +
+        '<button onclick="AGV_DETTES.panneau()" style="margin-left:10px;padding:5px 12px;border:none;' +
+        'border-radius:8px;background:var(--red);color:#fff;font-family:inherit;font-size:12px;' +
+        'font-weight:700;cursor:pointer">Examiner</button>';
+      zone.insertBefore(d, zone.firstChild);
+    } catch (e) {}
+  }, 4000);
+
+  /* =========================================================================
+     DEFAUT 2 bis — NETTOYAGE D'UN BLOC DEJA CONTAMINE
+     -------------------------------------------------------------------------
+     Le cloisonnement du cache empeche les nouvelles contaminations, mais les
+     blocs crees AVANT le correctif ont deja recu, dans Firebase, les dettes et
+     factures du bloc precedent. Il faut donc les nettoyer.
+
+     COMMENT ON RECONNAIT UNE DONNEE HERITEE, SANS SE TROMPER
+     Chaque enregistrement porte l'instant de sa creation : id = Date.now()
+     pour les dettes, les ventes et les depenses, createdAt pour les factures.
+     Or agvBlocCreer ecrit « _marque : { cree: Date.now() } » a la naissance du
+     bloc. Une donnee dont l'instant de creation est ANTERIEUR a la naissance
+     du bloc ne peut pas y avoir ete saisie : elle vient forcement d'ailleurs.
+
+     Ce test ne se fie pas au champ « date », qui peut legitimement etre
+     anterieur (facture antidatee), mais au seul horodatage de saisie.
+     ========================================================================= */
+
+  var MARGE = 60000;   // 1 minute de tolerance sur l'horloge
+
+  function horodatage(x) {
+    if (!x) return null;
+    var c = x.createdAt || x.dateSaisie || x.ts;
+    if (c) { var t = new Date(c).getTime(); if (!isNaN(t)) return t; }
+    var id = x.id;
+    if (id != null) {
+      var v = Number(id);
+      // un id issu de Date.now() est un entier a 13 chiffres
+      if (!isNaN(v) && v > 1000000000000 && v < 4000000000000) return v;
+    }
+    return null;
+  }
+
+  var COLLECTIONS = [
+    { cle: 'dettes',        nom: 'Dettes',    lire: D,  poser: function (v) { try { dettes = v; } catch (e) { window.dettes = v; } } },
+    { cle: 'factureVentes', nom: 'Factures',  lire: F,  poser: function (v) { try { factureVentes = v; } catch (e) { window.factureVentes = v; } } },
+    { cle: 'ventes',        nom: 'Ventes',    lire: function () { try { return ventes || []; } catch (e) { return []; } },
+                                                        poser: function (v) { try { ventes = v; } catch (e) { window.ventes = v; } } },
+    { cle: 'depenses',      nom: 'Dépenses',  lire: function () { try { return depenses || []; } catch (e) { return []; } },
+                                                        poser: function (v) { try { depenses = v; } catch (e) { window.depenses = v; } } },
+    { cle: 'clients',       nom: 'Clients',   lire: C,  poser: function (v) { try { clients = v; } catch (e) { window.clients = v; } } }
+  ];
+
+  function naissanceDuBloc(cb) {
+    var b = blocActif();
+    if (b === 'A') return cb(null, 'A');       // le BLOC A n'a pas de naissance : c'est l'origine
+    var u = (window._currentShop || {}).uid;
+    if (!u || !window.db) return cb(null, b);
+    var brut = window._agvRefBrut || function (p) { return window.db.ref(p); };
+    var lu = 0, res = { marque: null, meta: null };
+    function fin() { if (++lu < 2) return; cb(res.marque || res.meta, b); }
+    try {
+      brut('gdv_shops/' + u + '/blocs/' + b + '/_marque').once('value')
+        .then(function (s) { res.marque = (s.val() || {}).cree || null; fin(); }, fin);
+      brut('gdv_shops/' + u + '/blocs/_meta/' + b).once('value')
+        .then(function (s) { res.meta = (s.val() || {}).cree || null; fin(); }, fin);
+    } catch (e) { cb(null, b); }
+  }
+
+  function analyserBloc(cree) {
+    var seuil = cree - MARGE;
+    var res = { total: 0, montant: 0, details: [], indatables: 0 };
+    COLLECTIONS.forEach(function (col) {
+      var list = tab(col.lire());
+      var heritees = [], gardees = [], sansDate = 0;
+      list.forEach(function (x) {
+        var t = horodatage(x);
+        if (t === null) { sansDate++; gardees.push(x); return; }
+        if (t < seuil) heritees.push(x); else gardees.push(x);
+      });
+      res.indatables += sansDate;
+      if (heritees.length) {
+        var mt = 0;
+        if (col.cle === 'dettes') mt = heritees.reduce(function (s, d) { return s + resteDette(d); }, 0);
+        else if (col.cle === 'factureVentes') mt = heritees.reduce(function (s, f) { return s + n(f.soldeRestant); }, 0);
+        else if (col.cle === 'depenses') mt = heritees.reduce(function (s, d) { return s + n(d.montant); }, 0);
+        else if (col.cle === 'ventes') mt = heritees.reduce(function (s, v) { return s + n(v.total); }, 0);
+        res.total += heritees.length;
+        res.montant += mt;
+        res.details.push({ col: col, nom: col.nom, nb: heritees.length, montant: mt, gardees: gardees });
+      }
+    });
+    return res;
+  }
+
+  API.controleBloc = function (cb) {
+    naissanceDuBloc(function (cree, b) {
+      if (b === 'A') {
+        console.log('Le BLOC A est la boutique d\'origine : il n\'y a rien à comparer.');
+        if (cb) cb(null);
+        return;
+      }
+      if (!cree) {
+        console.log('Date de naissance du bloc ' + b + ' introuvable — analyse impossible.');
+        if (cb) cb(null);
+        return;
+      }
+      var r = analyserBloc(cree);
+      r.cree = cree; r.bloc = b;
+      console.log('--- Bloc ' + b + ' — créé le ' + new Date(cree).toLocaleString('fr-FR') + ' ---');
+      if (!r.total) console.log('Aucune donnée antérieure à la création du bloc. Ce bloc est propre.');
+      r.details.forEach(function (d) {
+        console.log('  ' + d.nom + ' : ' + d.nb + ' entrée(s) héritée(s)' +
+          (d.montant ? ' — ' + argent(d.montant) : ''));
+      });
+      if (r.indatables) console.log('  (' + r.indatables + ' entrée(s) sans horodatage, conservées par prudence)');
+      if (cb) cb(r);
+      return r;
+    });
+    return 'lecture en cours...';
+  };
+
+  API.panneauBloc = function () {
+    API.controleBloc(function (r) {
+      var vieux = document.getElementById('agv-bloc-panneau');
+      if (vieux) vieux.remove();
+      if (!r) { dire('Analyse impossible sur ce bloc'); return; }
+
+      var ov = document.createElement('div');
+      ov.id = 'agv-bloc-panneau';
+      ov.style.cssText = 'position:fixed;inset:0;z-index:99996;background:rgba(15,23,42,.6);display:flex;' +
+        'align-items:center;justify-content:center;padding:14px;font-family:inherit';
+
+      var corps = r.total
+        ? '<div style="font-size:12.5px;color:#475569;line-height:1.65;margin-bottom:12px">' +
+          'Ces enregistrements ont été créés <b>avant la naissance de ce bloc</b> ' +
+          '(' + new Date(r.cree).toLocaleString('fr-FR') + '). Ils ne peuvent pas y avoir été saisis : ' +
+          'ils proviennent du bloc ouvert précédemment, recopié par l\'ancien cache commun.</div>' +
+          '<table style="width:100%;border-collapse:collapse;font-size:12.5px">' +
+          '<thead><tr style="background:#f1f5f9;color:#475569">' +
+          '<th style="padding:7px 9px;text-align:left">Rubrique</th>' +
+          '<th style="padding:7px 9px;text-align:right">Entrées héritées</th>' +
+          '<th style="padding:7px 9px;text-align:right">Montant</th></tr></thead><tbody>' +
+          r.details.map(function (d) {
+            return '<tr style="border-bottom:1px solid #eef2f7">' +
+              '<td style="padding:7px 9px">' + esc(d.nom) + '</td>' +
+              '<td style="padding:7px 9px;text-align:right;font-weight:700">' + d.nb + '</td>' +
+              '<td style="padding:7px 9px;text-align:right;color:#dc2626">' +
+              (d.montant ? argent(d.montant) : '—') + '</td></tr>';
+          }).join('') + '</tbody></table>'
+        : '<div style="padding:24px 4px;text-align:center;color:#16a34a;font-size:14px;font-weight:600">' +
+          'Ce bloc est propre : aucune donnée antérieure à sa création.</div>';
+
+      ov.innerHTML = '<div style="background:#fff;border-radius:16px;max-width:620px;width:100%;' +
+        'max-height:88vh;overflow-y:auto;padding:20px 22px;box-shadow:0 18px 50px rgba(0,0,0,.35)">' +
+        '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:10px">' +
+        '<div><div style="font-size:17px;font-weight:800;color:#0f172a">Nettoyage du bloc ' + esc(r.bloc) + '</div>' +
+        '<div style="font-size:12.5px;color:#64748b;margin-top:2px">Créé le ' +
+        new Date(r.cree).toLocaleString('fr-FR') + '</div></div>' +
+        '<button id="agv-bloc-x" style="padding:7px 13px;border:1px solid #cbd5e1;border-radius:9px;' +
+        'background:#f8fafc;font-family:inherit;font-size:13px;cursor:pointer">Fermer</button></div>' +
+        corps +
+        (r.indatables ? '<div style="margin-top:12px;font-size:12px;color:#64748b">' + r.indatables +
+          ' entrée(s) sans horodatage : conservées, elles ne peuvent pas être jugées.</div>' : '') +
+        (r.total ? '<div style="margin-top:16px;padding:11px 13px;background:#fff7ed;border:1px solid #fed7aa;' +
+          'border-radius:10px;font-size:12.5px;color:#7c2d12;line-height:1.6">' +
+          'Le retrait ne touche <b>que ce bloc</b>. Les données d\'origine, dans le bloc où elles ont ' +
+          'réellement été saisies, ne sont pas concernées. Vérifiez les nombres ci-dessus avant de valider.</div>' +
+          '<button id="agv-bloc-go" style="width:100%;margin-top:14px;padding:11px;border:none;' +
+          'border-radius:10px;background:#b91c1c;color:#fff;font-family:inherit;font-size:13.5px;' +
+          'font-weight:700;cursor:pointer">Retirer les ' + r.total + ' entrée(s) héritée(s)</button>' : '') +
+        '</div>';
+
+      document.body.appendChild(ov);
+      ov.onclick = function (e) { if (e.target === ov) ov.remove(); };
+      document.getElementById('agv-bloc-x').onclick = function () { ov.remove(); };
+      var go = document.getElementById('agv-bloc-go');
+      if (go) go.onclick = function () {
+        if (!confirm('Retirer ' + r.total + ' entrée(s) héritée(s) du bloc ' + r.bloc + ' ?\n\n' +
+          'Seul ce bloc est modifié.')) return;
+        var k = API.nettoyerBloc(r);
+        ov.remove();
+        dire('✅ ' + k + ' entrée(s) retirée(s) du bloc ' + r.bloc);
+      };
+    });
+  };
+
+  API.nettoyerBloc = function (r) {
+    if (!r || !r.total) return 0;
+    var k = 0;
+    r.details.forEach(function (d) {
+      d.col.poser(d.gardees);
+      k += d.nb;
+    });
+    try { if (typeof sauvegarderFirebase === 'function') sauvegarderFirebase(); } catch (e) {}
+    ['renderFacturesList', 'renderDettes', 'renderClientsListe', 'renderDashboard', 'renderVentesHistory']
+      .forEach(function (f) { try { if (typeof window[f] === 'function') window[f](); } catch (e) {} });
+    try {
+      if (typeof window.agvJournaliser === 'function') {
+        window.agvJournaliser('Nettoyage de bloc', 'bloc ' + r.bloc + ' — ' + k + ' entrée(s) héritée(s) retirée(s)');
+      }
+    } catch (e) {}
+    log(k + ' entree(s) heritee(s) retiree(s) du bloc ' + r.bloc);
+    return k;
+  };
+
+  // Alerte automatique a l'ouverture d'un bloc contamine
+  setTimeout(function () {
+    if (!API.actif) return;
+    if (blocActif() === 'A') return;
+    naissanceDuBloc(function (cree, b) {
+      if (!cree) return;
+      var r = analyserBloc(cree);
+      if (!r.total) return;
+      r.cree = cree; r.bloc = b;
+      log('bloc ' + b + ' : ' + r.total + ' entree(s) anterieure(s) a sa creation');
+      dire('⚠️ Ce bloc contient ' + r.total + ' donnée(s) héritées d\'un autre bloc');
+      setTimeout(function () { try { API.panneauBloc(); } catch (e) {} }, 1500);
+    });
+  }, 9000);
+
+  /* =========================================================================
+     ACTIVATION
+     ========================================================================= */
+  var essais = 0;
+  var horloge = setInterval(function () {
+    essais++;
+    if (brancherPrevention()) {
+      clearInterval(horloge);
+      log('module actif — v' + API.version + ' — bloc ' + blocActif());
+    }
+    if (essais > 600) clearInterval(horloge);
+  }, 500);
+
+})();
+
+</script>
 </body></html>
