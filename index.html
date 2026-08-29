@@ -38841,13 +38841,14 @@ window.agvStocks = function(){
      MODULES AJOUTES — App AGV
      1. agv-performance   : sauvegarde differentielle, regroupement des rendus, index memoire
      2. agv-factures      : numerotation sequentielle, vendeur, dates, remise/frais, livraison, pagination
-     3. agv-portail       : entree directe en un clic, suppression reelle d un bloc
-     4. agv-dettes        : boule de neige, cache cloisonne, doublons Direction, nettoyage de bloc
+     3. agv-portail       : entree directe, suppression/detachement de bloc, sortie de secours Echap
+     4. agv-dettes        : boule de neige, cache cloisonne, doublons, nettoyage (hors boutiques rattachees)
      5. agv-reset         : reinitialisation complete, personnel protege, sauvegarde prealable
      Desactivation individuelle depuis la console :
         AGV_PERF.actif = false;    AGV_FACT.actif = false;
         AGV_PORTAIL.actif = false; AGV_DETTES.actif = false;
         AGV_RESET.actif = false;
+     Si un panneau reste ouvert : touche Echap, ou AGV_PORTAIL.degager()
      ================================================================== -->
 <script>
 /* =============================================================================
@@ -40257,8 +40258,17 @@ window.agvStocks = function(){
       // 1. Retrait de la fiche du bloc : c'est elle qui le fait exister
       taches.push(ref('gdv_shops/' + u + '/blocs/_meta/' + b).remove());
 
-      // 2. Donnees du bloc — jamais pour une boutique rattachee
-      if (!rattache) taches.push(ref('gdv_shops/' + u + '/blocs/' + b).remove());
+      if (rattache) {
+        // 2 bis. L'ECRITEAU COTE BOUTIQUE RATTACHEE.
+        // Sans ce retrait, la boutique reste marquee « deja rattachee » :
+        // son code n'ouvre plus rien et elle ne peut plus etre rattachee
+        // ailleurs. C'est exactement ce que fait agvDetacher().
+        var src = meta[b].source;
+        taches.push(ref('gdv_shops/' + src + '/rattachement').remove());
+      } else {
+        // 2. Donnees du bloc — jamais pour une boutique rattachee
+        taches.push(ref('gdv_shops/' + u + '/blocs/' + b).remove());
+      }
 
       // 3. Rattachements de gerants pointant vers ce bloc
       var rAff = ref('gdv_shops/' + u + '/blocs/_affect');
@@ -40406,6 +40416,34 @@ window.agvStocks = function(){
       window[nom] = neuf;
     });
   }
+
+  /* =========================================================================
+     E. SORTIE DE SECOURS DES PANNEAUX AJOUTES
+     -------------------------------------------------------------------------
+     Les panneaux des modules sont en « position:fixed; inset:0 » avec un
+     z-index superieur a celui de l'application (le parametrage des boutiques
+     est en 99995). Si l'un d'eux restait ouvert, l'utilisateur croirait que
+     l'application ou le bouton Parametrage ne repondent plus. La touche
+     Echap les referme tous, et AGV_PORTAIL.degager() fait de meme depuis
+     la console.
+     ========================================================================= */
+
+  var PANNEAUX = ['agv-dettes-panneau', 'agv-bloc-panneau', 'agv-reset-panneau',
+                  'agv-bloc-bandeau', 'agv-dettes-alerte'];
+
+  API.degager = function () {
+    var k = 0;
+    PANNEAUX.forEach(function (id) {
+      var e = document.getElementById(id);
+      if (e) { e.remove(); k++; }
+    });
+    if (k) log(k + ' panneau(x) referme(s)');
+    return k;
+  };
+
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' || e.keyCode === 27) API.degager();
+  });
 
   /* =========================================================================
      ACTIVATION
@@ -41022,18 +41060,31 @@ window.agvStocks = function(){
 
   function naissanceDuBloc(cb) {
     var b = blocActif();
-    if (b === 'A') return cb(null, 'A');       // le BLOC A n'a pas de naissance : c'est l'origine
+    if (b === 'A') return cb(null, 'A', false);   // le BLOC A est l'origine : rien a comparer
     var u = (window._currentShop || {}).uid;
-    if (!u || !window.db) return cb(null, b);
+    if (!u || !window.db) return cb(null, b, false);
     var brut = window._agvRefBrut || function (p) { return window.db.ref(p); };
-    var lu = 0, res = { marque: null, meta: null };
-    function fin() { if (++lu < 2) return; cb(res.marque || res.meta, b); }
+    var lu = 0, res = { marque: null, meta: null, source: null };
+    function fin() {
+      if (++lu < 2) return;
+      // UNE BOUTIQUE RATTACHEE N'EST PAS UN BLOC NEUF.
+      // Ses donnees existaient bien avant le rattachement et lui appartiennent :
+      // les juger « anterieures a la creation du bloc » n'aurait aucun sens et
+      // reviendrait a proposer d'effacer toute son histoire.
+      if (res.source) return cb(null, b, true);
+      cb(res.marque || res.meta, b, false);
+    }
     try {
       brut('gdv_shops/' + u + '/blocs/' + b + '/_marque').once('value')
         .then(function (s) { res.marque = (s.val() || {}).cree || null; fin(); }, fin);
       brut('gdv_shops/' + u + '/blocs/_meta/' + b).once('value')
-        .then(function (s) { res.meta = (s.val() || {}).cree || null; fin(); }, fin);
-    } catch (e) { cb(null, b); }
+        .then(function (s) {
+          var v = s.val() || {};
+          res.meta = v.cree || null;
+          res.source = v.source || null;
+          fin();
+        }, fin);
+    } catch (e) { cb(null, b, false); }
   }
 
   function analyserBloc(cree) {
@@ -41063,9 +41114,15 @@ window.agvStocks = function(){
   }
 
   API.controleBloc = function (cb) {
-    naissanceDuBloc(function (cree, b) {
+    naissanceDuBloc(function (cree, b, rattachee) {
       if (b === 'A') {
         console.log('Le BLOC A est la boutique d\'origine : il n\'y a rien à comparer.');
+        if (cb) cb(null);
+        return;
+      }
+      if (rattachee) {
+        console.log('Le bloc ' + b + ' est une boutique rattachée : ses données lui appartiennent ' +
+          'et sont antérieures au rattachement. Aucune analyse, aucun nettoyage.');
         if (cb) cb(null);
         return;
       }
@@ -41173,18 +41230,53 @@ window.agvStocks = function(){
     return k;
   };
 
-  // Alerte automatique a l'ouverture d'un bloc contamine
+  /* -------------------------------------------------------------------------
+     Signalement a l'ouverture d'un bloc.
+
+     ATTENTION : ne JAMAIS ouvrir ici un panneau plein ecran. Un overlay
+     « position:fixed; inset:0 » recouvre l'application ET les panneaux de
+     l'application (le parametrage des boutiques est en z-index 99995) :
+     l'utilisateur croit alors que le bloc ou le bouton Parametrage ne
+     s'ouvrent plus. On se contente d'un bandeau bas, mince et refermable,
+     place SOUS les panneaux de l'application.
+     ------------------------------------------------------------------------- */
+  function bandeauBloc(r) {
+    if (document.getElementById('agv-bloc-bandeau')) return;
+    var d = document.createElement('div');
+    d.id = 'agv-bloc-bandeau';
+    d.style.cssText = 'position:fixed;left:10px;right:10px;bottom:10px;z-index:99000;' +
+      'background:#7f1d1d;color:#fff;border-radius:12px;padding:11px 13px;' +
+      'box-shadow:0 10px 30px rgba(0,0,0,.35);font-family:inherit;font-size:13px;' +
+      'display:flex;align-items:center;gap:10px;flex-wrap:wrap;max-width:620px;margin:0 auto';
+    d.innerHTML = '<span style="flex:1;line-height:1.45">Ce bloc contient <b>' + r.total +
+      '</b> donnée(s) enregistrées avant sa création — probablement héritées d\'un autre bloc.</span>' +
+      '<button id="agv-bloc-voir" style="padding:6px 13px;border:none;border-radius:8px;background:#fff;' +
+      'color:#7f1d1d;font-family:inherit;font-size:12.5px;font-weight:700;cursor:pointer">Examiner</button>' +
+      '<button id="agv-bloc-plus-tard" style="padding:6px 11px;border:1px solid rgba(255,255,255,.45);' +
+      'border-radius:8px;background:transparent;color:#fff;font-family:inherit;font-size:12.5px;' +
+      'cursor:pointer">Plus tard</button>';
+    document.body.appendChild(d);
+    var voir = d.querySelector('#agv-bloc-voir');
+    var tard = d.querySelector('#agv-bloc-plus-tard');
+    if (voir) voir.onclick = function () { d.remove(); API.panneauBloc(); };
+    if (tard) tard.onclick = function () {
+      d.remove();
+      try { sessionStorage.setItem('agv_bloc_signale_' + blocActif(), '1'); } catch (e) {}
+    };
+  }
+
   setTimeout(function () {
     if (!API.actif) return;
-    if (blocActif() === 'A') return;
-    naissanceDuBloc(function (cree, b) {
-      if (!cree) return;
+    var b = blocActif();
+    if (b === 'A') return;
+    try { if (sessionStorage.getItem('agv_bloc_signale_' + b) === '1') return; } catch (e) {}
+    naissanceDuBloc(function (cree, bloc, rattachee) {
+      if (rattachee || !cree) return;          // boutique rattachee : on ne touche a rien
       var r = analyserBloc(cree);
       if (!r.total) return;
-      r.cree = cree; r.bloc = b;
-      log('bloc ' + b + ' : ' + r.total + ' entree(s) anterieure(s) a sa creation');
-      dire('⚠️ Ce bloc contient ' + r.total + ' donnée(s) héritées d\'un autre bloc');
-      setTimeout(function () { try { API.panneauBloc(); } catch (e) {} }, 1500);
+      r.cree = cree; r.bloc = bloc;
+      log('bloc ' + bloc + ' : ' + r.total + ' entree(s) anterieure(s) a sa creation');
+      bandeauBloc(r);
     });
   }, 9000);
 
