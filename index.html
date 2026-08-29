@@ -38843,9 +38843,11 @@ window.agvStocks = function(){
      2. agv-factures      : numerotation sequentielle, vendeur, dates, remise/frais, livraison, pagination
      3. agv-portail       : entree directe en un clic, suppression reelle d un bloc
      4. agv-dettes        : boule de neige, cache cloisonne, doublons Direction, nettoyage de bloc
+     5. agv-reset         : reinitialisation complete, personnel protege, sauvegarde prealable
      Desactivation individuelle depuis la console :
         AGV_PERF.actif = false;    AGV_FACT.actif = false;
         AGV_PORTAIL.actif = false; AGV_DETTES.actif = false;
+        AGV_RESET.actif = false;
      ================================================================== -->
 <script>
 /* =============================================================================
@@ -41195,6 +41197,425 @@ window.agvStocks = function(){
     if (brancherPrevention()) {
       clearInterval(horloge);
       log('module actif — v' + API.version + ' — bloc ' + blocActif());
+    }
+    if (essais > 600) clearInterval(horloge);
+  }, 500);
+
+})();
+
+</script>
+<script>
+/* =============================================================================
+   APP AGV — MODULE 5 : REINITIALISATION COMPLETE  (v1.0)
+   -----------------------------------------------------------------------------
+   L'ancienne fonction confirmReset() (ligne 6759) presentait trois defauts :
+
+   1. ELLE OUBLIAIT LA MOITIE DES DONNEES
+      Elle ne vidait que ventes et depenses. Restaient en place : les dettes,
+      les factures, les entrees de stock, les approvisionnements, les commandes
+      fournisseurs, les clients. Le compteur n'etait donc jamais remis a zero.
+
+   2. ELLE EFFACAIT LE PERSONNEL
+      gerants = [{ Fondateur }] : toutes les fiches des gerants disparaissaient,
+      avec leurs codes, leurs permissions et leur rattachement de bloc.
+      C'est exactement l'inverse de ce qu'il faut.
+
+   3. ELLE INJECTAIT UN CATALOGUE DE DEMONSTRATION
+      products = RAW_DATA : les 52 articles d'exemple codes en dur dans le
+      fichier (VENTILO, DIAMA, JUS MESSI...) remplacaient votre vrai catalogue.
+
+   Ce module remplace la reinitialisation par une version complete et reglable :
+     — le PERSONNEL n'est JAMAIS touche ;
+     — RAW_DATA n'est jamais reinjecte ;
+     — une sauvegarde est ecrite AVANT tout effacement, et reste restaurable ;
+     — la reinitialisation ne concerne QUE LE BLOC OUVERT.
+
+   INSTALLATION : charger apres les modules 1 a 4.
+   DESACTIVATION : AGV_RESET.actif = false
+   ============================================================================= */
+(function () {
+  'use strict';
+
+  var API = window.AGV_RESET = { actif: true, version: '1.0' };
+
+  function log() {
+    try { console.log.apply(console, ['[AGV-RESET]'].concat([].slice.call(arguments))); } catch (e) {}
+  }
+  function dire(m) { try { showToast(m); } catch (e) { alert(m); } }
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+    });
+  }
+  function tab(v) { if (!v) return []; if (Array.isArray(v)) return v; try { return Object.values(v); } catch (e) { return []; } }
+  function blocActif() {
+    try { if (typeof window.agvBlocActif === 'function') return window.agvBlocActif(); } catch (e) {}
+    return window._agvBloc || 'A';
+  }
+  function nomBlocCourant() {
+    var b = blocActif();
+    if (b === 'A') return (window._currentShop || {}).entreprise || 'Boutique principale';
+    return 'BLOC ' + b;
+  }
+
+  /* -------------------------------------------------------------------------
+     Acces aux tableaux globaux. Ils sont declares en `let` dans un autre
+     <script> : lisibles et modifiables par leur nom, pas via window.
+     ------------------------------------------------------------------------- */
+  var CHAMPS = {
+    ventes:        { lire: function () { try { return ventes; } catch (e) { return []; } },
+                     poser: function (v) { try { ventes = v; } catch (e) { window.ventes = v; } } },
+    depenses:      { lire: function () { try { return depenses; } catch (e) { return []; } },
+                     poser: function (v) { try { depenses = v; } catch (e) { window.depenses = v; } } },
+    entrees:       { lire: function () { try { return entrees; } catch (e) { return []; } },
+                     poser: function (v) { try { entrees = v; } catch (e) { window.entrees = v; } } },
+    appros:        { lire: function () { try { return appros; } catch (e) { return []; } },
+                     poser: function (v) { try { appros = v; } catch (e) { window.appros = v; } } },
+    dettes:        { lire: function () { try { return dettes; } catch (e) { return []; } },
+                     poser: function (v) { try { dettes = v; } catch (e) { window.dettes = v; } } },
+    factureVentes: { lire: function () { try { return factureVentes; } catch (e) { return []; } },
+                     poser: function (v) { try { factureVentes = v; } catch (e) { window.factureVentes = v; } } },
+    commandes:     { lire: function () { try { return commandes; } catch (e) { return []; } },
+                     poser: function (v) { try { commandes = v; } catch (e) { window.commandes = v; } } },
+    products:      { lire: function () { try { return products; } catch (e) { return []; } },
+                     poser: function (v) { try { products = v; } catch (e) { window.products = v; } } },
+    clients:       { lire: function () { try { return clients; } catch (e) { return []; } },
+                     poser: function (v) { try { clients = v; } catch (e) { window.clients = v; } } },
+    fournisseurs:  { lire: function () { try { return fournisseurs; } catch (e) { return []; } },
+                     poser: function (v) { try { fournisseurs = v; } catch (e) { window.fournisseurs = v; } } },
+    gerants:       { lire: function () { try { return gerants; } catch (e) { return []; } },
+                     poser: function (v) { try { gerants = v; } catch (e) { window.gerants = v; } } },
+    repConfig:     { lire: function () { try { return repConfig; } catch (e) { return []; } },
+                     poser: function (v) { try { repConfig = v; } catch (e) { window.repConfig = v; } } }
+  };
+
+  function contenu(cle) { return tab(CHAMPS[cle] ? CHAMPS[cle].lire() : []); }
+
+  /* -------------------------------------------------------------------------
+     Ce que la reinitialisation propose d'effacer.
+     Le personnel et la configuration de repartition n'y figurent pas :
+     ils ne peuvent pas etre effaces par cette fonction.
+     ------------------------------------------------------------------------- */
+  var OPTIONS = [
+    { cle: 'ventes',        nom: 'Ventes et mouvements de stock', defaut: true },
+    { cle: 'entrees',       nom: 'Entrées de stock',              defaut: true },
+    { cle: 'appros',        nom: 'Approvisionnements',            defaut: true },
+    { cle: 'depenses',      nom: 'Dépenses',                      defaut: true },
+    { cle: 'dettes',        nom: 'Dettes et créances',            defaut: true },
+    { cle: 'factureVentes', nom: 'Factures clients',              defaut: true },
+    { cle: 'commandes',     nom: 'Commandes fournisseurs',        defaut: true },
+    { cle: '@stocks',       nom: 'Remettre tous les stocks à zéro (le catalogue est conservé)', defaut: true },
+    { cle: 'products',      nom: 'Supprimer aussi le catalogue produits',      defaut: false },
+    { cle: 'clients',       nom: 'Supprimer aussi le répertoire clients',      defaut: false },
+    { cle: 'fournisseurs',  nom: 'Supprimer aussi le répertoire fournisseurs', defaut: false }
+  ];
+
+  function compte(cle) {
+    if (cle === '@stocks') {
+      return contenu('products').filter(function (p) {
+        return p && (Number(p.stock_initial) || 0) !== 0;
+      }).length;
+    }
+    return contenu(cle).length;
+  }
+
+  /* =========================================================================
+     SAUVEGARDE PREALABLE — la reinitialisation reste rattrapable
+     ========================================================================= */
+
+  function cheminSauvegardes() {
+    var u = (window._currentShop || {}).uid;
+    // Le chemin « sauvegardes » fait partie des rubriques redirigees par bloc :
+    // une sauvegarde du BLOC B ne se melange pas a celle du BLOC A.
+    return u ? ('gdv_shops/' + u + '/sauvegardes') : null;
+  }
+
+  function sauvegarder(cb) {
+    var ch = cheminSauvegardes();
+    if (!ch || !window.db) { cb(null); return; }
+    var instantane = {};
+    Object.keys(CHAMPS).forEach(function (k) { instantane[k] = contenu(k); });
+    var cle = 'reset_' + Date.now();
+    var paquet = {
+      cree: new Date().toISOString(),
+      bloc: blocActif(),
+      motif: 'Avant réinitialisation',
+      donnees: JSON.parse(JSON.stringify(instantane))
+    };
+    try {
+      window.db.ref(ch + '/' + cle).set(paquet).then(function () { cb(cle); }, function (e) {
+        log('sauvegarde impossible', e && e.message);
+        cb(null);
+      });
+    } catch (e) { cb(null); }
+  }
+
+  API.sauvegardes = function () {
+    var ch = cheminSauvegardes();
+    if (!ch || !window.db) { console.log('Base indisponible'); return; }
+    window.db.ref(ch).once('value').then(function (s) {
+      var v = s.val() || {};
+      var l = Object.keys(v);
+      if (!l.length) { console.log('Aucune sauvegarde pour ce bloc.'); return; }
+      console.log('--- Sauvegardes du bloc ' + blocActif() + ' ---');
+      l.sort().reverse().forEach(function (k) {
+        var p = v[k], d = p.donnees || {};
+        console.log('  ' + k + ' — ' + new Date(p.cree).toLocaleString('fr-FR') +
+          ' — ' + tab(d.ventes).length + ' vente(s), ' + tab(d.dettes).length + ' dette(s), ' +
+          tab(d.factureVentes).length + ' facture(s)');
+      });
+      console.log('Pour restaurer : AGV_RESET.restaurer("' + l.sort().reverse()[0] + '")');
+    });
+    return 'lecture en cours...';
+  };
+
+  API.restaurer = function (cle) {
+    var ch = cheminSauvegardes();
+    if (!ch || !cle || !window.db) { dire('Sauvegarde introuvable'); return; }
+    window.db.ref(ch + '/' + cle).once('value').then(function (s) {
+      var p = s.val();
+      if (!p || !p.donnees) { dire('Sauvegarde introuvable'); return; }
+      if (p.bloc && p.bloc !== blocActif()) {
+        dire('Cette sauvegarde appartient au bloc ' + p.bloc + ' — ouvrez-le d\'abord');
+        return;
+      }
+      if (!confirm('Restaurer la sauvegarde du ' + new Date(p.cree).toLocaleString('fr-FR') + ' ?\n\n' +
+        'Les données actuelles du bloc ' + blocActif() + ' seront remplacées.')) return;
+      Object.keys(CHAMPS).forEach(function (k) {
+        if (p.donnees[k] !== undefined) CHAMPS[k].poser(tab(p.donnees[k]));
+      });
+      enregistrerEtRafraichir();
+      dire('✅ Sauvegarde restaurée');
+      log('sauvegarde ' + cle + ' restauree');
+    });
+  };
+
+  /* =========================================================================
+     RAFRAICHISSEMENT
+     ========================================================================= */
+
+  function enregistrerEtRafraichir() {
+    try { if (typeof saveAll === 'function') saveAll(); } catch (e) {}
+    try { if (typeof sauvegarderFirebase === 'function') sauvegarderFirebase(); } catch (e) {}
+    try { if (window.AGV_PERF && window.AGV_PERF.viderFileAttente) window.AGV_PERF.viderFileAttente(); } catch (e) {}
+    ['buildCatFilters', 'buildDatalist', 'buildMonthFilters', 'renderDashboard', 'renderAlerts',
+     'renderTable', 'renderDepenses', 'renderDettes', 'renderFacturesList', 'renderClientsListe',
+     'renderVentesHistory', 'renderJournalier', 'renderInventaire', 'renderCommandesList',
+     'renderFournisseurs', 'renderRepartition', 'renderGerants'
+    ].forEach(function (f) { try { if (typeof window[f] === 'function') window[f](); } catch (e) {} });
+  }
+
+  /* =========================================================================
+     EXECUTION
+     ========================================================================= */
+
+  function executer(choix) {
+    var faits = [];
+
+    OPTIONS.forEach(function (o) {
+      if (!choix[o.cle]) return;
+      if (o.cle === '@stocks') {
+        var maj = contenu('products').map(function (p) {
+          var c = {};
+          for (var k in p) c[k] = p[k];
+          c.stock_initial = 0;
+          c.total = 0;
+          return c;
+        });
+        CHAMPS.products.poser(maj);
+        faits.push('stocks remis à zéro');
+        return;
+      }
+      var n = contenu(o.cle).length;
+      CHAMPS[o.cle].poser([]);
+      if (n) faits.push(o.nom.toLowerCase() + ' (' + n + ')');
+    });
+
+    // Le personnel est reconduit tel quel, sans exception.
+    var pers = contenu('gerants');
+    CHAMPS.gerants.poser(pers);
+
+    enregistrerEtRafraichir();
+
+    try {
+      if (typeof window.agvJournaliser === 'function') {
+        window.agvJournaliser('Réinitialisation', 'bloc ' + blocActif() + ' — ' + faits.join(', ') +
+          ' — personnel conservé (' + pers.length + ' fiche(s))');
+      }
+    } catch (e) {}
+    log('reinitialisation : ' + faits.join(', ') + ' | personnel conserve : ' + pers.length);
+    return faits;
+  }
+
+  // Execution directe, sans passer par le panneau (console / vérification).
+  // Le personnel reste protégé quel que soit le contenu de `choix`.
+  API.reinitialiser = function (choix) {
+    if (!API.actif) return [];
+    var c = {};
+    if (!choix) OPTIONS.forEach(function (o) { if (o.defaut) c[o.cle] = true; });
+    else Object.keys(choix).forEach(function (k) { if (CHAMPS[k] || k === '@stocks') c[k] = !!choix[k]; });
+    delete c.gerants;
+    delete c.repConfig;
+    return executer(c);
+  };
+
+  /* =========================================================================
+     LE PANNEAU
+     ========================================================================= */
+
+  API.panneau = function () {
+    if (!API.actif) return;
+    var role = null;
+    try { role = window.currentRole || currentRole; } catch (e) {}
+    if (role !== 'fondateur') { dire('Réservé au Fondateur'); return; }
+
+    var vieux = document.getElementById('agv-reset-panneau');
+    if (vieux) vieux.remove();
+
+    var pers = contenu('gerants').length;
+
+    var ov = document.createElement('div');
+    ov.id = 'agv-reset-panneau';
+    ov.style.cssText = 'position:fixed;inset:0;z-index:99997;background:rgba(15,23,42,.66);display:flex;' +
+      'align-items:center;justify-content:center;padding:14px;font-family:inherit';
+
+    var lignes = OPTIONS.map(function (o, i) {
+      var n = compte(o.cle);
+      var vide = (n === 0);
+      return '<label style="display:flex;align-items:flex-start;gap:9px;padding:8px 10px;border-radius:9px;' +
+        'background:' + (o.defaut ? '#fef2f2' : '#f8fafc') + ';margin-bottom:5px;cursor:' +
+        (vide ? 'default' : 'pointer') + ';opacity:' + (vide ? '.5' : '1') + '">' +
+        '<input type="checkbox" id="agv-rst-' + i + '" data-cle="' + esc(o.cle) + '"' +
+        (o.defaut && !vide ? ' checked' : '') + (vide ? ' disabled' : '') +
+        ' style="margin-top:2px;width:16px;height:16px;cursor:inherit">' +
+        '<span style="flex:1;font-size:13px;color:#0f172a;line-height:1.45">' + esc(o.nom) +
+        '<span style="color:#64748b;font-size:12px"> — ' + (vide ? 'rien à effacer' : n + ' entrée(s)') +
+        '</span></span></label>';
+    }).join('');
+
+    ov.innerHTML = '<div style="background:#fff;border-radius:16px;max-width:600px;width:100%;' +
+      'max-height:90vh;overflow-y:auto;padding:20px 22px;box-shadow:0 18px 50px rgba(0,0,0,.4)">' +
+
+      '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px">' +
+      '<div><div style="font-size:17px;font-weight:800;color:#b91c1c">Réinitialisation</div>' +
+      '<div style="font-size:12.5px;color:#64748b;margin-top:2px">' + esc(nomBlocCourant()) +
+      ' — bloc ' + esc(blocActif()) + ' uniquement</div></div>' +
+      '<button id="agv-rst-x" style="padding:7px 13px;border:1px solid #cbd5e1;border-radius:9px;' +
+      'background:#f8fafc;font-family:inherit;font-size:13px;cursor:pointer">Fermer</button></div>' +
+
+      '<div style="margin:13px 0;padding:10px 12px;background:#ecfdf5;border:1px solid #a7f3d0;' +
+      'border-radius:10px;font-size:12.5px;color:#065f46;line-height:1.55">' +
+      '<b>Le personnel n\'est jamais touché.</b> Vos ' + pers + ' fiche(s) de gérant, leurs codes, ' +
+      'leurs permissions et leur rattachement de bloc sont conservés à l\'identique.</div>' +
+
+      '<div style="font-size:13px;font-weight:800;color:#0f172a;margin-bottom:7px">À remettre à zéro</div>' +
+      lignes +
+
+      '<div style="margin-top:14px;padding:10px 12px;background:#eff6ff;border:1px solid #bfdbfe;' +
+      'border-radius:10px;font-size:12.5px;color:#1e3a8a;line-height:1.55">' +
+      'Une sauvegarde complète est écrite avant l\'effacement. Vous pourrez revenir en arrière avec ' +
+      '<code>AGV_RESET.sauvegardes()</code> puis <code>AGV_RESET.restaurer("…")</code>.</div>' +
+
+      '<div style="margin-top:14px">' +
+      '<label style="font-size:12.5px;font-weight:700;color:#0f172a;display:block;margin-bottom:5px">' +
+      'Code Fondateur</label>' +
+      '<input type="password" id="agv-rst-code" placeholder="Saisissez votre code" ' +
+      'style="width:100%;padding:11px 13px;border:1px solid #cbd5e1;border-radius:10px;font-size:14px;' +
+      'font-family:inherit;outline:none"></div>' +
+      '<div id="agv-rst-msg" style="font-size:12.5px;color:#b91c1c;margin-top:7px;min-height:16px"></div>' +
+
+      '<div style="display:flex;gap:9px;margin-top:12px">' +
+      '<button id="agv-rst-go" style="flex:1;padding:12px;border:none;border-radius:10px;background:#b91c1c;' +
+      'color:#fff;font-family:inherit;font-size:14px;font-weight:700;cursor:pointer">Réinitialiser</button>' +
+      '<button id="agv-rst-no" style="padding:12px 18px;border:1px solid #cbd5e1;border-radius:10px;' +
+      'background:#f8fafc;font-family:inherit;font-size:14px;cursor:pointer">Annuler</button></div>' +
+      '</div>';
+
+    document.body.appendChild(ov);
+    function fermer() { ov.remove(); }
+    ov.onclick = function (e) { if (e.target === ov) fermer(); };
+    document.getElementById('agv-rst-x').onclick = fermer;
+    document.getElementById('agv-rst-no').onclick = fermer;
+
+    document.getElementById('agv-rst-go').onclick = function () {
+      var msg = document.getElementById('agv-rst-msg');
+      var saisi = String(document.getElementById('agv-rst-code').value || '').trim();
+
+      var attendu = '';
+      try {
+        attendu = localStorage.getItem(window.AGV_KEY ? window.AGV_KEY('fondateur_code') : 'agv_fondateur_code') || '';
+      } catch (e) {}
+      if (!attendu) attendu = (window._currentShop || {}).codeFondateur || window.FONDATEUR_CODE || '';
+
+      if (!saisi || String(saisi) !== String(attendu)) {
+        msg.textContent = 'Code Fondateur incorrect.';
+        return;
+      }
+
+      var choix = {}, total = 0;
+      OPTIONS.forEach(function (o, i) {
+        var c = document.getElementById('agv-rst-' + i);
+        if (c && c.checked) { choix[o.cle] = true; if (o.cle !== '@stocks') total += compte(o.cle); }
+      });
+      if (!Object.keys(choix).length) { msg.textContent = 'Sélectionnez au moins une rubrique.'; return; }
+
+      if (!confirm('Dernière confirmation.\n\n' + total + ' enregistrement(s) vont être effacés du ' +
+        nomBlocCourant() + '.\nLe personnel (' + pers + ' fiche(s)) est conservé.\n\nContinuer ?')) return;
+
+      msg.style.color = '#1e3a8a';
+      msg.textContent = 'Sauvegarde en cours...';
+      document.getElementById('agv-rst-go').disabled = true;
+
+      sauvegarder(function (cle) {
+        var faits = executer(choix);
+        fermer();
+        dire('✓ Réinitialisation effectuée — ' + (cle ? 'sauvegarde ' + cle : 'sans sauvegarde'));
+        if (!cle) {
+          setTimeout(function () {
+            alert('La réinitialisation a été faite, mais la sauvegarde préalable n\'a pas pu être écrite ' +
+              '(réseau indisponible). Aucun retour en arrière ne sera possible pour cette opération.');
+          }, 400);
+        }
+      });
+    };
+  };
+
+  /* =========================================================================
+     BRANCHEMENT SUR LE BOUTON EXISTANT
+     ========================================================================= */
+
+  var essais = 0;
+  var horloge = setInterval(function () {
+    essais++;
+    var pret = false;
+
+    if (typeof window.resetAllData === 'function' && !window.resetAllData.__agvReset) {
+      var neuve = function () {
+        if (!API.actif) return;
+        API.panneau();
+      };
+      neuve.__agvReset = true;
+      neuve.__agvOrig = window.resetAllData;
+      window.resetAllData = neuve;
+      pret = true;
+    }
+
+    // L'ancienne confirmation ne doit plus pouvoir s'executer :
+    // elle effacerait le personnel et reinjecterait RAW_DATA.
+    if (typeof window.confirmReset === 'function' && !window.confirmReset.__agvReset) {
+      var barrage = function () {
+        if (!API.actif) return barrage.__agvOrig.apply(this, arguments);
+        try { document.getElementById('reset-overlay').classList.remove('open'); } catch (e) {}
+        API.panneau();
+      };
+      barrage.__agvReset = true;
+      barrage.__agvOrig = window.confirmReset;
+      window.confirmReset = barrage;
+    }
+
+    if (pret) {
+      clearInterval(horloge);
+      log('module actif — v' + API.version + ' — le personnel est protégé');
     }
     if (essais > 600) clearInterval(horloge);
   }, 500);
