@@ -38840,14 +38840,17 @@ window.agvStocks = function(){
 <!-- ==================================================================
      MODULES AJOUTES — App AGV
      1. agv-performance   : sauvegarde differentielle, regroupement des rendus, index memoire
-     2. agv-factures      : numerotation sequentielle, vendeur, dates, remise/frais, livraison, pagination
+     2. agv-factures      : numerotation, vendeur, dates, remise/frais, livraison, pagination
      3. agv-portail       : entree directe, suppression/detachement de bloc, sortie de secours Echap
-     4. agv-dettes        : boule de neige, cache cloisonne, doublons, nettoyage (hors boutiques rattachees)
+     4. agv-dettes        : boule de neige, cache cloisonne, doublons, nettoyage (hors rattachees)
      5. agv-reset         : reinitialisation complete, personnel protege, sauvegarde prealable
+     6. agv-forfaits      : forfaits Pro reglables depuis l espace concepteur
+     7. agv-stable        : boutiques rattachees stables, lettre libre, nom reel et suivi
      Desactivation individuelle depuis la console :
         AGV_PERF.actif = false;    AGV_FACT.actif = false;
         AGV_PORTAIL.actif = false; AGV_DETTES.actif = false;
-        AGV_RESET.actif = false;
+        AGV_RESET.actif = false;   AGV_FORFAIT.actif = false;
+        AGV_STABLE.actif = false;
      Si un panneau reste ouvert : touche Echap, ou AGV_PORTAIL.degager()
      ================================================================== -->
 <script>
@@ -41711,6 +41714,783 @@ window.agvStocks = function(){
     }
     if (essais > 600) clearInterval(horloge);
   }, 500);
+
+})();
+
+</script>
+<script>
+/* =============================================================================
+   APP AGV — MODULE 6 : FORFAITS PRO DEPUIS L'ESPACE CONCEPTEUR  (v1.0)
+   -----------------------------------------------------------------------------
+   POURQUOI VOUS N'Y ARRIVIEZ PAS
+
+   Le nombre de blocs autorises pour une boutique est lu ici (ligne 26784) :
+
+       function blocsMax(){
+         if(forfait && forfait.actif){ ... return m > 0 ? m : 99; }
+         return BLOCS_OFFERTS;                       // 3
+       }
+
+   et il vient du noeud « agv_platform/forfaitsPro/<uid> ». La meme valeur
+   commande les DEUX choses que vous cherchez a autoriser :
+     — la creation d'un bloc      (agvBlocAutorise, ligne 26811)
+     — le rattachement d'une boutique (ligne 32215 : max = blocsMax)
+
+   Or la seule facon d'ecrire ce noeud etait de taper dans la console :
+
+       agvForfaitPro('<uid>', 10)
+
+   avec l'IDENTIFIANT FIREBASE de la boutique — un identifiant qui n'est
+   affiche nulle part dans l'espace concepteur. Les cartes montrent le code
+   boutique et le code fondateur, jamais l'uid. Sans lui, la commande ne peut
+   pas etre passee : d'ou l'impossibilite d'accorder plus de trois blocs.
+
+   CE MODULE AJOUTE
+     — un bouton « Blocs : N » sur chaque fiche de l'espace concepteur, avec
+       le nombre reellement autorise, lu dans la base ;
+     — une fenetre pour changer ce nombre en un clic ;
+     — les commandes AGV_FORFAIT.accorder("CODE", 10) et .retirer("CODE"),
+       qui acceptent le CODE BOUTIQUE, celui qui est affiche sur la fiche.
+
+   Aucune donnee de boutique n'est lue ni ecrite : ce module ne touche qu'au
+   noeud des forfaits.
+
+   INSTALLATION : charger apres les modules 1 a 5.
+   DESACTIVATION : AGV_FORFAIT.actif = false
+   ============================================================================= */
+(function () {
+  'use strict';
+
+  var API = window.AGV_FORFAIT = { actif: true, version: '1.0' };
+  var CHEMIN = 'agv_platform/forfaitsPro';
+  var OFFERTS = 3;
+
+  function log() {
+    try { console.log.apply(console, ['[AGV-FORFAIT]'].concat([].slice.call(arguments))); } catch (e) {}
+  }
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+    });
+  }
+  function base() {
+    return (window.db && typeof window.db.ref === 'function') ? window.db : null;
+  }
+  // Le chemin agv_platform n'est pas redirige par bloc (la redirection ne vise
+  // que gdv_shops/<uid>/data|caisse|...), l'ecriture atteint donc bien la
+  // racine de la plateforme quel que soit le bloc ouvert.
+  function ref(p) { var d = base(); return d ? d.ref(p) : null; }
+
+  /* =========================================================================
+     LECTURE DES FORFAITS
+     ========================================================================= */
+
+  var CACHE = {};      // uid -> { actif, blocsMax }
+  var luLe = 0;
+
+  function chargerTous(cb, force) {
+    if (!force && Date.now() - luLe < 15000) { cb(CACHE); return; }
+    var r = ref(CHEMIN);
+    if (!r) { cb(CACHE); return; }
+    r.once('value').then(function (s) {
+      CACHE = s.val() || {};
+      luLe = Date.now();
+      cb(CACHE);
+    }, function (e) {
+      log('lecture des forfaits impossible', e && e.message);
+      cb(CACHE);
+    });
+  }
+
+  function autorises(uid) {
+    var f = CACHE[uid];
+    if (f && f.actif) {
+      var m = Number(f.blocsMax);
+      return (m > 0) ? m : 99;
+    }
+    return OFFERTS;
+  }
+
+  /* =========================================================================
+     ECRITURE
+     ========================================================================= */
+
+  function ecrire(uid, nombre, cb) {
+    var r = ref(CHEMIN + '/' + uid);
+    if (!r) { cb(new Error('Base indisponible')); return; }
+    var v = (nombre === 0 || nombre === null)
+      ? null
+      : { actif: true, blocsMax: (Number(nombre) > 0 ? Number(nombre) : 99), depuis: Date.now() };
+    r.set(v).then(function () {
+      if (v) CACHE[uid] = v; else delete CACHE[uid];
+      try {
+        if (typeof window.agvJournaliser === 'function') {
+          window.agvJournaliser('Forfait boutique',
+            uid + ' — ' + (v ? v.blocsMax + ' blocs' : 'retour à la formule standard'));
+        }
+      } catch (e) {}
+      cb(null, v);
+    }, function (e) { cb(e); });
+  }
+
+  /* =========================================================================
+     RECHERCHE D'UNE BOUTIQUE PAR SON CODE
+     -------------------------------------------------------------------------
+     Le code boutique est ce que le concepteur a sous les yeux ; l'uid ne
+     l'est jamais. On accepte donc les deux.
+     ========================================================================= */
+
+  function trouverUid(cle, cb) {
+    if (!cle) { cb(null); return; }
+    cle = String(cle).trim();
+
+    // La liste deja chargee par l'espace concepteur evite une relecture
+    var liste = window._devShopsCache || [];
+    var t = liste.filter(function (s) {
+      return s && (String(s.uid) === cle ||
+        String(s.codeAcces || '').toLowerCase() === cle.toLowerCase() ||
+        String(s.codeFondateur || '').toLowerCase() === cle.toLowerCase());
+    });
+    if (t.length === 1) { cb(t[0].uid, t[0]); return; }
+    if (t.length > 1) {
+      console.log('Plusieurs boutiques portent ce code — précisez l\'identifiant :');
+      t.forEach(function (s) { console.log('   ' + s.uid + ' — ' + (s.entreprise || '')); });
+      cb(null);
+      return;
+    }
+
+    // Rien ne correspond. Si la liste des boutiques est chargee, elle fait
+    // autorite : on refuse plutot que de creer un noeud de forfait rattache
+    // a une boutique qui n'existe pas — le concepteur croirait avoir accorde
+    // le forfait alors que rien n'aurait change.
+    if (liste.length) {
+      console.log('Aucune boutique ne porte le code « ' + cle + ' ». ' +
+        'Ouvrez l\'espace concepteur et reprenez le code affiché sur la fiche.');
+      cb(null);
+      return;
+    }
+
+    console.log('Liste des boutiques non chargée — « ' + cle +
+      ' » est utilisé tel quel comme identifiant. Ouvrez l\'espace concepteur ' +
+      'd\'abord pour pouvoir travailler avec le code boutique.');
+    cb(cle, null);
+  }
+
+  /* =========================================================================
+     COMMANDES CONSOLE
+     ========================================================================= */
+
+  API.accorder = function (cle, nombre) {
+    trouverUid(cle, function (uid, s) {
+      if (!uid) { console.log('Boutique introuvable : ' + cle); return; }
+      var n = Number(nombre) > 0 ? Number(nombre) : 99;
+      ecrire(uid, n, function (err, v) {
+        if (err) { console.log('Échec : ' + (err.message || err)); return; }
+        console.log('✅ ' + ((s && s.entreprise) || uid) + ' peut désormais gérer ' +
+          (v.blocsMax >= 99 ? 'un nombre illimité de blocs' : v.blocsMax + ' blocs') +
+          ' — création ET rattachement.');
+        rafraichirCartes(true);
+      });
+    });
+    return 'écriture en cours...';
+  };
+
+  API.retirer = function (cle) {
+    trouverUid(cle, function (uid, s) {
+      if (!uid) { console.log('Boutique introuvable : ' + cle); return; }
+      ecrire(uid, 0, function (err) {
+        if (err) { console.log('Échec : ' + (err.message || err)); return; }
+        console.log('Forfait retiré — ' + ((s && s.entreprise) || uid) +
+          ' revient à ' + OFFERTS + ' blocs.');
+        rafraichirCartes(true);
+      });
+    });
+    return 'écriture en cours...';
+  };
+
+  API.etat = function () {
+    chargerTous(function (m) {
+      var l = Object.keys(m);
+      if (!l.length) { console.log('Aucune boutique ne dispose du forfait Pro.'); return; }
+      console.log('--- Boutiques au forfait Pro ---');
+      var liste = window._devShopsCache || [];
+      l.forEach(function (u) {
+        var s = liste.filter(function (x) { return x && String(x.uid) === String(u); })[0];
+        console.log('  ' + ((s && s.entreprise) || u) + ' — ' +
+          (Number(m[u].blocsMax) >= 99 ? 'illimité' : m[u].blocsMax + ' blocs'));
+      });
+    }, true);
+    return 'lecture en cours...';
+  };
+
+  /* =========================================================================
+     LA FENETRE DE REGLAGE
+     ========================================================================= */
+
+  function fenetre(uid, nom) {
+    var actuel = autorises(uid);
+    var vieux = document.getElementById('agv-forfait-modal');
+    if (vieux) vieux.remove();
+
+    var ov = document.createElement('div');
+    ov.id = 'agv-forfait-modal';
+    ov.style.cssText = 'position:fixed;inset:0;z-index:9999998;background:rgba(0,0,0,.88);display:flex;' +
+      'align-items:center;justify-content:center;padding:14px;font-family:inherit';
+
+    var choix = [
+      { n: 3, t: 'Formule standard', d: '3 blocs — le forfait est retiré' },
+      { n: 5, t: '5 blocs', d: 'Deux boutiques supplémentaires' },
+      { n: 10, t: '10 blocs', d: 'Pour un réseau de points de vente' },
+      { n: 99, t: 'Illimité', d: 'Aucune limite de création ni de rattachement' }
+    ];
+
+    ov.innerHTML = '<div style="background:#0a1628;border:1px solid rgba(37,99,235,.35);border-radius:14px;' +
+      'padding:22px;max-width:420px;width:100%;max-height:90vh;overflow-y:auto">' +
+      '<div style="font-size:15px;font-weight:800;color:#fff">Blocs autorisés</div>' +
+      '<div style="font-size:12.5px;color:#64748b;margin-top:3px;margin-bottom:4px">' + esc(nom || uid) + '</div>' +
+      '<div style="font-size:11.5px;color:#475569;margin-bottom:14px;line-height:1.55">' +
+      'Ce réglage commande à la fois la <b style="color:#94a3b8">création de blocs</b> et le ' +
+      '<b style="color:#94a3b8">rattachement de boutiques existantes</b>.</div>' +
+      choix.map(function (c) {
+        var on = (c.n === actuel) || (c.n === 99 && actuel >= 99);
+        return '<button data-n="' + c.n + '" class="agv-frf-opt" style="display:block;width:100%;text-align:left;' +
+          'padding:11px 13px;margin-bottom:8px;border-radius:10px;cursor:pointer;font-family:inherit;' +
+          'border:1px solid ' + (on ? '#2563eb' : 'rgba(148,163,184,.25)') + ';' +
+          'background:' + (on ? 'rgba(37,99,235,.18)' : 'rgba(148,163,184,.06)') + ';">' +
+          '<div style="font-size:13.5px;font-weight:700;color:' + (on ? '#93c5fd' : '#e2e8f0') + '">' +
+          esc(c.t) + (on ? ' &nbsp;·&nbsp; actuel' : '') + '</div>' +
+          '<div style="font-size:11.5px;color:#64748b;margin-top:2px">' + esc(c.d) + '</div></button>';
+      }).join('') +
+      '<div style="display:flex;gap:8px;margin-top:6px">' +
+      '<input id="agv-frf-libre" type="number" min="1" max="99" placeholder="Autre nombre" ' +
+      'style="flex:1;padding:10px 12px;background:#060d24;border:1px solid rgba(37,99,235,.3);' +
+      'border-radius:9px;color:#e2e8f0;font-size:13px;font-family:inherit;outline:none">' +
+      '<button id="agv-frf-ok" style="padding:10px 16px;border:none;border-radius:9px;background:#2563eb;' +
+      'color:#fff;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit">Appliquer</button></div>' +
+      '<div id="agv-frf-msg" style="font-size:12px;color:#f87171;margin-top:10px;min-height:16px"></div>' +
+      '<button id="agv-frf-x" style="width:100%;margin-top:8px;padding:10px;border:1px solid rgba(148,163,184,.3);' +
+      'border-radius:9px;background:transparent;color:#94a3b8;font-size:13px;cursor:pointer;' +
+      'font-family:inherit">Fermer</button></div>';
+
+    document.body.appendChild(ov);
+    ov.onclick = function (e) { if (e.target === ov) ov.remove(); };
+    ov.querySelector('#agv-frf-x').onclick = function () { ov.remove(); };
+
+    function appliquer(n) {
+      var msg = ov.querySelector('#agv-frf-msg');
+      msg.style.color = '#94a3b8';
+      msg.textContent = 'Enregistrement...';
+      ecrire(uid, (Number(n) === 3 ? 0 : Number(n)), function (err) {
+        if (err) {
+          msg.style.color = '#f87171';
+          msg.textContent = 'Échec : ' + (err.message || err) +
+            ' — vérifiez les règles Firebase sur agv_platform/forfaitsPro.';
+          return;
+        }
+        ov.remove();
+        rafraichirCartes(true);
+        var t = (Number(n) === 3)
+          ? 'Forfait retiré — ' + OFFERTS + ' blocs'
+          : (Number(n) >= 99 ? 'Blocs illimités accordés' : Number(n) + ' blocs accordés');
+        try { if (window.agvToast) window.agvToast(t, '#22c55e', 4000); } catch (e) {}
+        log(t + ' pour ' + uid);
+      });
+    }
+
+    Array.prototype.forEach.call(ov.querySelectorAll('.agv-frf-opt'), function (b) {
+      b.onclick = function () { appliquer(b.getAttribute('data-n')); };
+    });
+    ov.querySelector('#agv-frf-ok').onclick = function () {
+      var v = Number(ov.querySelector('#agv-frf-libre').value);
+      if (!(v > 0)) { ov.querySelector('#agv-frf-msg').textContent = 'Indiquez un nombre entre 1 et 99.'; return; }
+      appliquer(v);
+    };
+  }
+
+  API.ouvrir = fenetre;
+
+  /* =========================================================================
+     LE BOUTON SUR CHAQUE FICHE DE L'ESPACE CONCEPTEUR
+     ========================================================================= */
+
+  function poserBouton(carte, forcer) {
+    var uid = carte.getAttribute('data-uid');
+    if (!uid) return;
+    var n = autorises(uid);
+    var b = carte.querySelector('.agv-frf-btn');
+
+    if (!b) {
+      // On se place a cote du bouton Bloquer / Debloquer
+      var ancre = carte.querySelector('button[onclick^="agvToggleBlock"]');
+      if (!ancre || !ancre.parentNode) return;
+      b = document.createElement('button');
+      b.className = 'agv-frf-btn';
+      b.style.cssText = 'padding:6px 10px;border:none;border-radius:6px;font-size:11px;' +
+        'font-weight:700;cursor:pointer;font-family:inherit;margin-top:4px';
+      var nomBoutique = '';
+      var t = carte.querySelector('div[style*="font-weight:700"]');
+      if (t) nomBoutique = (t.textContent || '').replace(/Actif|Bloque/g, '').trim();
+      b.onclick = function (e) {
+        e.stopPropagation();
+        fenetre(uid, nomBoutique);
+      };
+      ancre.parentNode.insertBefore(b, ancre.nextSibling);
+    } else if (!forcer) {
+      return;
+    }
+
+    var pro = (n > OFFERTS);
+    b.textContent = 'Blocs : ' + (n >= 99 ? 'illimité' : n);
+    b.style.background = pro ? '#7c3aed' : 'rgba(148,163,184,.15)';
+    b.style.color = pro ? '#fff' : '#94a3b8';
+    b.title = pro
+      ? 'Forfait Pro actif — création et rattachement autorisés jusqu\'à ' + (n >= 99 ? 'l\'illimité' : n + ' blocs')
+      : 'Formule standard — ' + OFFERTS + ' blocs. Cliquez pour accorder davantage.';
+  }
+
+  function rafraichirCartes(force) {
+    var cartes = document.querySelectorAll('.dev-shop-item');
+    if (!cartes.length) return;
+    chargerTous(function () {
+      Array.prototype.forEach.call(cartes, function (c) {
+        try { poserBouton(c, true); } catch (e) {}
+      });
+    }, !!force);
+  }
+
+  setInterval(function () {
+    if (!API.actif) return;
+    try {
+      var cartes = document.querySelectorAll('.dev-shop-item');
+      if (!cartes.length) return;
+      var manquants = 0;
+      Array.prototype.forEach.call(cartes, function (c) {
+        if (!c.querySelector('.agv-frf-btn')) manquants++;
+      });
+      if (manquants) rafraichirCartes(false);
+    } catch (e) {}
+  }, 900);
+
+  log('module actif — v' + API.version + ' — AGV_FORFAIT.accorder("CODE", 10)');
+
+})();
+
+</script>
+<script>
+/* =============================================================================
+   APP AGV — MODULE 7 : STABILITE DES BOUTIQUES RATTACHEES  (v1.0)
+   -----------------------------------------------------------------------------
+   Trois defauts distincts, tous localises dans la gestion de
+   « gdv_shops/<uid>/blocs/_meta », le noeud qui dit quels blocs existent.
+
+   DEFAUT 1 — LES BOUTIQUES DISPARAISSENT PUIS REVIENNENT
+     La liste des blocs vient de chargerMeta() (ligne 26794) :
+
+         lire('gdv_shops/'+u+'/blocs/_meta', function(v){ metaBlocs = v || {}; ... });
+
+     et lire() (ligne 26627) abandonne au bout de 7 secondes en renvoyant null :
+
+         var t = setTimeout(function(){ if(!fini){ fini = true; cb(null); } }, 7000);
+
+     Sur une connexion lente, une seule lecture trop longue suffit donc a poser
+     metaBlocs = {} . Or existe(b) vaut « b === 'A' || metaBlocs[b] » : TOUTES
+     les boutiques rattachees s'effacent d'un coup de l'accueil, du parametrage,
+     de la pastille et de la Direction. La lecture suivante les fait revenir.
+     D'ou les disparitions et reapparitions.
+
+     CORRECTION : une memoire stable de _meta. Les lectures repondent
+     instantanement avec la derniere liste connue, pendant qu'une relecture se
+     fait en arriere-plan. Une lecture qui echoue ou qui expire n'efface plus
+     rien. Une lecture qui aboutit fait autorite et met la memoire a jour.
+
+   DEFAUT 2 — UN RATTACHEMENT PEUT ECRASER UN BLOC EXISTANT
+     La lettre du nouveau bloc est choisie ainsi (ligne 32221) :
+
+         var cible = LETTRES[existants.length];
+
+     C'est un COMPTE, pas une place libre. Avec les blocs A et C (apres le
+     retrait du B), existants.length vaut 2 et cible devient « C » : le
+     rattachement ecrase le bloc C au lieu de prendre le B.
+     Meme calcul dans prochainBloc() (ligne 26805) pour la creation.
+
+     CORRECTION : la lettre retenue est la PREMIERE REELLEMENT LIBRE.
+
+   DEFAUT 3 — LA BOUTIQUE ARRIVE SANS SON NOM, OU AVEC UN NOM PERIME
+     Le nom est recopie une fois pour toutes au moment du rattachement :
+
+         nom: info.entreprise || info.nom || '(sans nom)'
+
+     Si la fiche n'a pas encore ete lue, la boutique entre sous le nom
+     « (sans nom) » ; et si elle est renommee plus tard, la boutique d'accueil
+     continue d'afficher l'ancien nom.
+
+     CORRECTION : le rattachement est REFUSE tant que la boutique n'a pas de
+     nom, et le nom affiche suit ensuite le nom reel de la boutique rattachee.
+
+   CE MODULE N'ECRIT QUE DANS blocs/_meta DE LA BOUTIQUE D'ACCUEIL.
+   Aucune donnee de boutique — produits, ventes, dettes, factures, clients —
+   n'est lue, modifiee ni deplacee.
+
+   INSTALLATION : charger apres les modules 1 a 6.
+   DESACTIVATION : AGV_STABLE.actif = false
+   ============================================================================= */
+(function () {
+  'use strict';
+
+  var API = window.AGV_STABLE = { actif: true, version: '1.0' };
+  var LETTRES = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
+
+  var RE_META = /^\/?gdv_shops\/([^\/]+)\/blocs\/_meta$/;
+  var RE_META_BLOC = /^\/?gdv_shops\/([^\/]+)\/blocs\/_meta\/([A-Z])$/;
+
+  function log() {
+    try { console.log.apply(console, ['[AGV-STABLE]'].concat([].slice.call(arguments))); } catch (e) {}
+  }
+  function vide(o) {
+    return !o || typeof o !== 'object' || !Object.keys(o).length;
+  }
+
+  /* =========================================================================
+     1. MEMOIRE STABLE DE LA LISTE DES BLOCS
+     ========================================================================= */
+
+  var MEM = {};              // uid -> { blocs, le }
+  var enCours = {};          // uid -> true pendant une relecture
+
+  function cleLocale(u) { return 'agv_meta_stable_' + u; }
+
+  function lireMemoire(u) {
+    if (MEM[u]) return MEM[u].blocs;
+    try {
+      var brut = localStorage.getItem(cleLocale(u));
+      if (!brut) return null;
+      var o = JSON.parse(brut);
+      if (o && o.blocs && !vide(o.blocs)) { MEM[u] = o; return o.blocs; }
+    } catch (e) {}
+    return null;
+  }
+
+  function poserMemoire(u, blocs) {
+    var o = { blocs: blocs, le: Date.now() };
+    MEM[u] = o;
+    try { localStorage.setItem(cleLocale(u), JSON.stringify(o)); } catch (e) {}
+  }
+
+  function viderMemoire(u) {
+    delete MEM[u];
+    try { localStorage.removeItem(cleLocale(u)); } catch (e) {}
+  }
+
+  API.oublier = function (u) {
+    u = u || (window._currentShop || {}).uid;
+    if (u) { viderMemoire(u); log('mémoire de ' + u + ' effacée'); }
+  };
+
+  // Relecture reelle, sans passer par la memoire
+  function relire(u, cb) {
+    if (enCours[u]) { cb && cb(null); return; }
+    var vrai = API._vraiRef;
+    if (typeof vrai !== 'function') { cb && cb(null); return; }
+    var r = vrai('gdv_shops/' + u + '/blocs/_meta');
+    if (!r) { cb && cb(null); return; }
+    enCours[u] = true;
+    r.once('value').then(function (s) {
+      enCours[u] = false;
+      var v = s.val();
+      if (!vide(v)) {
+        poserMemoire(u, v);                 // lecture aboutie : elle fait autorite
+      } else if (v === null) {
+        viderMemoire(u);                    // le noeud n'existe plus : suppression reelle
+      }
+      cb && cb(v);
+    }, function (e) {
+      // Echec reseau ou refus de lecture : la memoire est CONSERVEE.
+      // C'est precisement ce qui faisait disparaitre les boutiques.
+      enCours[u] = false;
+      log('relecture de _meta impossible, mémoire conservée', e && e.message);
+      cb && cb(null);
+    });
+  }
+
+  API.rafraichir = function (u) {
+    u = u || (window._currentShop || {}).uid;
+    if (!u) return 'boutique non identifiée';
+    relire(u, function (v) {
+      log('liste des blocs relue : ' + (v ? Object.keys(v).length : 0) + ' bloc(s) rattaché(s)');
+      redessiner();
+    });
+    return 'relecture en cours...';
+  };
+
+  function redessiner() {
+    setTimeout(function () {
+      try {
+        var c = document.getElementById('agv-param-corps');
+        if (c && typeof window.agvParametrageBoutiques === 'function') window.agvParametrageBoutiques();
+        else if (document.getElementById('agv-accueil') && typeof window.agvAccueilBoutiques === 'function') {
+          window.agvAccueilFermer();
+          window.agvAccueilBoutiques();
+        }
+      } catch (e) {}
+    }, 500);
+  }
+
+  /* =========================================================================
+     2. LETTRE REELLEMENT LIBRE
+     ========================================================================= */
+
+  function premiereLibre(meta) {
+    meta = meta || {};
+    for (var i = 1; i < LETTRES.length; i++) {          // 'A' est toujours pris
+      if (!meta[LETTRES[i]]) return LETTRES[i];
+    }
+    return null;
+  }
+
+  API.lettreLibre = function () {
+    var u = (window._currentShop || {}).uid;
+    var m = u ? (lireMemoire(u) || {}) : {};
+    var l = premiereLibre(m);
+    console.log('Blocs occupés : A' + Object.keys(m).filter(function (k) { return k !== 'A'; }).sort().map(function (k) { return ', ' + k; }).join(''));
+    console.log('Première lettre libre : ' + (l || 'aucune'));
+    return l;
+  };
+
+  /* =========================================================================
+     3. NOM REEL DE LA BOUTIQUE RATTACHEE
+     ========================================================================= */
+
+  var SANS_NOM = /^\s*(\(sans nom\)|sans nom|bloc [A-Z]|)\s*$/i;
+
+  function nomReel(source, cb) {
+    var vrai = API._vraiRef;
+    if (typeof vrai !== 'function') { cb(null); return; }
+    var r = vrai('gdv_shops/' + source + '/info');
+    if (!r) { cb(null); return; }
+    var fait = false;
+    var t = setTimeout(function () { if (!fait) { fait = true; cb(null); } }, 8000);
+    r.once('value').then(function (s) {
+      if (fait) return;
+      fait = true; clearTimeout(t);
+      var i = s.val() || {};
+      var n = String(i.entreprise || i.nom || '').trim();
+      cb(SANS_NOM.test(n) ? null : n);
+    }, function () { if (!fait) { fait = true; clearTimeout(t); cb(null); } });
+  }
+
+  // Le nom affiche suit le nom reel de la boutique rattachee
+  function synchroniserNoms() {
+    if (!API.actif) return;
+    var u = (window._currentShop || {}).uid;
+    if (!u) return;
+    var role = null;
+    try { role = window.currentRole; } catch (e) {}
+    if (role !== 'fondateur') return;
+    var meta = lireMemoire(u);
+    if (!meta) return;
+    var vrai = API._vraiRef;
+    if (typeof vrai !== 'function') return;
+
+    Object.keys(meta).forEach(function (b) {
+      var m = meta[b];
+      if (!m || !m.source) return;                     // seules les rattachees
+      nomReel(m.source, function (n) {
+        if (!n || n === m.nom) return;
+        var r = vrai('gdv_shops/' + u + '/blocs/_meta/' + b + '/nom');
+        if (!r) return;
+        r.set(n).then(function () {
+          m.nom = n;
+          poserMemoire(u, meta);
+          log('bloc ' + b + ' renommé selon la boutique : ' + n);
+          redessiner();
+        }, function () {});
+      });
+    });
+  }
+
+  API.synchroniserNoms = function () { synchroniserNoms(); return 'synchronisation en cours...'; };
+
+  /* =========================================================================
+     4. L'INTERCEPTION
+     -------------------------------------------------------------------------
+     refBrut() (ligne 25904) passe par window._agvRefBrut. On enveloppe cette
+     seule fonction : les lectures de donnees de l'application, elles, passent
+     par db.ref et ne sont pas concernees.
+     ========================================================================= */
+
+  function enveloppe(reel, remplacements) {
+    // Toutes les methodes du vrai noeud restent disponibles ;
+    // seules celles listees sont remplacees.
+    var o = Object.create(null);
+    ['once', 'on', 'off', 'set', 'update', 'remove', 'push', 'child',
+     'transaction', 'orderByChild', 'limitToLast', 'limitToFirst', 'equalTo', 'key', 'ref'
+    ].forEach(function (m) {
+      if (remplacements[m] !== undefined) { o[m] = remplacements[m]; return; }
+      var v = reel[m];
+      o[m] = (typeof v === 'function') ? v.bind(reel) : v;
+    });
+    o.__reel = reel;
+    return o;
+  }
+
+  function proxyListe(u, reel) {
+    return enveloppe(reel, {
+      once: function (ev) {
+        var cache = lireMemoire(u);
+        if (cache) {
+          relire(u);                                   // rafraichissement discret
+          return Promise.resolve({ val: function () { return cache; },
+                                   exists: function () { return true; } });
+        }
+        return reel.once(ev).then(function (s) {
+          var v = s.val();
+          if (!vide(v)) poserMemoire(u, v);
+          return s;
+        });
+      },
+      set: function (v) {
+        return reel.set(v).then(function (r) {
+          if (vide(v)) viderMemoire(u); else poserMemoire(u, v);
+          return r;
+        });
+      },
+      update: function (v) {
+        return reel.update(v).then(function (r) { relire(u); return r; });
+      },
+      remove: function () {
+        return reel.remove().then(function (r) { viderMemoire(u); return r; });
+      }
+    });
+  }
+
+  function proxyBloc(u, lettre, reel) {
+    return enveloppe(reel, {
+      set: function (v) {
+        // Suppression d'un bloc
+        if (v === null) {
+          return reel.set(null).then(function (r) {
+            var m = lireMemoire(u);
+            if (m) { delete m[lettre]; poserMemoire(u, m); }
+            return r;
+          });
+        }
+
+        if (!API.actif || !v || typeof v !== 'object') return reel.set(v);
+
+        var meta = lireMemoire(u) || {};
+        var vrai = API._vraiRef;
+
+        // ---- la lettre doit etre reellement libre ----
+        var cible = lettre;
+        if (meta[cible]) {
+          var libre = premiereLibre(meta);
+          if (!libre) {
+            return Promise.reject(new Error('Plus aucune lettre de bloc disponible'));
+          }
+          log('bloc ' + cible + ' déjà occupé — le nouveau bloc prend la lettre ' + libre);
+          cible = libre;
+        }
+
+        function poser(charge) {
+          var r = (cible === lettre) ? reel : vrai('gdv_shops/' + u + '/blocs/_meta/' + cible);
+          if (!r) return Promise.reject(new Error('Base indisponible'));
+          return r.set(charge).then(function (res) {
+            meta[cible] = charge;
+            poserMemoire(u, meta);
+            return res;
+          });
+        }
+
+        // ---- un rattachement doit apporter le nom de la boutique ----
+        if (v.source) {
+          return new Promise(function (resoudre, rejeter) {
+            nomReel(v.source, function (n) {
+              if (!n) {
+                rejeter(new Error(
+                  'cette boutique n\'a pas de nom enregistré. Ouvrez-la, renseignez ' +
+                  'le nom de l\'entreprise dans ses Paramètres, puis recommencez le rattachement.'));
+                return;
+              }
+              var charge = {};
+              for (var k in v) charge[k] = v[k];
+              charge.nom = n;                              // le nom reel, pas une copie perimee
+              charge.nomSuivi = true;
+              poser(charge).then(resoudre, rejeter);
+            });
+          });
+        }
+
+        return poser(v);
+      },
+      remove: function () {
+        return reel.remove().then(function (r) {
+          var m = lireMemoire(u);
+          if (m) { delete m[lettre]; poserMemoire(u, m); }
+          return r;
+        });
+      }
+    });
+  }
+
+  function poserInterception() {
+    if (typeof window._agvRefBrut !== 'function') return false;
+    if (window._agvRefBrut.__agvStable) return true;
+
+    var vrai = window._agvRefBrut;
+    API._vraiRef = vrai;
+
+    var neuf = function (chemin) {
+      var reel = vrai(chemin);
+      if (!API.actif || !reel || typeof chemin !== 'string') return reel;
+      try {
+        var m1 = chemin.match(RE_META);
+        if (m1) return proxyListe(m1[1], reel);
+        var m2 = chemin.match(RE_META_BLOC);
+        if (m2) return proxyBloc(m2[1], m2[2], reel);
+      } catch (e) { log('interception', e && e.message); }
+      return reel;
+    };
+    neuf.__agvStable = true;
+    window._agvRefBrut = neuf;
+    log('mémoire stable de la liste des blocs installée');
+    return true;
+  }
+
+  /* =========================================================================
+     ACTIVATION
+     ========================================================================= */
+
+  var essais = 0;
+  var horloge = setInterval(function () {
+    essais++;
+    if (poserInterception()) {
+      clearInterval(horloge);
+      // premiere lecture de reference, puis synchronisation des noms
+      setTimeout(function () {
+        var u = (window._currentShop || {}).uid;
+        if (u) relire(u, function () { synchroniserNoms(); });
+      }, 4000);
+      setInterval(synchroniserNoms, 120000);
+      log('module actif — v' + API.version);
+    }
+    if (essais > 600) clearInterval(horloge);
+  }, 300);
+
+  API.etat = function () {
+    var u = (window._currentShop || {}).uid;
+    if (!u) { console.log('Boutique non identifiée'); return; }
+    var m = lireMemoire(u);
+    if (!m) { console.log('Aucune liste de blocs en mémoire — tapez AGV_STABLE.rafraichir()'); return; }
+    console.log('--- Blocs de la boutique ---');
+    console.log('  A — boutique d\'origine');
+    Object.keys(m).filter(function (k) { return k !== 'A'; }).sort().forEach(function (b) {
+      var x = m[b] || {};
+      console.log('  ' + b + ' — ' + (x.nom || 'sans nom') +
+        (x.source ? '  (boutique rattachée ' + x.source + ')' : '  (bloc créé)'));
+    });
+    console.log('Première lettre libre : ' + (premiereLibre(m) || 'aucune'));
+    return m;
+  };
 
 })();
 
