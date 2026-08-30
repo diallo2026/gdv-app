@@ -38838,36 +38838,73 @@ window.agvStocks = function(){
 
 
 <!-- ==================================================================
-     MODULES AJOUTES — App AGV — 15 modules
+     App AGV — VERSION AGV-16 — fichier du 2026-08-30 18:35 UTC
 
-     CAUSE DU REFUS DE CONNEXION DES GERANTS :
-       ligne 17617  function empreinte(txt)    -> sel « agvc$ »  (ECRIT)
-       ligne 30908  function empreinte33(txt)  -> sel « agv$ »   (VERIFIE)
-     Deux sels differents : la comparaison ligne 30974 ne pouvait jamais
-     aboutir. Corrige par le module 10, sans toucher aux comptes.
+     POUR VERIFIER QUE C EST BIEN CE FICHIER QUI TOURNE :
+     au chargement, la console doit afficher une pastille verte
+        AGV AGV-16   fichier du 2026-08-30 18:35 UTC — 16 modules
+     et  AGV_VERSION.etat()  liste les modules charges.
 
-      1. agv-performance   : sauvegarde differentielle, regroupement des rendus, index memoire
-      2. agv-factures      : numerotation, vendeur, dates, remise/frais, livraison, pagination
-      3. agv-portail       : entree directe, suppression/detachement de bloc, sortie de secours Echap
-      4. agv-dettes        : boule de neige, cache cloisonne, doublons, nettoyage de bloc
-      5. agv-reset         : reinitialisation complete, personnel protege, sauvegarde prealable
-      6. agv-forfaits      : bouton Blocs sur chaque fiche concepteur : forfait Pro reglable
-      7. agv-stable        : boutiques rattachees stables, lettre libre, nom reel et suivi
-      8. agv-lier          : rattacher, detacher, reparer les liens incomplets (concepteur)
-      9. agv-gerants       : acces des gerants aux boutiques rattachees, droits qui suivent
-     10. agv-connexion     : LES DEUX SELS D EMPREINTE : agvc$ a l ecriture, agv$ a la lecture
-     11. agv-comptes       : un nom d utilisateur pour plusieurs gerants, mots de passe uniques
-     12. agv-porte         : une boutique rattachee ne s ouvre plus que par sa boutique mere
-     13. agv-choix         : liste des gerants sous l ecran unifie
-     14. agv-ecran         : ecran visible : liste complete, codes retires du DOM
-     15. agv-audit         : AGV_AUDIT.lancer() — audit en lecture seule de vos vraies donnees
+     Le message « ecouteur orphelin detache » ne doit apparaitre
+     QU UNE SEULE FOIS. S il se repete, c est l ancien fichier.
 
-     A LANCER APRES DEPLOIEMENT, DANS LA CONSOLE :
-        AGV_AUDIT.lancer()          audit complet de vos donnees reelles
-        AGV_ECRAN.etat()            qui figure dans la liste deroulante
-        AGV_LIER.controle()         coherence des rattachements
-     Verifier la presence : typeof AGV_CONNEXION  -> "object"
+      1. agv-version       : repere de version : annonce au chargement quel fichier tourne
+      2. agv-performance   : sauvegarde differentielle, index memoire, orphelin detache UNE fois
+      3. agv-factures      : numerotation, vendeur, dates, remise/frais, livraison, pagination
+      4. agv-portail       : entree directe, suppression/detachement de bloc, sortie de secours Echap
+      5. agv-dettes        : boule de neige, cache cloisonne, doublons, nettoyage de bloc
+      6. agv-reset         : reinitialisation complete, personnel protege, sauvegarde prealable
+      7. agv-forfaits      : bouton Blocs sur chaque fiche concepteur : forfait Pro reglable
+      8. agv-stable        : boutiques rattachees stables, lettre libre, nom reel et suivi
+      9. agv-lier          : rattacher, detacher, reparer les liens incomplets (concepteur)
+     10. agv-gerants       : acces des gerants aux boutiques rattachees, droits qui suivent
+     11. agv-connexion     : deux sels d empreinte + deux normalisations d identifiant
+     12. agv-comptes       : un nom d utilisateur pour plusieurs gerants, meme retaille que l app
+     13. agv-porte         : une boutique rattachee ne s ouvre plus que par sa boutique mere
+     14. agv-choix         : liste des gerants sous l ecran unifie
+     15. agv-ecran         : ecran visible : ouvre la session lui-meme, codes hors du DOM
+     16. agv-audit         : AGV_AUDIT.lancer() — audit en lecture seule de vos vraies donnees
      ================================================================== -->
+<script>
+/* =============================================================================
+   APP AGV — REPERE DE VERSION
+   -----------------------------------------------------------------------------
+   Nous avons perdu plusieurs echanges a corriger un fichier qui n'etait pas
+   celui qui tournait. Ce repere rend la confusion impossible : il annonce en
+   clair, au chargement, quelle version est reellement en service.
+   ============================================================================= */
+(function () {
+  'use strict';
+  var V = {
+    version: 'AGV-16',
+    date: '2026-08-30 18:35 UTC',
+    modules: 16,
+    corrections: [
+      'empreinte : deux sels (agvc$ a l ecriture, agv$ a la verification)',
+      'identifiant : deux normalisations (l arobase retiree a l ecriture)',
+      'ecran visible : la session est ouverte sans relire le DOM vide',
+      'ecouteur orphelin : detache une seule fois, plus de boucle'
+    ]
+  };
+  window.AGV_VERSION = V;
+  try {
+    console.log('%c AGV ' + V.version + ' ', 'background:#16a34a;color:#fff;font-weight:700',
+                'fichier du ' + V.date + ' — ' + V.modules + ' modules');
+  } catch (e) {}
+  V.etat = function () {
+    var noms = ['AGV_PERF', 'AGV_FACT', 'AGV_PORTAIL', 'AGV_DETTES', 'AGV_RESET',
+                'AGV_FORFAIT', 'AGV_STABLE', 'AGV_LIER', 'AGV_GERANTS', 'AGV_CONNEXION',
+                'AGV_COMPTES', 'AGV_PORTE', 'AGV_CHOIX', 'AGV_ECRAN', 'AGV_AUDIT'];
+    var absents = noms.filter(function (n) { return typeof window[n] !== 'object'; });
+    console.log('Version ' + V.version + ' — fichier du ' + V.date);
+    console.log(absents.length ? 'MODULES ABSENTS : ' + absents.join(', ')
+                               : 'Les ' + noms.length + ' modules sont chargés.');
+    V.corrections.forEach(function (c) { console.log('  · ' + c); });
+    return V.version;
+  };
+})();
+
+</script>
 <script>
 /* =============================================================================
    APP AGV — MODULE DE PERFORMANCE  (v1.0)
@@ -39058,12 +39095,19 @@ window.agvStocks = function(){
      un second cycle de rendu complet (appliquerDonneesFirebase) a chaque
      evenement. Deux rendus complets au lieu d'un.
      ========================================================================== */
+  // Une fois l'ecouteur orphelin detache, il n'y a plus rien a faire : sans
+  // ce temoin, la surveillance appelait off() et journalisait toutes les
+  // 500 ms pendant cinq minutes, noyant la console.
+  var orphelinCoupe = false;
+
   function couperEcouteurOrphelin() {
+    if (orphelinCoupe) return true;
     // Empeche les futures re-tentatives
     try { window.agvAttachBoutiqueListener = function () {}; } catch (e) {}
     try {
       if (window.db && typeof window.db.ref === 'function') {
         window.db.ref('boutique').off();
+        orphelinCoupe = true;
         log("ecouteur orphelin 'boutique' detache");
         return true;
       }
@@ -44153,7 +44197,30 @@ window.agvStocks = function(){
 
   // Meme normalisation et meme empreinte que l'application (lignes 30900 a 30921),
   // sans quoi aucun mot de passe ne pourrait correspondre.
-  function normId(v) { return String(v == null ? '' : v).trim().toLowerCase(); }
+  /* -------------------------------------------------------------------------
+     LA NORMALISATION DES IDENTIFIANTS — SECONDE CAUSE DU REFUS
+
+     L'application ne conserve pas l'identifiant tel qu'il est saisi. Elle le
+     retaille (normaliserIdentifiant, ligne 17631) :
+
+         s.replace(/\s+/g, '.').replace(/[^a-z0-9._-]/g, '')
+
+     L'arobase ne fait pas partie des caracteres gardes. « ibrahima@kaloum.gn »
+     est donc ENREGISTRE sous « ibrahimakaloum.gn », et « Mariam Sow » sous
+     « mariam.sow ».
+
+     Mon module cherchait avec un simple trim().toLowerCase(). Aucune adresse
+     contenant une arobase, aucun nom contenant une espace ou un accent ne
+     pouvait donc etre retrouve : le module ne trouvait rien, laissait la main
+     a la chaine d'origine, et celle-ci refusait a cause des deux sels.
+
+     On reprend mot pour mot la fonction de l'application.
+     ------------------------------------------------------------------------- */
+  function normId(v) {
+    var s = String(v == null ? '' : v).toLowerCase().trim();
+    try { s = s.normalize('NFD').replace(/[\u0300-\u036f]/g, ''); } catch (e) {}
+    return s.replace(/\s+/g, '.').replace(/[^a-z0-9._-]/g, '');
+  }
 
   /* -------------------------------------------------------------------------
      LES EMPREINTES DE MOT DE PASSE — LE COEUR DU PROBLEME
@@ -44257,12 +44324,23 @@ window.agvStocks = function(){
   // variable a chaque tour : sur plusieurs comptes portant le meme nom
   // d'utilisateur, seul LE DERNIER etait retenu, et lui seul pouvait ouvrir.
   // On renvoie donc la liste complete.
-  function chercherComptes(uidBoutique, identifiant, cb) {
+  // Certains comptes ont ete enregistres avec la normalisation de
+  // l'application, d'autres avec la forme brute. On accepte les deux, sinon
+  // la moitie des comptes reste introuvable.
+  function memeIdentifiant(stocke, saisi) {
+    if (stocke == null) return false;
+    var a = String(stocke).trim().toLowerCase();
+    var b = String(saisi).trim().toLowerCase();
+    return normId(stocke) === normId(saisi) || a === b;
+  }
+  API.memeIdentifiant = memeIdentifiant;
+
+  function chercherComptes(uidBoutique, saisi, cb) {
     lire('gdv_shops/' + uidBoutique + '/comptes', function (comptes) {
       var l = [];
       Object.keys(comptes || {}).forEach(function (k) {
         var c = comptes[k];
-        if (c && normId(c.identifiant) === identifiant) l.push(c);
+        if (c && memeIdentifiant(c.identifiant, saisi)) l.push(c);
       });
       cb(l);
     });
@@ -44368,7 +44446,7 @@ window.agvStocks = function(){
 
       var champId = document.getElementById('agvcu-id');
       var champMdp = document.getElementById('agvcu-pwd');
-      var identifiant = normId((champId || {}).value);
+      var identifiant = String((champId || {}).value || '').trim();
       var mdp = String((champMdp || {}).value || '').trim();
       if (!identifiant || !mdp) return suite.apply(self, args);
 
@@ -44516,7 +44594,7 @@ window.agvStocks = function(){
     var shop = window._shopLoginData || window._currentShop || {};
     var u = shop.uid;
     if (!u) { console.log('Aucune boutique saisie — entrez d\'abord le code boutique.'); return; }
-    var id = normId(identifiant);
+    var id = String(identifiant || '').trim();
     console.log('Recherche de « ' + id + ' »...');
     chercherCompte(u, id, function (ici) {
       console.log('  ' + (shop.entreprise || u) + ' (boutique saisie) : ' +
@@ -44590,7 +44668,14 @@ window.agvStocks = function(){
   function log() {
     try { console.log.apply(console, ['[AGV-COMPTES]'].concat([].slice.call(arguments))); } catch (e) {}
   }
-  function normId(v) { return String(v == null ? '' : v).trim().toLowerCase(); }
+  // Meme retaille que l'application (normaliserIdentifiant, ligne 17631),
+  // faute de quoi ce module enregistrerait sous une forme que la connexion
+  // ne saurait pas retrouver.
+  function normId(v) {
+    var s = String(v == null ? '' : v).toLowerCase().trim();
+    try { s = s.normalize('NFD').replace(/[\u0300-\u036f]/g, ''); } catch (e) {}
+    return s.replace(/\s+/g, '.').replace(/[^a-z0-9._-]/g, '');
+  }
   function uid() {
     var s = window._currentShop || window._shopLoginData || {};
     return s.uid || null;
@@ -45581,10 +45666,20 @@ window.agvStocks = function(){
             });
         }
 
-        // Personne de la boutique elle-meme : si le code de la fiche
-        // correspond, la chaine d'origine sait faire. Sinon ce peut etre le
-        // mot de passe de son compte, que cet ecran n'a jamais su lire.
-        if (code && mdp === String(code)) return origine.apply(self, args);
+        /* Personne de la boutique elle-meme.
+
+           ATTENTION — REGRESSION A NE PAS REINTRODUIRE : on ne peut PLUS
+           renvoyer vers la fonction d'origine ici. Elle relit le code dans la
+           page (ligne 1813 : « var gerantCode = opt ? opt.dataset.code : '' »)
+           alors que nous venons justement de l'en retirer. Elle comparerait
+           donc a une valeur vide et repondrait « Code gerant incorrect » a
+           tout le monde. C'est nous qui ouvrons la session. */
+        if (code && mdp === String(code)) {
+          log('code de fiche reconnu — ' + nom);
+          dire('Connexion réussie !', true);
+          return ouvrir({ uid: shop.uid, shop: shop, nom: shop.entreprise },
+                        { role: 'gerant', gerantId: sel.value });
+        }
 
         return lire('gdv_shops/' + shop.uid + '/comptes', function (comptes) {
           var c = null;
@@ -45592,9 +45687,12 @@ window.agvStocks = function(){
             var x = comptes[k];
             if (x && String(x.gerantId) === String(sel.value) && x.actif !== false) c = x;
           });
-          if (!c) return origine.apply(self, args);
+          // Ni code de fiche, ni compte : on refuse nous-memes. Renvoyer vers
+          // la fonction d'origine la ferait relire un code que nous avons
+          // retire de la page, ce qui reviendrait au meme mais par accident.
+          if (!c) return dire('Code gérant incorrect', false);
           empreintes(mdp).then(function (h) {
-            if (h.indexOf(c.empreinte) < 0) return origine.apply(self, args);
+            if (h.indexOf(c.empreinte) < 0) return dire('Code gérant incorrect', false);
             log('mot de passe de compte reconnu — ' + nom);
             dire('Connexion réussie !', true);
             ouvrir({ uid: shop.uid, shop: shop, nom: shop.entreprise },
