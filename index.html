@@ -38846,13 +38846,16 @@ window.agvStocks = function(){
      5. agv-reset         : reinitialisation complete, personnel protege, sauvegarde prealable
      6. agv-forfaits      : bouton Blocs sur chaque fiche concepteur : forfait Pro reglable
      7. agv-stable        : boutiques rattachees stables, lettre libre, nom reel et suivi
-     8. agv-lier          : rattacher, detacher, et reparer les liens incomplets (concepteur)
+     8. agv-lier          : rattacher, detacher, reparer les liens incomplets (concepteur)
+     9. agv-gerants       : acces des gerants aux boutiques rattachees, droits qui suivent
      Desactivation individuelle depuis la console :
         AGV_PERF.actif = false;    AGV_FACT.actif = false;
         AGV_PORTAIL.actif = false; AGV_DETTES.actif = false;
         AGV_RESET.actif = false;   AGV_FORFAIT.actif = false;
         AGV_STABLE.actif = false;  AGV_LIER.actif = false;
+        AGV_GERANTS.actif = false;
      Controle des rattachements : AGV_LIER.controle() puis AGV_LIER.reparer()
+     Acces des gerants : Parametrage -> Acces des gerants aux boutiques
      Si un panneau reste ouvert : touche Echap, ou AGV_PORTAIL.degager()
      ================================================================== -->
 <script>
@@ -43526,6 +43529,542 @@ window.agvStocks = function(){
   };
 
   log('module actif — v' + API.version + ' — AGV_LIER.lier("CODE_ACCUEIL", "CODE_RATTACHEE")');
+
+})();
+
+</script>
+<script>
+/* =============================================================================
+   APP AGV — MODULE 9 : ACCES DES GERANTS AUX BOUTIQUES RATTACHEES  (v1.0)
+   -----------------------------------------------------------------------------
+   POURQUOI AUCUN GERANT N'Y ARRIVAIT
+
+   Ce n'etait pas un incident : le systeme l'interdisait, a trois endroits.
+
+   1. UN SEUL BLOC PAR GERANT, POUR TOUJOURS
+      A la creation d'une fiche (ligne 36581) :
+          ecrire('gdv_shops/' + uid() + '/blocs/_affect/' + fiche.id, bloc);
+      Une seule lettre. Rien ne permettait d'en autoriser une deuxieme.
+
+   2. LE CHANGEMENT DE BLOC ETAIT REFUSE AUX GERANTS
+      Dans basculer() (ligne 26044) :
+          if(!estFondateur()) return toast('Reserve au fondateur');
+      Et le portail lui-meme (ligne 27194) :
+          if(!estFondateur()) return toast('Reserve au fondateur');
+      Un gerant n'avait donc aucun moyen d'atteindre une autre boutique.
+
+   3. L'AFFECTATION ETAIT FIGEE DANS LE NAVIGATEUR
+      A la connexion (ligne 26014) :
+          var cache = localStorage.getItem('agv_bloc_g_' + u + '_' + gid);
+          if(BLOCS.indexOf(cache) >= 0) return partir(cache);
+      Le cache passe AVANT la lecture de _affect : si le fondateur changeait
+      l'affectation, le gerant continuait d'ouvrir l'ancien bloc indefiniment.
+
+   4. ET SES DROITS NE LE SUIVAIENT PAS
+      getCurrentGerant() (ligne 4583) cherche la fiche dans « gerants », qui
+      est la liste du personnel DU BLOC OUVERT. Chaque boutique a la sienne :
+      un gerant de la boutique mere n'existe pas dans la liste d'une boutique
+      rattachee. Meme en forcant l'ouverture, il se serait retrouve sans
+      aucune permission.
+
+   CE QUE FAIT CE MODULE
+     — un noeud « blocs/_acces/<idGerant> » qui liste les blocs autorises,
+       en plus de son bloc d'attache ;
+     — un panneau pour le fondateur : ses gerants en lignes, les blocs en
+       colonnes, des cases a cocher ;
+     — un selecteur pour le gerant, qui n'affiche que ses blocs autorises ;
+     — le cache d'affectation relu en arriere-plan, pour qu'un changement
+       prenne effet ;
+     — la fiche du gerant le suit : ses permissions s'appliquent dans la
+       boutique visitee.
+
+   LE GERANT INTERVIENT EN VISITEUR : sa fiche reste dans sa boutique
+   d'origine. Le personnel des boutiques visitees n'est ni modifie ni
+   complete. Aucune donnee de boutique n'est touchee — seul le noeud
+   « blocs/_acces » de la boutique mere est ecrit.
+
+   INSTALLATION : charger apres les modules 1 a 8.
+   DESACTIVATION : AGV_GERANTS.actif = false
+   ============================================================================= */
+(function () {
+  'use strict';
+
+  var API = window.AGV_GERANTS = { actif: true, version: '1.0' };
+  var LETTRES = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
+  var CLE_REPRISE = 'agv_reprise_bloc';
+
+  function log() {
+    try { console.log.apply(console, ['[AGV-GERANTS]'].concat([].slice.call(arguments))); } catch (e) {}
+  }
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+    });
+  }
+  function dire(m) {
+    try { if (window.showToast) return window.showToast(m); } catch (e) {}
+    try { if (window.toast) return window.toast(m); } catch (e) {}
+    alert(m);
+  }
+  function uid() { return (window._currentShop || {}).uid || null; }
+  function role() {
+    try { if (window.currentRole) return window.currentRole; } catch (e) {}
+    try { return currentRole; } catch (e) {}
+    return null;
+  }
+  function gid() {
+    try { if (window.currentGerantId) return window.currentGerantId; } catch (e) {}
+    try { return currentGerantId; } catch (e) {}
+    return null;
+  }
+  function blocActif() {
+    try { if (typeof window.agvBlocActif === 'function') return window.agvBlocActif(); } catch (e) {}
+    return window._agvBloc || 'A';
+  }
+  function lesGerants() { try { return gerants || []; } catch (e) { return []; } }
+
+  function ref(p) {
+    if (typeof window._agvRefBrut === 'function') return window._agvRefBrut(p);
+    return (window.db && window.db.ref) ? window.db.ref(p) : null;
+  }
+  function lire(p, cb) {
+    var r = ref(p);
+    if (!r) { cb(null); return; }
+    var fait = false;
+    var t = setTimeout(function () { if (!fait) { fait = true; cb(null); } }, 9000);
+    try {
+      r.once('value').then(function (s) { if (!fait) { fait = true; clearTimeout(t); cb(s.val()); } },
+                           function () { if (!fait) { fait = true; clearTimeout(t); cb(null); } });
+    } catch (e) { if (!fait) { fait = true; clearTimeout(t); cb(null); } }
+  }
+
+  /* =========================================================================
+     1. LES BLOCS AUTORISES
+     ========================================================================= */
+
+  function cleAcces(u, g) { return 'agv_acces_g_' + u + '_' + g; }
+
+  function autorisesEnCache(u, g) {
+    try {
+      var b = localStorage.getItem(cleAcces(u, g));
+      if (b) { var o = JSON.parse(b); if (o && o.blocs) return o.blocs; }
+    } catch (e) {}
+    return null;
+  }
+
+  function lireAutorises(u, g, cb) {
+    var res = { attache: null, acces: null }, reste = 2;
+    function fin() {
+      if (--reste) return;
+      var l = {};
+      if (res.attache && LETTRES.indexOf(res.attache) >= 0) l[res.attache] = true;
+      if (res.acces && typeof res.acces === 'object') {
+        Object.keys(res.acces).forEach(function (b) { if (res.acces[b]) l[b] = true; });
+      }
+      if (!Object.keys(l).length) l.A = true;          // repli : le bloc d'origine
+      try { localStorage.setItem(cleAcces(u, g), JSON.stringify({ blocs: l, le: Date.now() })); } catch (e) {}
+      cb(l, res.attache || 'A');
+    }
+    lire('gdv_shops/' + u + '/blocs/_affect/' + g, function (v) { res.attache = v; fin(); });
+    lire('gdv_shops/' + u + '/blocs/_acces/' + g, function (v) { res.acces = v; fin(); });
+  }
+
+  API.accorder = function (idGerant, blocs) {
+    var u = uid();
+    if (!u) { console.log('Boutique non identifiée'); return; }
+    if (role() !== 'fondateur') { console.log('Réservé au fondateur'); return; }
+    var o = {};
+    (blocs || []).forEach(function (b) { if (LETTRES.indexOf(b) >= 0) o[b] = true; });
+    var r = ref('gdv_shops/' + u + '/blocs/_acces/' + idGerant);
+    if (!r) { console.log('Base indisponible'); return; }
+    r.set(Object.keys(o).length ? o : null).then(function () {
+      try { localStorage.removeItem(cleAcces(u, idGerant)); } catch (e) {}
+      console.log('✅ Accès mis à jour : ' + (Object.keys(o).join(', ') || 'aucun bloc supplémentaire'));
+      try {
+        if (typeof window.agvJournaliser === 'function') {
+          window.agvJournaliser('Accès gérant aux blocs',
+            'gérant ' + idGerant + ' — ' + (Object.keys(o).join(', ') || 'aucun'));
+        }
+      } catch (e) {}
+    }, function (e) { console.log('Échec : ' + (e && e.message ? e.message : e)); });
+    return 'écriture en cours...';
+  };
+
+  /* =========================================================================
+     2. LA FICHE DU GERANT LE SUIT
+     -------------------------------------------------------------------------
+     getCurrentGerant() cherche dans « gerants », la liste du personnel du
+     bloc ouvert. Un gerant venu de la boutique mere n'y figure pas : sans
+     ce relais, il arriverait sans la moindre permission.
+     On garde une copie de sa fiche et on la fournit en dernier recours.
+     LA LISTE DU PERSONNEL DE LA BOUTIQUE VISITEE N'EST PAS MODIFIEE.
+     ========================================================================= */
+
+  function cleFiche(u, g) { return 'agv_fiche_g_' + u + '_' + g; }
+
+  function memoriserFiche() {
+    var u = uid(), g = gid();
+    if (!u || !g) return;
+    var f = lesGerants().filter(function (x) { return x && String(x.id) === String(g); })[0];
+    if (!f) return;
+    try { localStorage.setItem(cleFiche(u, g), JSON.stringify(f)); } catch (e) {}
+  }
+
+  function ficheMemorisee() {
+    var u = uid(), g = gid();
+    if (!u || !g) return null;
+    try {
+      var b = localStorage.getItem(cleFiche(u, g));
+      return b ? JSON.parse(b) : null;
+    } catch (e) { return null; }
+  }
+
+  function brancherFiche() {
+    if (typeof window.getCurrentGerant !== 'function' || window.getCurrentGerant.__agvGerants) return false;
+    var origine = window.getCurrentGerant;
+    var neuf = function () {
+      var r = origine.apply(this, arguments);
+      if (r || !API.actif) return r;
+      var f = ficheMemorisee();
+      if (f) {
+        var copie = {};
+        for (var k in f) copie[k] = f[k];
+        copie.visiteur = true;              // repere : ce gerant vient d'ailleurs
+        return copie;
+      }
+      return r;
+    };
+    neuf.__agvGerants = true;
+    window.getCurrentGerant = neuf;
+    return true;
+  }
+
+  /* =========================================================================
+     3. OUVRIR UN AUTRE BLOC
+     -------------------------------------------------------------------------
+     On ne force pas basculer(), qui refuse les gerants. On emprunte le chemin
+     que l'application utilise deja a la connexion d'un gerant : la cle
+     « agv_bloc_g_<uid>_<gid> » est lue en premier par agvLaunchApp.
+     ========================================================================= */
+
+  API.ouvrir = function (b) {
+    var u = uid(), g = gid();
+    if (!u || !g) { dire('Session non identifiée'); return; }
+    if (b === blocActif()) { fermerSelecteur(); return; }
+
+    lireAutorises(u, g, function (permis) {
+      if (!permis[b]) { dire('Vous n\'avez pas accès à cette boutique'); return; }
+      memoriserFiche();
+      try { localStorage.setItem('agv_bloc_g_' + u + '_' + g, b); } catch (e) {}
+      try {
+        sessionStorage.setItem(CLE_REPRISE, JSON.stringify({
+          uid: u, bloc: b,
+          code: window._lastShopCode || (window._currentShop || {}).codeAcces || '',
+          role: 'gerant', gerantId: g, t: Date.now()
+        }));
+      } catch (e) {}
+      dire('Ouverture de la boutique...');
+      setTimeout(function () { location.reload(); }, 350);
+    });
+  };
+
+  /* =========================================================================
+     4. LE SELECTEUR DU GERANT
+     ========================================================================= */
+
+  var NOMS = {};
+
+  function chargerNoms(u, cb) {
+    lire('gdv_shops/' + u + '/blocs/_meta', function (m) {
+      NOMS = {};
+      var s = (window._currentShop || {});
+      NOMS.A = s.entreprise || 'Boutique principale';
+      Object.keys(m || {}).forEach(function (b) {
+        if (m[b] && m[b].nom) NOMS[b] = m[b].nom;
+      });
+      cb(NOMS);
+    });
+  }
+
+  function fermerSelecteur() {
+    var o = document.getElementById('agv-ger-selecteur');
+    if (o) o.remove();
+  }
+
+  API.selecteur = function () {
+    var u = uid(), g = gid();
+    if (!u || !g) return;
+    fermerSelecteur();
+
+    lireAutorises(u, g, function (permis) {
+      chargerNoms(u, function (noms) {
+        var l = Object.keys(permis).filter(function (b) { return permis[b]; }).sort();
+        var ov = document.createElement('div');
+        ov.id = 'agv-ger-selecteur';
+        ov.style.cssText = 'position:fixed;inset:0;z-index:99400;background:rgba(15,23,42,.62);' +
+          'display:flex;align-items:center;justify-content:center;padding:14px;font-family:inherit';
+        ov.innerHTML = '<div style="background:#fff;border-radius:15px;max-width:420px;width:100%;' +
+          'max-height:85vh;overflow-y:auto;padding:19px 21px;box-shadow:0 16px 44px rgba(0,0,0,.35)">' +
+          '<div style="font-size:16px;font-weight:800;color:#0f172a">Mes boutiques</div>' +
+          '<div style="font-size:12.5px;color:#64748b;margin:2px 0 14px">' +
+          l.length + ' boutique(s) accessible(s)</div>' +
+          l.map(function (b) {
+            var ouvert = (b === blocActif());
+            return '<button class="agv-ger-b" data-b="' + esc(b) + '" style="display:block;width:100%;' +
+              'text-align:left;padding:12px 14px;margin-bottom:8px;border-radius:11px;cursor:pointer;' +
+              'font-family:inherit;border:1px solid ' + (ouvert ? '#1d4ed8' : '#dbe3ec') + ';' +
+              'background:' + (ouvert ? '#eff6ff' : '#f8fafc') + '">' +
+              '<div style="font-size:14px;font-weight:700;color:#0f172a">' +
+              esc(noms[b] || ('BLOC ' + b)) + (ouvert ? ' &nbsp;·&nbsp; ouverte' : '') + '</div>' +
+              '<div style="font-size:11.5px;color:#64748b;margin-top:1px">Bloc ' + esc(b) + '</div>' +
+              '</button>';
+          }).join('') +
+          (l.length < 2
+            ? '<div style="font-size:12px;color:#64748b;line-height:1.55;margin-top:4px">' +
+              'Une seule boutique vous est ouverte. Demandez au fondateur de vous donner ' +
+              'accès aux autres depuis Paramétrage → Accès des gérants.</div>'
+            : '') +
+          '<button id="agv-ger-x" style="width:100%;margin-top:6px;padding:11px;border:1px solid #dbe3ec;' +
+          'border-radius:10px;background:#fff;color:#475569;font-size:13.5px;cursor:pointer;' +
+          'font-family:inherit">Fermer</button></div>';
+
+        document.body.appendChild(ov);
+        ov.onclick = function (e) { if (e.target === ov) fermerSelecteur(); };
+        ov.querySelector('#agv-ger-x').onclick = fermerSelecteur;
+        Array.prototype.forEach.call(ov.querySelectorAll('.agv-ger-b'), function (b) {
+          b.onclick = function () { API.ouvrir(b.getAttribute('data-b')); };
+        });
+      });
+    });
+  };
+
+  // Pastille visible seulement si le gerant a plusieurs boutiques
+  function poserPastille(nb) {
+    if (document.getElementById('agv-ger-chip')) return;
+    var c = document.createElement('button');
+    c.id = 'agv-ger-chip';
+    c.textContent = '🏪 Mes boutiques (' + nb + ')';
+    c.style.cssText = 'position:fixed;left:12px;bottom:12px;z-index:99300;padding:9px 14px;' +
+      'border:none;border-radius:22px;background:#1d4ed8;color:#fff;font-size:12.5px;font-weight:700;' +
+      'cursor:pointer;font-family:inherit;box-shadow:0 6px 18px rgba(29,78,216,.4)';
+    c.onclick = function () { API.selecteur(); };
+    document.body.appendChild(c);
+  }
+
+  /* =========================================================================
+     5. LE PANNEAU DU FONDATEUR
+     ========================================================================= */
+
+  API.panneau = function () {
+    if (role() !== 'fondateur') { dire('Réservé au fondateur'); return; }
+    var u = uid();
+    if (!u) { dire('Ouvrez d\'abord une boutique'); return; }
+
+    var vieux = document.getElementById('agv-ger-panneau');
+    if (vieux) vieux.remove();
+
+    var ov = document.createElement('div');
+    ov.id = 'agv-ger-panneau';
+    ov.style.cssText = 'position:fixed;inset:0;z-index:99996;background:rgba(15,23,42,.6);display:flex;' +
+      'align-items:center;justify-content:center;padding:14px;font-family:inherit';
+    ov.innerHTML = '<div id="agv-ger-boite" style="background:#fff;border-radius:15px;max-width:700px;' +
+      'width:100%;max-height:88vh;overflow:auto;padding:20px 22px">' +
+      '<div style="color:#64748b;font-size:13px;padding:20px 0;text-align:center">Lecture...</div></div>';
+    document.body.appendChild(ov);
+    ov.onclick = function (e) { if (e.target === ov) ov.remove(); };
+
+    lire('gdv_shops/' + u + '/blocs/_meta', function (meta) {
+      meta = meta || {};
+      var blocs = ['A'].concat(Object.keys(meta).filter(function (k) {
+        return k !== 'A' && k.indexOf('_') !== 0;
+      }).sort());
+      var noms = { A: (window._currentShop || {}).entreprise || 'Boutique principale' };
+      blocs.forEach(function (b) { if (meta[b] && meta[b].nom) noms[b] = meta[b].nom; });
+
+      var perso = lesGerants().filter(function (g) { return g && g.id; });
+      lire('gdv_shops/' + u + '/blocs/_acces', function (acces) {
+        acces = acces || {};
+        lire('gdv_shops/' + u + '/blocs/_affect', function (aff) {
+          aff = aff || {};
+          dessinerPanneau(u, blocs, noms, perso, acces, aff);
+        });
+      });
+    });
+  };
+
+  function dessinerPanneau(u, blocs, noms, perso, acces, aff) {
+    var boite = document.getElementById('agv-ger-boite');
+    if (!boite) return;
+
+    if (!perso.length) {
+      boite.innerHTML = '<div style="font-size:16px;font-weight:800;color:#0f172a">Accès des gérants</div>' +
+        '<div style="font-size:13px;color:#64748b;margin-top:12px;line-height:1.6">' +
+        'Aucun gérant enregistré dans cette boutique.</div>' +
+        '<button id="agv-ger-px" style="width:100%;margin-top:16px;padding:11px;border:1px solid #dbe3ec;' +
+        'border-radius:10px;background:#f8fafc;font-family:inherit;font-size:13.5px;cursor:pointer">' +
+        'Fermer</button>';
+      boite.querySelector('#agv-ger-px').onclick = function () {
+        document.getElementById('agv-ger-panneau').remove();
+      };
+      return;
+    }
+
+    var entete = blocs.map(function (b) {
+      return '<th style="padding:8px 6px;font-size:10.5px;font-weight:700;color:#475569;' +
+        'text-transform:uppercase;text-align:center;border-bottom:2px solid #dbe3ec">' +
+        esc(b) + '<div style="font-size:9.5px;font-weight:600;text-transform:none;color:#94a3b8;' +
+        'max-width:90px;white-space:normal;line-height:1.25">' + esc(noms[b] || '') + '</div></th>';
+    }).join('');
+
+    var lignes = perso.map(function (g) {
+      var attache = aff[g.id] || 'A';
+      var permis = acces[g.id] || {};
+      return '<tr style="border-bottom:1px solid #eef2f7">' +
+        '<td style="padding:9px 8px;font-size:12.5px;color:#0f172a">' +
+        '<b>' + esc(g.nom || 'Gérant') + '</b>' +
+        '<div style="font-size:10.5px;color:#94a3b8">attaché au bloc ' + esc(attache) + '</div></td>' +
+        blocs.map(function (b) {
+          var force = (b === attache);
+          var coche = force || !!permis[b];
+          return '<td style="text-align:center;padding:9px 6px">' +
+            '<input type="checkbox" class="agv-ger-c" data-g="' + esc(g.id) + '" data-b="' + esc(b) + '"' +
+            (coche ? ' checked' : '') + (force ? ' disabled' : '') +
+            ' style="width:17px;height:17px;cursor:' + (force ? 'default' : 'pointer') + ';' +
+            'opacity:' + (force ? '.5' : '1') + '"></td>';
+        }).join('') + '</tr>';
+    }).join('');
+
+    boite.innerHTML =
+      '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px">' +
+      '<div><div style="font-size:16px;font-weight:800;color:#0f172a">Accès des gérants aux boutiques</div>' +
+      '<div style="font-size:12.5px;color:#64748b;margin-top:2px">' +
+      'Cochez les boutiques que chaque gérant pourra ouvrir</div></div>' +
+      '<button id="agv-ger-px" style="padding:7px 13px;border:1px solid #cbd5e1;border-radius:9px;' +
+      'background:#f8fafc;font-family:inherit;font-size:13px;cursor:pointer">Fermer</button></div>' +
+      '<div style="overflow-x:auto;margin-top:14px"><table style="width:100%;border-collapse:collapse">' +
+      '<thead><tr><th style="text-align:left;padding:8px;font-size:10.5px;font-weight:700;color:#475569;' +
+      'text-transform:uppercase;border-bottom:2px solid #dbe3ec">Gérant</th>' + entete + '</tr></thead>' +
+      '<tbody>' + lignes + '</tbody></table></div>' +
+      '<div style="margin-top:14px;padding:11px 13px;background:#f0f9ff;border:1px solid #bae6fd;' +
+      'border-radius:10px;font-size:12.5px;color:#075985;line-height:1.6">' +
+      'Le bloc d\'attache est toujours coché : c\'est la boutique d\'origine du gérant, on ne peut ' +
+      'pas la lui retirer ici. Dans une boutique visitée il intervient en <b>visiteur</b> : ses ' +
+      'permissions le suivent, mais sa fiche reste dans sa boutique d\'origine et le personnel ' +
+      'de la boutique visitée n\'est pas modifié.</div>' +
+      '<div id="agv-ger-msg" style="font-size:12.5px;margin-top:10px;min-height:17px"></div>' +
+      '<button id="agv-ger-ok" style="width:100%;margin-top:6px;padding:12px;border:none;' +
+      'border-radius:10px;background:#1d4ed8;color:#fff;font-family:inherit;font-size:14px;' +
+      'font-weight:700;cursor:pointer">Enregistrer les accès</button>';
+
+    boite.querySelector('#agv-ger-px').onclick = function () {
+      document.getElementById('agv-ger-panneau').remove();
+    };
+
+    boite.querySelector('#agv-ger-ok').onclick = function () {
+      var msg = boite.querySelector('#agv-ger-msg');
+      var paquet = {};
+      Array.prototype.forEach.call(boite.querySelectorAll('.agv-ger-c'), function (c) {
+        if (c.disabled || !c.checked) return;
+        var g = c.getAttribute('data-g'), b = c.getAttribute('data-b');
+        (paquet[g] = paquet[g] || {})[b] = true;
+      });
+      // les gerants sans aucune case supplementaire voient leur noeud efface
+      perso.forEach(function (g) { if (!paquet[g.id]) paquet[g.id] = null; });
+
+      msg.style.color = '#475569';
+      msg.textContent = 'Enregistrement...';
+      var r = ref('gdv_shops/' + u + '/blocs/_acces');
+      if (!r) { msg.style.color = '#b91c1c'; msg.textContent = 'Base indisponible'; return; }
+      r.update(paquet).then(function () {
+        perso.forEach(function (g) { try { localStorage.removeItem(cleAcces(u, g.id)); } catch (e) {} });
+        try {
+          if (typeof window.agvJournaliser === 'function') {
+            window.agvJournaliser('Accès des gérants aux blocs',
+              perso.length + ' fiche(s) mise(s) à jour');
+          }
+        } catch (e) {}
+        document.getElementById('agv-ger-panneau').remove();
+        dire('✓ Accès enregistrés');
+        log('acces mis a jour pour ' + perso.length + ' gerant(s)');
+      }, function (e) {
+        msg.style.color = '#b91c1c';
+        msg.textContent = 'Échec : ' + (e && e.message ? e.message : e);
+      });
+    };
+  }
+
+  /* =========================================================================
+     6. BOUTON DANS LE PARAMETRAGE DU FONDATEUR
+     ========================================================================= */
+
+  setInterval(function () {
+    if (!API.actif) return;
+    try {
+      var corps = document.getElementById('agv-param-corps');
+      if (!corps || document.getElementById('agv-ger-lien')) return;
+      if (!corps.querySelector('.b-item')) return;
+      var b = document.createElement('button');
+      b.id = 'agv-ger-lien';
+      b.textContent = 'Accès des gérants aux boutiques';
+      b.style.cssText = 'display:block;width:100%;margin:12px 0 4px;padding:11px;border:1px solid #1d4ed8;' +
+        'border-radius:10px;background:#eff6ff;color:#1d4ed8;font-family:inherit;font-size:13px;' +
+        'font-weight:700;cursor:pointer';
+      b.onclick = function () { API.panneau(); };
+      corps.appendChild(b);
+    } catch (e) {}
+  }, 800);
+
+  /* =========================================================================
+     7. AU DEMARRAGE
+     ========================================================================= */
+
+  API.etat = function () {
+    var u = uid(), g = gid();
+    if (role() === 'fondateur') { console.log('Vous êtes fondateur : tous les blocs vous sont ouverts.'); return; }
+    if (!u || !g) { console.log('Session non identifiée'); return; }
+    lireAutorises(u, g, function (permis, attache) {
+      chargerNoms(u, function (noms) {
+        console.log('--- Vos boutiques ---');
+        Object.keys(permis).sort().forEach(function (b) {
+          console.log('  ' + b + ' — ' + (noms[b] || 'BLOC ' + b) +
+            (b === attache ? '  (votre boutique d\'attache)' : '') +
+            (b === blocActif() ? '  ← ouverte' : ''));
+        });
+        console.log('Pour ouvrir : AGV_GERANTS.ouvrir("B")');
+      });
+    });
+    return 'lecture en cours...';
+  };
+
+  var essais = 0;
+  var horloge = setInterval(function () {
+    essais++;
+    brancherFiche();
+    var u = uid(), g = gid();
+    if (!u) { if (essais > 900) clearInterval(horloge); return; }
+    clearInterval(horloge);
+
+    if (role() === 'gerant' && g) {
+      memoriserFiche();
+      lireAutorises(u, g, function (permis, attache) {
+        var l = Object.keys(permis).filter(function (b) { return permis[b]; });
+        log('gérant ' + g + ' — blocs autorisés : ' + l.join(', ') + ' (attache : ' + attache + ')');
+
+        // L'affectation a pu changer : le cache local ne doit plus faire loi.
+        var courant = blocActif();
+        if (!permis[courant]) {
+          log('bloc ' + courant + ' non autorisé — retour au bloc ' + attache);
+          try { localStorage.setItem('agv_bloc_g_' + u + '_' + g, attache); } catch (e) {}
+          dire('Votre affectation a changé — retour à votre boutique');
+          setTimeout(function () { location.reload(); }, 1200);
+          return;
+        }
+        try { localStorage.setItem('agv_bloc_g_' + u + '_' + g, courant); } catch (e) {}
+        if (l.length > 1) poserPastille(l.length);
+      });
+    }
+    log('module actif — v' + API.version);
+  }, 400);
 
 })();
 
