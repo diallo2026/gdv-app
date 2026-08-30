@@ -38838,15 +38838,18 @@ window.agvStocks = function(){
 
 
 <!-- ==================================================================
-     App AGV — VERSION AGV-16 — fichier du 2026-08-30 18:35 UTC
+     App AGV — VERSION AGV-17 — fichier du 2026-08-30 18:35 UTC
 
-     POUR VERIFIER QUE C EST BIEN CE FICHIER QUI TOURNE :
-     au chargement, la console doit afficher une pastille verte
-        AGV AGV-16   fichier du 2026-08-30 18:35 UTC — 16 modules
-     et  AGV_VERSION.etat()  liste les modules charges.
+     REGLE D ACCES RETENUE :
+       · chaque boutique rattachee reste joignable par SON PROPRE CODE
+         et son propre lien, comme avant le rattachement ;
+       · chaque gerant travaille chez lui, sans rien changer ;
+       · le code de la boutique mere est une porte EN PLUS, pas obligee ;
+       · le fondateur voit toutes les boutiques depuis le portail.
 
-     Le message « ecouteur orphelin detache » ne doit apparaitre
-     QU UNE SEULE FOIS. S il se repete, c est l ancien fichier.
+     VERIFIER QUE C EST BIEN CE FICHIER : la console doit afficher
+        AGV AGV-17   fichier du 2026-08-30 18:35 UTC — 16 modules
+     et « ecouteur orphelin detache » ne doit apparaitre QU UNE FOIS.
 
       1. agv-version       : repere de version : annonce au chargement quel fichier tourne
       2. agv-performance   : sauvegarde differentielle, index memoire, orphelin detache UNE fois
@@ -38860,7 +38863,7 @@ window.agvStocks = function(){
      10. agv-gerants       : acces des gerants aux boutiques rattachees, droits qui suivent
      11. agv-connexion     : deux sels d empreinte + deux normalisations d identifiant
      12. agv-comptes       : un nom d utilisateur pour plusieurs gerants, meme retaille que l app
-     13. agv-porte         : une boutique rattachee ne s ouvre plus que par sa boutique mere
+     13. agv-acces         : CHAQUE BOUTIQUE GARDE SON CODE ET SON LIEN — barrage v1 retire
      14. agv-choix         : liste des gerants sous l ecran unifie
      15. agv-ecran         : ecran visible : ouvre la session lui-meme, codes hors du DOM
      16. agv-audit         : AGV_AUDIT.lancer() — audit en lecture seule de vos vraies donnees
@@ -38876,14 +38879,15 @@ window.agvStocks = function(){
 (function () {
   'use strict';
   var V = {
-    version: 'AGV-16',
+    version: 'AGV-17',
     date: '2026-08-30 18:35 UTC',
     modules: 16,
     corrections: [
       'empreinte : deux sels (agvc$ a l ecriture, agv$ a la verification)',
       'identifiant : deux normalisations (l arobase retiree a l ecriture)',
       'ecran visible : la session est ouverte sans relire le DOM vide',
-      'ecouteur orphelin : detache une seule fois, plus de boucle'
+      'ecouteur orphelin : detache une seule fois, plus de boucle',
+      'CHAQUE BOUTIQUE GARDE SON CODE — le barrage de la v1 est retire'
     ]
   };
   window.AGV_VERSION = V;
@@ -38894,7 +38898,7 @@ window.agvStocks = function(){
   V.etat = function () {
     var noms = ['AGV_PERF', 'AGV_FACT', 'AGV_PORTAIL', 'AGV_DETTES', 'AGV_RESET',
                 'AGV_FORFAIT', 'AGV_STABLE', 'AGV_LIER', 'AGV_GERANTS', 'AGV_CONNEXION',
-                'AGV_COMPTES', 'AGV_PORTE', 'AGV_CHOIX', 'AGV_ECRAN', 'AGV_AUDIT'];
+                'AGV_COMPTES', 'AGV_ACCES', 'AGV_CHOIX', 'AGV_ECRAN', 'AGV_AUDIT'];
     var absents = noms.filter(function (n) { return typeof window[n] !== 'object'; });
     console.log('Version ' + V.version + ' — fichier du ' + V.date);
     console.log(absents.length ? 'MODULES ABSENTS : ' + absents.join(', ')
@@ -44883,45 +44887,46 @@ window.agvStocks = function(){
 </script>
 <script>
 /* =============================================================================
-   APP AGV — MODULE 12 : UNE BOUTIQUE RATTACHEE PASSE PAR SA MERE  (v1.0)
+   APP AGV — MODULE 12 : CHAQUE BOUTIQUE GARDE SA PORTE  (v2.0)
    -----------------------------------------------------------------------------
-   CE QUI SE PASSAIT
+   CE QUE FAISAIT LA VERSION 1, ET POURQUOI ELLE ETAIT MAUVAISE
 
-   Le rattachement n'ecrit que deux renvois. Rien, dans l'ecran de connexion,
-   ne tenait compte de l'ecriteau « gdv_shops/<uid>/rattachement » : la
-   boutique rattachee restait joignable par son propre code, exactement comme
-   avant. Une meme boutique avait donc DEUX portes d'entree :
+   La v1 fermait l'acces direct : des qu'une boutique portait un ecriteau de
+   rattachement, son code n'ouvrait plus l'ecran de connexion, il affichait un
+   renvoi vers la boutique mere. L'intention etait de supprimer la « seconde
+   porte ». Le resultat a ete que les gerants n'avaient plus AUCUNE porte :
+   l'ancienne etait fermee, et la nouvelle — passer par le code de la mere —
+   butait encore sur les defauts d'empreinte et d'identifiant.
 
-       — par son ancien code, en dehors de toute supervision ;
-       — par le code de la boutique mere, comme un bloc.
+   LA REGLE RETENUE, QUI EST LA VOTRE
 
-   Deux portes, c'est deux comptabilites possibles pour les memes donnees, et
-   un fondateur qui ne voit pas tout ce qui se passe chez lui.
+     · Chaque boutique rattachee reste joignable par SON PROPRE CODE et par
+       SON PROPRE LIEN, exactement comme avant le rattachement.
+     · Chaque gerant travaille comme il en a l'habitude, chez lui, sans rien
+       changer a ses reperes.
+     · Le code de la boutique mere reste une porte SUPPLEMENTAIRE, pas un
+       passage oblige : un gerant peut l'utiliser, il arrivera chez lui.
+     · Le fondateur, lui, a sa place dans le portail : quand il ouvre une
+       boutique rattachee par le code de celle-ci, un bandeau le lui rappelle
+       et lui donne le code a utiliser pour retrouver l'ensemble. Rien ne lui
+       est interdit : c'est un rappel, pas un barrage.
 
-   CE MODULE FERME LA PREMIERE PORTE.
-
-   Des qu'une boutique porte un ecriteau de rattachement, son code n'ouvre
-   plus l'ecran de connexion : il indique la boutique mere a utiliser. Le
-   detachement rouvre l'acces immediatement — la verification est faite en
-   direct, rien n'est fige.
-
-   PRUDENCE : la fermeture n'a lieu que sur une lecture ABOUTIE. Si le reseau
-   ne repond pas, l'ecran s'affiche normalement. Une coupure ne doit jamais
-   enfermer quelqu'un dehors.
-
-   Aucune donnee de boutique n'est lue ni modifiee : seul l'ecriteau de
-   rattachement est consulte.
+   RIEN N'EST BLOQUE, RIEN N'EST REDIRIGE DE FORCE. Ce module n'ecrit aucune
+   donnee : il lit l'ecriteau de rattachement et affiche un rappel.
 
    INSTALLATION : charger apres les modules 1 a 11.
-   DESACTIVATION : AGV_PORTE.actif = false
+   DESACTIVATION : AGV_ACCES.actif = false
    ============================================================================= */
 (function () {
   'use strict';
 
-  var API = window.AGV_PORTE = { actif: true, version: '1.0' };
+  var API = window.AGV_ACCES = { actif: true, version: '2.0' };
+  // L'ancien nom reste disponible, desactive, pour qu'aucun appel residuel
+  // ne rouvre le barrage de la v1.
+  window.AGV_PORTE = { actif: false, remplacePar: 'AGV_ACCES', version: '2.0' };
 
   function log() {
-    try { console.log.apply(console, ['[AGV-PORTE]'].concat([].slice.call(arguments))); } catch (e) {}
+    try { console.log.apply(console, ['[AGV-ACCES]'].concat([].slice.call(arguments))); } catch (e) {}
   }
   function esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
@@ -44932,167 +44937,116 @@ window.agvStocks = function(){
     if (typeof window._agvRefBrut === 'function') return window._agvRefBrut(p);
     return (window.db && window.db.ref) ? window.db.ref(p) : null;
   }
-
-  // Renvoie l'ecriteau, ou false si la lecture n'a pas abouti.
-  // La distinction est capitale : « pas rattachee » et « je ne sais pas »
-  // ne doivent pas produire le meme comportement.
-  function ecriteau(uid, cb) {
-    var r = ref('gdv_shops/' + uid + '/rattachement');
-    if (!r) { cb(false); return; }
+  function lire(p, cb) {
+    var r = ref(p);
+    if (!r) { cb(null); return; }
     var fait = false;
-    var t = setTimeout(function () { if (!fait) { fait = true; cb(false); } }, 7000);
+    var t = setTimeout(function () { if (!fait) { fait = true; cb(null); } }, 8000);
     try {
-      r.once('value').then(
-        function (s) { if (!fait) { fait = true; clearTimeout(t); cb(s.val() || null); } },
-        function () { if (!fait) { fait = true; clearTimeout(t); cb(false); } }
-      );
-    } catch (e) { if (!fait) { fait = true; clearTimeout(t); cb(false); } }
+      r.once('value').then(function (s) { if (!fait) { fait = true; clearTimeout(t); cb(s.val()); } },
+                           function () { if (!fait) { fait = true; clearTimeout(t); cb(null); } });
+    } catch (e) { if (!fait) { fait = true; clearTimeout(t); cb(null); } }
   }
-
-  function nomMere(r, cb) {
-    if (r.versNom) { cb(r.versNom); return; }
-    var x = ref('gdv_shops/' + r.vers + '/info');
-    if (!x) { cb(''); return; }
-    x.once('value').then(function (s) {
-      var i = s.val() || {};
-      cb(i.entreprise || i.nom || '');
-    }, function () { cb(''); });
-  }
-
-  function codeMere(r, cb) {
-    var x = ref('gdv_shops/' + r.vers + '/info');
-    if (!x) { cb(''); return; }
-    x.once('value').then(function (s) {
-      var i = s.val() || {};
-      cb(i.codeAcces || '');
-    }, function () { cb(''); });
+  function role() {
+    try { if (window.currentRole) return window.currentRole; } catch (e) {}
+    try { return currentRole; } catch (e) {}
+    return null;
   }
 
   /* =========================================================================
-     L'ECRAN DE RENVOI
+     1. RETIRER TOUT BARRAGE POSE PAR LA VERSION PRECEDENTE
+     -------------------------------------------------------------------------
+     Si un fichier plus ancien avait enveloppe agvRenderShopLogin pour bloquer
+     l'acces direct, on rend la fonction d'origine. Sans cela, l'ecran de
+     connexion des boutiques rattachees resterait remplace par un renvoi.
      ========================================================================= */
 
-  function afficherRenvoi(container, shop, r) {
-    nomMere(r, function (nom) {
-      codeMere(r, function (code) {
-        container.innerHTML =
-          '<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;' +
-          'background:#060d24;padding:20px;font-family:system-ui,-apple-system,sans-serif">' +
-          '<div style="max-width:420px;width:100%;background:#0a1628;border:1px solid rgba(37,99,235,.3);' +
-          'border-radius:16px;padding:28px 26px;text-align:center">' +
-          '<div style="font-size:38px">🏪</div>' +
-          '<h2 style="color:#e2e8f0;font-size:18px;margin:12px 0 6px">' +
-          esc(shop.entreprise || 'Cette boutique') + '</h2>' +
-          '<div style="color:#94a3b8;font-size:13.5px;line-height:1.65;margin-bottom:18px">' +
-          'Cette boutique est rattachée à <b style="color:#93c5fd">' +
-          esc(nom || 'une boutique mère') + '</b>.<br>' +
-          'Elle ne s\'ouvre plus par son propre code.</div>' +
-          '<div style="background:#060d24;border:1px solid rgba(37,99,235,.25);border-radius:11px;' +
-          'padding:14px;margin-bottom:16px">' +
-          '<div style="color:#64748b;font-size:11px;text-transform:uppercase;letter-spacing:.05em">' +
-          'Code à utiliser</div>' +
-          '<div style="color:#60a5fa;font-size:22px;font-weight:800;letter-spacing:.08em;margin-top:4px">' +
-          esc(code || '—') + '</div>' +
-          '<div style="color:#64748b;font-size:11.5px;margin-top:7px;line-height:1.55">' +
-          'Entrez ce code, puis vos identifiants habituels. Vous arriverez ' +
-          'directement dans votre boutique.</div></div>' +
-          (code
-            ? '<button id="agv-porte-go" style="width:100%;padding:12px;border:none;border-radius:10px;' +
-              'background:#2563eb;color:#fff;font-size:14px;font-weight:700;cursor:pointer;' +
-              'font-family:inherit">Continuer avec ce code</button>'
-            : '') +
-          '<button id="agv-porte-retour" style="width:100%;margin-top:9px;padding:11px;' +
-          'border:1px solid rgba(148,163,184,.3);border-radius:10px;background:transparent;' +
-          'color:#94a3b8;font-size:13px;cursor:pointer;font-family:inherit">Retour</button>' +
-          '</div></div>';
+  function rendreLaPorte() {
+    try {
+      var f = window.agvRenderShopLogin;
+      var k = 0;
+      while (f && f.__agvPorte && f.__agvOrig && k < 5) { f = f.__agvOrig; k++; }
+      if (k) {
+        window.agvRenderShopLogin = f;
+        log('barrage de la version précédente retiré — les codes de boutique fonctionnent à nouveau');
+      }
+    } catch (e) {}
+  }
+  rendreLaPorte();
+  setTimeout(rendreLaPorte, 1500);
+  setTimeout(rendreLaPorte, 4000);
 
-        var go = document.getElementById('agv-porte-go');
-        if (go) go.onclick = function () {
-          try {
-            var champ = document.getElementById('landing-shop-code');
-            if (champ) champ.value = code;
-            if (typeof window.showLanding === 'function') window.showLanding();
-            setTimeout(function () {
-              var c = document.getElementById('landing-shop-code');
-              if (c) c.value = code;
-              if (typeof window.agvShopCodeSubmit === 'function') window.agvShopCodeSubmit();
-              else if (typeof window.agvOuvrirBoutique === 'function') window.agvOuvrirBoutique();
-            }, 250);
-          } catch (e) {}
-        };
-        var ret = document.getElementById('agv-porte-retour');
-        if (ret) ret.onclick = function () {
-          try { if (typeof window.showLanding === 'function') window.showLanding(); } catch (e) {}
-        };
+  /* =========================================================================
+     2. LE RAPPEL AU FONDATEUR
+     -------------------------------------------------------------------------
+     Un bandeau discret, en bas d'ecran, sous les panneaux de l'application.
+     Il ne s'affiche QUE pour le fondateur, QUE sur une boutique rattachee,
+     et une seule fois par session.
+     ========================================================================= */
 
-        log('accès direct refusé pour ' + (shop.entreprise || shop.uid) +
-          ' — renvoi vers ' + (nom || r.vers));
+  function bandeau(nomMere, codeMere) {
+    if (document.getElementById('agv-acces-bandeau')) return;
+    var d = document.createElement('div');
+    d.id = 'agv-acces-bandeau';
+    d.style.cssText = 'position:fixed;left:10px;right:10px;bottom:10px;z-index:99000;' +
+      'max-width:560px;margin:0 auto;background:#0f2b5b;color:#fff;border-radius:12px;' +
+      'padding:12px 14px;box-shadow:0 10px 30px rgba(0,0,0,.35);font-family:inherit;' +
+      'font-size:13px;display:flex;align-items:center;gap:10px;flex-wrap:wrap';
+    d.innerHTML =
+      '<span style="flex:1;line-height:1.5">Vous êtes dans une boutique rattachée à <b>' +
+      esc(nomMere) + '</b>. Pour voir l\'ensemble des boutiques depuis le portail, ' +
+      'connectez-vous avec le code <b style="letter-spacing:.06em">' + esc(codeMere || '—') +
+      '</b>.</span>' +
+      '<button id="agv-acces-ok" style="padding:6px 13px;border:none;border-radius:8px;' +
+      'background:#fff;color:#0f2b5b;font-family:inherit;font-size:12.5px;font-weight:700;' +
+      'cursor:pointer">Compris</button>';
+    document.body.appendChild(d);
+    var b = d.querySelector('#agv-acces-ok');
+    if (b) b.onclick = function () {
+      d.remove();
+      try { sessionStorage.setItem('agv_acces_vu', '1'); } catch (e) {}
+    };
+  }
+
+  function verifier() {
+    if (!API.actif) return;
+    if (role() !== 'fondateur') return;            // les gerants ne sont pas concernes
+    try { if (sessionStorage.getItem('agv_acces_vu') === '1') return; } catch (e) {}
+    var s = window._currentShop || {};
+    if (!s.uid) return;
+
+    lire('gdv_shops/' + s.uid + '/rattachement', function (r) {
+      if (!r || !r.vers) return;
+      lire('gdv_shops/' + r.vers + '/info', function (info) {
+        info = info || {};
+        bandeau(r.versNom || info.entreprise || 'la boutique mère', info.codeAcces);
+        log('fondateur sur une boutique rattachée — rappel du portail affiché');
       });
     });
   }
 
-  /* =========================================================================
-     L'INTERCEPTION DE L'ECRAN DE CONNEXION
-     ========================================================================= */
-
-  function poser() {
-    if (typeof window.agvRenderShopLogin !== 'function') return false;
-    if (window.agvRenderShopLogin.__agvPorte) return true;
-
-    var origine = window.agvRenderShopLogin;
-
-    var neuf = function (shop, container) {
-      var self = this, args = arguments;
-      if (!API.actif || !shop || !shop.uid || !container) return origine.apply(self, args);
-
-      // On affiche d'abord un temps d'attente tres court, puis l'ecran voulu.
-      container.innerHTML = '<div style="min-height:100vh;display:flex;align-items:center;' +
-        'justify-content:center;background:#060d24"><div style="color:#60a5fa;font-size:14px">' +
-        'Chargement...</div></div>';
-
-      ecriteau(shop.uid, function (r) {
-        // false = lecture non aboutie : on n'enferme personne dehors.
-        if (r === false || !r || !r.vers) return origine.apply(self, args);
-
-        // Le cache local de ce code ne doit plus servir de raccourci.
-        try {
-          if (shop.codeAcces) localStorage.removeItem('agv_shop_' + shop.codeAcces);
-        } catch (e) {}
-
-        afficherRenvoi(container, shop, r);
-      });
-    };
-
-    neuf.__agvPorte = true;
-    neuf.__agvOrig = origine;
-    window.agvRenderShopLogin = neuf;
-    log('module actif — v' + API.version);
-    return true;
-  }
-
-  var essais = 0;
-  if (!poser()) {
-    var horloge = setInterval(function () {
-      essais++;
-      if (poser() || essais > 900) clearInterval(horloge);
-    }, 400);
-  }
+  setTimeout(verifier, 7000);
 
   /* =========================================================================
      VERIFICATION
      ========================================================================= */
 
-  API.verifier = function (uidBoutique) {
-    var u = uidBoutique || (window._shopLoginData || window._currentShop || {}).uid;
-    if (!u) { console.log('Aucune boutique identifiée.'); return; }
-    ecriteau(u, function (r) {
-      if (r === false) { console.log('Lecture impossible — l\'accès reste ouvert par prudence.'); return; }
-      if (!r || !r.vers) { console.log('Cette boutique n\'est rattachée à personne : son code fonctionne.'); return; }
-      console.log('Rattachée à ' + (r.versNom || r.vers) + ' (bloc ' + (r.bloc || '?') + ')' +
-        ' — son propre code n\'ouvre plus rien.');
+  API.etat = function () {
+    var s = window._currentShop || window._shopLoginData || {};
+    if (!s.uid) { console.log('Aucune boutique ouverte.'); return; }
+    lire('gdv_shops/' + s.uid + '/rattachement', function (r) {
+      if (!r || !r.vers) {
+        console.log('Cette boutique n\'est rattachée à personne. Son code ouvre normalement.');
+        return;
+      }
+      console.log('Boutique rattachée à ' + (r.versNom || r.vers) + ', bloc ' + (r.bloc || '?') + '.');
+      console.log('Son propre code reste valable : les gérants entrent comme avant.');
+      console.log('Le code de la boutique mère fonctionne aussi et mène ici.');
     });
     return 'lecture en cours...';
   };
+
+  log('module actif — v' + API.version + ' — chaque boutique garde son code');
 
 })();
 
