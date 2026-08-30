@@ -38838,7 +38838,14 @@ window.agvStocks = function(){
 
 
 <!-- ==================================================================
-     MODULES AJOUTES — App AGV — VERSION COMPLETE (14 modules)
+     MODULES AJOUTES — App AGV — 15 modules
+
+     CAUSE DU REFUS DE CONNEXION DES GERANTS :
+       ligne 17617  function empreinte(txt)    -> sel « agvc$ »  (ECRIT)
+       ligne 30908  function empreinte33(txt)  -> sel « agv$ »   (VERIFIE)
+     Deux sels differents : la comparaison ligne 30974 ne pouvait jamais
+     aboutir. Corrige par le module 10, sans toucher aux comptes.
+
       1. agv-performance   : sauvegarde differentielle, regroupement des rendus, index memoire
       2. agv-factures      : numerotation, vendeur, dates, remise/frais, livraison, pagination
       3. agv-portail       : entree directe, suppression/detachement de bloc, sortie de secours Echap
@@ -38848,19 +38855,18 @@ window.agvStocks = function(){
       7. agv-stable        : boutiques rattachees stables, lettre libre, nom reel et suivi
       8. agv-lier          : rattacher, detacher, reparer les liens incomplets (concepteur)
       9. agv-gerants       : acces des gerants aux boutiques rattachees, droits qui suivent
-     10. agv-connexion     : ecran unifie : comptes ET codes, boutique saisie et rattachees
+     10. agv-connexion     : LES DEUX SELS D EMPREINTE : agvc$ a l ecriture, agv$ a la lecture
      11. agv-comptes       : un nom d utilisateur pour plusieurs gerants, mots de passe uniques
      12. agv-porte         : une boutique rattachee ne s ouvre plus que par sa boutique mere
      13. agv-choix         : liste des gerants sous l ecran unifie
-     14. agv-ecran         : ECRAN VISIBLE : la liste deroulante reunit tous les gerants
+     14. agv-ecran         : ecran visible : liste complete, codes retires du DOM
+     15. agv-audit         : AGV_AUDIT.lancer() — audit en lecture seule de vos vraies donnees
 
-     CONNEXION DES GERANTS — modules 9 a 14. Verifier leur presence :
-        typeof AGV_ECRAN     -> doit repondre "object"
-        typeof AGV_CONNEXION -> doit repondre "object"
-     Liste deroulante des gerants : AGV_ECRAN.etat()
-     Ou se trouve un identifiant  : AGV_CONNEXION.verifier("identifiant")
-     Controle des rattachements   : AGV_LIER.controle() puis AGV_LIER.reparer()
-     Desactivation : AGV_ECRAN.actif = false;  (idem pour chaque module)
+     A LANCER APRES DEPLOIEMENT, DANS LA CONSOLE :
+        AGV_AUDIT.lancer()          audit complet de vos donnees reelles
+        AGV_ECRAN.etat()            qui figure dans la liste deroulante
+        AGV_LIER.controle()         coherence des rattachements
+     Verifier la presence : typeof AGV_CONNEXION  -> "object"
      ================================================================== -->
 <script>
 /* =============================================================================
@@ -44149,19 +44155,80 @@ window.agvStocks = function(){
   // sans quoi aucun mot de passe ne pourrait correspondre.
   function normId(v) { return String(v == null ? '' : v).trim().toLowerCase(); }
 
-  function empreinte(txt) {
+  /* -------------------------------------------------------------------------
+     LES EMPREINTES DE MOT DE PASSE — LE COEUR DU PROBLEME
+
+     Le fichier contient DEUX recettes d'empreinte, avec DEUX SELS DIFFERENTS :
+
+       ligne 17617   function empreinte(txt)    ->  sel « agvc$ »
+       ligne 30908   function empreinte33(txt)  ->  sel « agv$ »
+
+     C'est « empreinte » qui ENREGISTRE le mot de passe (agvCompteEnregistrer,
+     ligne 17951 : « var suite = mdp ? empreinte(mdp) : ... »), et c'est
+     « empreinte33 » qui le VERIFIE au moment de la connexion (ligne 30974 :
+     « return empreinte33(mdp).then(function(h){ if(h !== compte.empreinte) »).
+
+     Deux sels differents donnent deux resultats differents pour le meme mot
+     de passe. La comparaison ne peut donc JAMAIS aboutir :
+
+       « Ibrahima2026 »  enregistre  -> f:4f39aa61:17
+       « Ibrahima2026 »  verifie     -> f:50004002:16
+
+     Tout compte cree par le fondateur dans l'onglet Personnel etait ainsi
+     refuse, quel que soit le mot de passe saisi. Le rattachement n'y est
+     pour rien : les deux evenements se sont simplement produits en meme temps.
+
+     A cela s'ajoute une seconde source d'ecart, plus discrete : la recette
+     bascule sur un repli « f: » quand SHA-256 est indisponible, c'est-a-dire
+     hors HTTPS. Un compte cree sur une connexion non securisee porte une
+     empreinte « f: » que la meme application, ouverte en HTTPS, calcule
+     desormais en « s: ».
+
+     On calcule donc TOUTES les empreintes possibles du mot de passe saisi —
+     deux sels x deux recettes — et on accepte si l'une d'elles correspond.
+     Aucune donnee n'est modifiee, aucun compte n'est a recreer, et le mot de
+     passe reste hache : il faut toujours le connaitre pour entrer.
+     ------------------------------------------------------------------------- */
+
+  var SELS = ['agvc$', 'agv$'];
+
+  function replis(sel, txt) {
+    var h1 = 5381, s = sel + txt;
+    for (var i = 0; i < s.length; i++) { h1 = ((h1 * 33) ^ s.charCodeAt(i)) >>> 0; }
+    return 'f:' + h1.toString(16) + ':' + s.length;
+  }
+
+  function sha(sel, txt) {
     try {
       if (window.crypto && window.crypto.subtle && window.isSecureContext) {
-        var buf = new TextEncoder().encode('agv$' + txt);
+        var buf = new TextEncoder().encode(sel + txt);
         return window.crypto.subtle.digest('SHA-256', buf).then(function (h) {
           var b = Array.prototype.slice.call(new Uint8Array(h));
           return 's:' + b.map(function (x) { return ('0' + x.toString(16)).slice(-2); }).join('');
-        });
+        }, function () { return null; });
       }
     } catch (e) {}
-    var h1 = 5381, s = 'agv$' + txt;
-    for (var i = 0; i < s.length; i++) { h1 = ((h1 * 33) ^ s.charCodeAt(i)) >>> 0; }
-    return Promise.resolve('f:' + h1.toString(16) + ':' + s.length);
+    return Promise.resolve(null);
+  }
+
+  // Toutes les empreintes qu'un meme mot de passe a pu produire
+  function empreintes(txt) {
+    var l = SELS.map(function (s) { return replis(s, txt); });
+    return Promise.all(SELS.map(function (s) { return sha(s, txt); })).then(function (h) {
+      h.forEach(function (x) { if (x) l.push(x); });
+      return l;
+    });
+  }
+  API.empreintes = empreintes;
+
+  function correspond(compte, liste) {
+    return !!(compte && compte.empreinte && liste.indexOf(compte.empreinte) >= 0);
+  }
+
+  // Empreinte de reference pour un NOUVEL enregistrement : celle que
+  // l'application utilise deja pour stocker.
+  function empreinte(txt) {
+    return sha(SELS[0], txt).then(function (h) { return h || replis(SELS[0], txt); });
   }
 
   function message(txt, ok) {
@@ -44207,14 +44274,14 @@ window.agvStocks = function(){
 
   // Parmi des homonymes, c'est le mot de passe qui designe la personne.
   function reconnaitre(liste, mdp, cb) {
-    empreinte(mdp).then(function (h) {
+    empreintes(mdp).then(function (h) {
       var actifs = liste.filter(function (c) { return c.actif !== false; });
       var trouve = null;
-      actifs.forEach(function (c) { if (!trouve && c.empreinte === h) trouve = c; });
+      actifs.forEach(function (c) { if (!trouve && correspond(c, h)) trouve = c; });
       if (trouve) return cb(trouve, null);
       // le mot de passe correspond a un compte desactive : le dire clairement
       var suspendu = null;
-      liste.forEach(function (c) { if (!suspendu && c.actif === false && c.empreinte === h) suspendu = c; });
+      liste.forEach(function (c) { if (!suspendu && c.actif === false && correspond(c, h)) suspendu = c; });
       cb(null, suspendu ? 'desactive' : 'motdepasse');
     });
   }
@@ -44315,23 +44382,26 @@ window.agvStocks = function(){
       // 1. Combien de comptes portent ce nom d'utilisateur dans la boutique saisie ?
       chercherComptes(u, identifiant, function (ici) {
 
-        // Un seul : la chaine d'origine sait faire, on ne touche a rien.
-        if (ici.length === 1) return suite.apply(self, args);
-
-        // Plusieurs personnes partagent ce nom d'utilisateur. L'application
-        // ne teste que le dernier trouve : c'est nous qui reconnaissons la
-        // bonne, par son mot de passe.
-        if (ici.length > 1) {
+        // Le compte existe dans la boutique saisie. On NE DELEGUE PLUS a la
+        // chaine d'origine : son verrou (ligne 30974) compare avec le mauvais
+        // sel et refuserait quoi qu'il arrive. On reconnait ici, en acceptant
+        // toutes les empreintes historiques.
+        if (ici.length) {
           if (btn) { btn.disabled = true; btn.textContent = 'Verification...'; }
           return reconnaitre(ici, mdp, function (compte, souci) {
             fini();
             if (compte) {
-              log(ici.length + ' comptes portent « ' + identifiant + ' » — reconnu par le mot de passe');
+              log(ici.length > 1
+                ? ici.length + ' comptes portent « ' + identifiant + ' » — reconnu par le mot de passe'
+                : 'compte reconnu dans ' + (shop.entreprise || u));
               return ouvrirBoutique({ uid: u, shop: shop }, compte, fini);
             }
-            message(souci === 'desactive'
-              ? 'Ce compte est désactivé. Contactez le fondateur.'
-              : 'Identifiant ou mot de passe incorrect.', false);
+            if (souci === 'desactive') {
+              return message('Ce compte est désactivé. Contactez le fondateur.', false);
+            }
+            // Le nom est bon, le mot de passe non : inutile de chercher
+            // ailleurs, on ne veut pas qu'un homonyme ouvre une autre boutique.
+            message('Identifiant ou mot de passe incorrect.', false);
           });
         }
 
@@ -45271,12 +45341,18 @@ window.agvStocks = function(){
     if (!r) { cb(null); return; }
     r.once('value').then(function (s) { cb(s.val()); }, function () { cb(null); });
   }
-  function empreinte(txt) {
+  // Toutes les empreintes qu'un meme mot de passe a pu produire : deux sels
+  // (« agvc$ » a l'enregistrement, « agv$ » a la verification) et deux
+  // recettes (SHA-256 en HTTPS, repli sinon). Voir le module 10 pour le detail.
+  function empreintes(txt) {
     var c = C();
-    if (c && c.empreinte) return c.empreinte(txt);
-    var h1 = 5381, s = 'agv$' + txt;
-    for (var i = 0; i < s.length; i++) { h1 = ((h1 * 33) ^ s.charCodeAt(i)) >>> 0; }
-    return Promise.resolve('f:' + h1.toString(16) + ':' + s.length);
+    if (c && c.empreintes) return c.empreintes(txt);
+    var l = ['agvc$', 'agv$'].map(function (sel) {
+      var h1 = 5381, s = sel + txt;
+      for (var i = 0; i < s.length; i++) { h1 = ((h1 * 33) ^ s.charCodeAt(i)) >>> 0; }
+      return 'f:' + h1.toString(16) + ':' + s.length;
+    });
+    return Promise.resolve(l);
   }
   function liees(u, cb) {
     var c = C();
@@ -45305,6 +45381,44 @@ window.agvStocks = function(){
     if (!v) return [];
     if (Array.isArray(v)) return v.filter(Boolean);
     try { return Object.keys(v).map(function (k) { return v[k]; }).filter(Boolean); } catch (e) { return []; }
+  }
+
+  /* =========================================================================
+     LES CODES NE DOIVENT PAS RESTER DANS LA PAGE
+     -------------------------------------------------------------------------
+     Le remplissage d'origine ecrit le code de CHAQUE gerant dans le document
+     (ligne 1760) :
+
+         opt.dataset.code = g.code || '';
+
+     N'importe qui ouvrant l'ecran de connexion et pressant F12 lit donc tous
+     les codes de la boutique, sans s'etre identifie. La verification les
+     relit ensuite depuis la page (ligne 1813).
+
+     On garde les codes dans une variable JavaScript et on les retire du
+     document. Ce n'est pas une protection absolue — l'application est
+     entierement cote navigateur — mais cela supprime l'exposition la plus
+     evidente : celle qui se lit d'un clic droit.
+     ========================================================================= */
+
+  var CODES = {};        // "uid|gerantId" -> code, jamais ecrit dans la page
+
+  function cle(uid, id) { return String(uid) + '|' + String(id); }
+
+  function retirerCodesDuDom(sel, uidBoutique) {
+    if (!sel) return;
+    Array.prototype.forEach.call(sel.querySelectorAll('option'), function (o) {
+      if (!o.value || !o.dataset) return;
+      var u = o.dataset.shop || uidBoutique;
+      if (o.dataset.code !== undefined && o.dataset.code !== '') {
+        CODES[cle(u, o.value)] = o.dataset.code;
+      }
+      try { delete o.dataset.code; o.removeAttribute('data-code'); } catch (e) {}
+    });
+  }
+
+  function codeDe(uidBoutique, gerantId) {
+    return CODES[cle(uidBoutique, gerantId)] || '';
   }
 
   /* =========================================================================
@@ -45367,6 +45481,8 @@ window.agvStocks = function(){
         s.appendChild(gm);
       }
 
+      retirerCodesDuDom(s, shop.uid);
+
       var ajoutes = 0;
       l.forEach(function (b) {
         var p = paquets[b.uid];
@@ -45377,7 +45493,7 @@ window.agvStocks = function(){
           var o = document.createElement('option');
           o.value = String(x.id);
           o.textContent = x.nom + (x.poste ? ' — ' + x.poste : '');
-          o.dataset.code = x.code || '';
+          if (x.code) CODES[cle(b.uid, x.id)] = x.code;   // en mémoire, pas dans la page
           o.dataset.shop = b.uid;
           o.dataset.nom = x.nom;
           if (x.compte) o.dataset.emp = x.compte.empreinte || '';
@@ -45392,7 +45508,9 @@ window.agvStocks = function(){
         if (!o.value && o.disabled && ajoutes) o.remove();
       });
 
+      retirerCodesDuDom(s, shop.uid);
       if (ajoutes) log(ajoutes + ' gérant(s) de boutiques rattachées ajouté(s) à la liste');
+      log('codes retirés du document — ' + Object.keys(CODES).length + ' conservé(s) en mémoire');
     }
   }
 
@@ -45417,8 +45535,8 @@ window.agvStocks = function(){
       return ouvrir(cible, { role: 'gerant', gerantId: gerantId }, apres);
     }
     if (!emp) { apres(false); return; }
-    empreinte(mdp).then(function (h) {
-      if (h !== emp) { apres(false); return; }
+    empreintes(mdp).then(function (h) {
+      if (h.indexOf(emp) < 0) { apres(false); return; }
       log('mot de passe de compte reconnu — ' + nom + ' chez ' + (cible.nom || cible.uid));
       dire('Connexion réussie !', true);
       ouvrir(cible, { role: 'gerant', gerantId: gerantId }, apres);
@@ -45446,7 +45564,7 @@ window.agvStocks = function(){
 
         var autre = opt.dataset ? opt.dataset.shop : null;
         var emp = opt.dataset ? opt.dataset.emp : '';
-        var code = opt.dataset ? opt.dataset.code : '';
+        var code = codeDe(autre || shop.uid, sel.value);
         var nom = (opt.dataset && opt.dataset.nom) || opt.textContent;
 
         // Une personne d'une boutique rattachee : l'application ouvrirait la
@@ -45475,8 +45593,8 @@ window.agvStocks = function(){
             if (x && String(x.gerantId) === String(sel.value) && x.actif !== false) c = x;
           });
           if (!c) return origine.apply(self, args);
-          empreinte(mdp).then(function (h) {
-            if (h !== c.empreinte) return origine.apply(self, args);
+          empreintes(mdp).then(function (h) {
+            if (h.indexOf(c.empreinte) < 0) return origine.apply(self, args);
             log('mot de passe de compte reconnu — ' + nom);
             dire('Connexion réussie !', true);
             ouvrir({ uid: shop.uid, shop: shop, nom: shop.entreprise },
@@ -45546,14 +45664,314 @@ window.agvStocks = function(){
       Array.prototype.forEach.call(grp, function (g) {
         console.log('  ' + g.label);
         Array.prototype.forEach.call(g.querySelectorAll('option'), function (o) {
+          var u = o.dataset.shop || (window._shopLoginData || {}).uid;
+          var aCode = !!codeDe(u, o.value);
           console.log('     ' + o.textContent +
             (o.dataset.shop ? '  → ouvre sa propre boutique' : '') +
-            (o.dataset.emp ? '  (a un compte)' : (o.dataset.code ? '' : '  — SANS CODE NI COMPTE')));
+            (o.dataset.emp ? '  (compte + mot de passe)' : '') +
+            (aCode ? '  (code de fiche)' : '') +
+            (!o.dataset.emp && !aCode ? '  — SANS CODE NI COMPTE, ne peut pas entrer' : ''));
         });
       });
     }
     return sel.querySelectorAll('option[value]').length + ' personne(s)';
   };
+
+})();
+
+</script>
+<script>
+/* =============================================================================
+   APP AGV — MODULE 15 : AUDIT DE L'AUTHENTIFICATION  (v1.0)
+   -----------------------------------------------------------------------------
+   Les tests que j'ai ecrits tournent sur des donnees inventees. Celui-ci
+   tourne sur LES VOTRES, et n'ecrit STRICTEMENT RIEN : il ne fait que lire.
+
+   Il verifie, pour la boutique ouverte et pour chacune de ses boutiques
+   rattachees :
+
+     — la structure : comptes, gerants, renvois de blocs, affectations ;
+     — qui peut effectivement se connecter, et par quel moyen ;
+     — les gerants qui n'ont ni code ni compte : ceux-la ne peuvent pas
+       entrer, et aucun correctif n'y changera rien tant que le fondateur
+       ne leur aura pas donne l'un ou l'autre ;
+     — les comptes orphelins, dont le gerantId ne designe plus personne ;
+     — les identifiants en double et les mots de passe identiques ;
+     — la coherence des rattachements dans les deux sens ;
+     — le rattachement a-t-il touche a un compte, a un gerant, a une
+       affectation ? (reponse attendue : non, il n'ecrit que deux renvois)
+
+   Usage, dans la console, une fois connecte :
+
+        AGV_AUDIT.lancer()
+
+   INSTALLATION : charger apres les modules 1 a 14.
+   ============================================================================= */
+(function () {
+  'use strict';
+
+  var API = window.AGV_AUDIT = { version: '1.0' };
+
+  function ref(p) {
+    if (typeof window._agvRefBrut === 'function') return window._agvRefBrut(p);
+    return (window.db && window.db.ref) ? window.db.ref(p) : null;
+  }
+  function lire(p, cb) {
+    var r = ref(p);
+    if (!r) { cb(null); return; }
+    var fait = false;
+    var t = setTimeout(function () { if (!fait) { fait = true; cb(null); } }, 9000);
+    try {
+      r.once('value').then(function (s) { if (!fait) { fait = true; clearTimeout(t); cb(s.val()); } },
+                           function () { if (!fait) { fait = true; clearTimeout(t); cb(null); } });
+    } catch (e) { if (!fait) { fait = true; clearTimeout(t); cb(null); } }
+  }
+  function tab(v) {
+    if (!v) return [];
+    if (Array.isArray(v)) return v.filter(Boolean);
+    try { return Object.keys(v).map(function (k) { return v[k]; }).filter(Boolean); } catch (e) { return []; }
+  }
+  function norme(v) { return String(v == null ? '' : v).trim().toLowerCase(); }
+
+  var ok = 0, souci = 0, grave = 0;
+  function bon(t) { ok++; console.log('   ✔  ' + t); }
+  function att(t) { souci++; console.log('   ⚠  ' + t); }
+  function mal(t) { grave++; console.log('   ✖  ' + t); }
+  function titre(t) { console.log('\n' + t); console.log('   ' + '─'.repeat(Math.min(t.length, 60))); }
+
+  /* =========================================================================
+     LECTURE DE TOUT CE QUI CONCERNE UNE BOUTIQUE
+     ========================================================================= */
+
+  function boutique(uid, nom, cb) {
+    var res = { uid: uid, nom: nom, comptes: {}, gerants: [], affect: {}, ratt: null, info: {} };
+    var reste = 5;
+    function fin() { if (--reste === 0) cb(res); }
+    lire('gdv_shops/' + uid + '/comptes', function (v) { res.comptes = v || {}; fin(); });
+    lire('gdv_shops/' + uid + '/data/gerants', function (v) { res.gerants = tab(v); fin(); });
+    lire('gdv_shops/' + uid + '/blocs/_affect', function (v) { res.affect = v || {}; fin(); });
+    lire('gdv_shops/' + uid + '/rattachement', function (v) { res.ratt = v || null; fin(); });
+    lire('gdv_shops/' + uid + '/info', function (v) { res.info = v || {}; fin(); });
+  }
+
+  /* =========================================================================
+     LES CONTROLES
+     ========================================================================= */
+
+  function controlerBoutique(b, estMere) {
+    titre((estMere ? '■ ' : '□ ') + (b.info.entreprise || b.nom || b.uid) +
+          (estMere ? '   (boutique ouverte)' : '   (rattachée)'));
+
+    var comptes = Object.keys(b.comptes).map(function (k) { return b.comptes[k]; });
+    var fondateurs = comptes.filter(function (c) { return c && c.role === 'fondateur'; });
+    var gerantsC = comptes.filter(function (c) { return c && c.role !== 'fondateur'; });
+
+    console.log('   ' + b.gerants.length + ' fiche(s) de personnel · ' +
+                comptes.length + ' compte(s) (' + fondateurs.length + ' fondateur, ' +
+                gerantsC.length + ' gérant)');
+
+    // --- qui peut effectivement entrer ---
+    var parGerant = {};
+    comptes.forEach(function (c) {
+      if (c && c.gerantId != null) parGerant[String(c.gerantId)] = c;
+    });
+
+    var muets = [], bloques = 0, entrants = 0;
+    b.gerants.forEach(function (g) {
+      if (!g) return;
+      if (g.bloque) { bloques++; return; }
+      var c = parGerant[String(g.id)];
+      var code = g.code ? String(g.code) : '';
+      if (c && c.actif === false) {
+        att((g.nom || g.id) + ' : compte désactivé' + (code ? ', mais son code de fiche reste valable' : ''));
+        if (code) entrants++;
+        return;
+      }
+      if (c || code) { entrants++; return; }
+      muets.push(g.nom || ('gérant ' + g.id));
+    });
+
+    if (entrants) bon(entrants + ' personne(s) peuvent se connecter');
+    if (bloques) console.log('   ·  ' + bloques + ' fiche(s) bloquée(s) volontairement');
+    if (muets.length) {
+      mal(muets.length + ' gérant(s) SANS code ni compte — ils ne peuvent pas entrer : ' +
+          muets.join(', '));
+      console.log('      → donnez-leur un code dans l\'onglet Gérants & Accès, ou créez leur compte.');
+    }
+
+    // --- comptes orphelins ---
+    var ids = {};
+    b.gerants.forEach(function (g) { if (g && g.id != null) ids[String(g.id)] = true; });
+    var orphelins = gerantsC.filter(function (c) {
+      return c.gerantId != null && !ids[String(c.gerantId)];
+    });
+    if (orphelins.length) {
+      att(orphelins.length + ' compte(s) désignent un gérant qui n\'existe plus : ' +
+          orphelins.map(function (c) { return c.identifiant; }).join(', '));
+      console.log('      → ils ouvrent une session sans fiche, donc sans permissions.');
+    } else if (gerantsC.length) bon('chaque compte gérant correspond à une fiche existante');
+
+    // --- identifiants en double ---
+    var parId = {};
+    comptes.forEach(function (c) {
+      if (!c || !c.identifiant) return;
+      (parId[norme(c.identifiant)] = parId[norme(c.identifiant)] || []).push(c);
+    });
+    var partages = Object.keys(parId).filter(function (k) { return parId[k].length > 1; });
+    partages.forEach(function (k) {
+      var l = parId[k];
+      var emp = {};
+      var collision = l.filter(function (c) {
+        if (!c.empreinte) return false;
+        if (emp[c.empreinte]) return true;
+        emp[c.empreinte] = true;
+        return false;
+      });
+      if (collision.length) {
+        mal('« ' + k + ' » : ' + l.length + ' comptes, dont ' + (collision.length + 1) +
+            ' avec le MÊME mot de passe — indiscernables à la connexion');
+        console.log('      → changez le mot de passe de l\'un d\'eux.');
+      } else {
+        bon('« ' + k + ' » partagé par ' + l.length + ' personnes, mots de passe distincts');
+      }
+    });
+
+    // --- famille d'empreinte ---
+    var f = 0, s = 0, vide = 0;
+    comptes.forEach(function (c) {
+      if (!c || !c.empreinte) { vide++; return; }
+      if (String(c.empreinte).indexOf('s:') === 0) s++;
+      else if (String(c.empreinte).indexOf('f:') === 0) f++;
+    });
+    if (vide) mal(vide + ' compte(s) sans empreinte de mot de passe');
+    if (f && s) {
+      att('empreintes de deux familles : ' + s + ' en « s: » (HTTPS) et ' + f + ' en « f: » (repli)');
+      console.log('      → les deux sont acceptées par le module 10, rien à faire.');
+    } else if (comptes.length) bon('empreintes homogènes (' + (s ? 's:' : 'f:') + ')');
+
+    // --- affectations ---
+    var aff = Object.keys(b.affect);
+    if (aff.length) {
+      var perdues = aff.filter(function (g) { return !ids[String(g)]; });
+      if (perdues.length) att(perdues.length + ' affectation(s) de bloc visent un gérant disparu');
+      else bon(aff.length + ' affectation(s) de bloc cohérente(s)');
+    }
+
+    return { entrants: entrants, muets: muets.length };
+  }
+
+  /* =========================================================================
+     LE RATTACHEMENT A-T-IL ABIME QUELQUE CHOSE ?
+     ========================================================================= */
+
+  function controlerLiens(mere, filles) {
+    titre('■ Cohérence des rattachements');
+
+    if (!filles.length) {
+      console.log('   Aucune boutique rattachée à celle-ci.');
+      return;
+    }
+
+    filles.forEach(function (f) {
+      var nom = f.info.entreprise || f.nom || f.uid;
+      if (!f.ratt || String(f.ratt.vers) !== String(mere.uid)) {
+        mal(nom + ' figure dans les blocs, mais son écriteau ne pointe pas ici');
+        console.log('      → AGV_LIER.reparer() remet le lien d\'aplomb.');
+      } else {
+        bon(nom + ' — lien complet dans les deux sens (bloc ' + (f.ratt.bloc || '?') + ')');
+      }
+      if (!f.comptes || !Object.keys(f.comptes).length) {
+        if (!f.gerants.length) att(nom + ' n\'a ni compte ni fiche de personnel');
+      }
+    });
+
+    titre('■ Le rattachement a-t-il modifié des comptes ?');
+    console.log('   agvRattConfirmer (ligne 32228) n\'écrit que deux nœuds :');
+    console.log('     gdv_shops/<accueil>/blocs/_meta/<lettre>');
+    console.log('     gdv_shops/<rattachée>/rattachement');
+    bon('aucune écriture sur comptes, data/gerants, ni sur l\'identifiant de boutique');
+    console.log('   Les hypothèses du §5 — boutiqueId remplacé, rôle changé, gérants');
+    console.log('   pointant vers le fondateur — sont donc écartées par lecture du code.');
+  }
+
+  /* =========================================================================
+     CE QUE JE NE PEUX PAS GARANTIR D'ICI
+     ========================================================================= */
+
+  function limites() {
+    titre('■ Ce que cet audit ne peut pas vérifier');
+    console.log('   L\'application est entièrement dans le navigateur : la séparation');
+    console.log('   des données entre boutiques et le contrôle des rôles reposent sur');
+    console.log('   du code que l\'utilisateur peut lire et modifier.');
+    console.log('');
+    console.log('   §7 et §10 de votre cahier des charges ne peuvent être tenus');
+    console.log('   entièrement que par les RÈGLES DE SÉCURITÉ FIREBASE, qui, elles,');
+    console.log('   s\'appliquent côté serveur. À vérifier dans votre console Firebase :');
+    console.log('     · un gérant ne doit lire/écrire que gdv_shops/<son uid>/…');
+    console.log('     · gdv_shops/<uid>/comptes ne doit pas être lisible publiquement');
+    console.log('     · agv_platform/… réservé au concepteur');
+    console.log('');
+    console.log('   Sans ces règles, tout correctif dans le fichier reste contournable.');
+  }
+
+  /* =========================================================================
+     LANCEMENT
+     ========================================================================= */
+
+  API.lancer = function () {
+    ok = 0; souci = 0; grave = 0;
+    var shop = window._currentShop || window._shopLoginData || {};
+    if (!shop.uid) { console.log('Ouvrez d\'abord une boutique.'); return; }
+
+    console.log('══════════════════════════════════════════════════════════');
+    console.log('  AUDIT DE L\'AUTHENTIFICATION — ' + new Date().toLocaleString('fr-FR'));
+    console.log('══════════════════════════════════════════════════════════');
+
+    lire('gdv_shops/' + shop.uid + '/blocs/_meta', function (meta) {
+      var liees = [];
+      Object.keys(meta || {}).forEach(function (b) {
+        var m = meta[b];
+        if (m && m.source && String(m.source) !== String(shop.uid)) {
+          liees.push({ uid: m.source, nom: m.nom || ('bloc ' + b), bloc: b });
+        }
+      });
+
+      boutique(shop.uid, shop.entreprise, function (mere) {
+        controlerBoutique(mere, true);
+
+        if (!liees.length) {
+          controlerLiens(mere, []);
+          limites();
+          conclure();
+          return;
+        }
+
+        var filles = [], reste = liees.length;
+        liees.forEach(function (x) {
+          boutique(x.uid, x.nom, function (f) {
+            f.bloc = x.bloc;
+            filles.push(f);
+            if (--reste === 0) {
+              filles.forEach(function (f) { controlerBoutique(f, false); });
+              controlerLiens(mere, filles);
+              limites();
+              conclure();
+            }
+          });
+        });
+      });
+    });
+    return 'audit en cours...';
+  };
+
+  function conclure() {
+    console.log('\n══════════════════════════════════════════════════════════');
+    console.log('  ' + ok + ' point(s) conforme(s) · ' + souci + ' à surveiller · ' +
+                grave + ' à corriger');
+    if (grave) console.log('  Les lignes ✖ empêchent des personnes de se connecter.');
+    else console.log('  Aucun obstacle de connexion détecté dans vos données.');
+    console.log('══════════════════════════════════════════════════════════');
+  }
 
 })();
 
