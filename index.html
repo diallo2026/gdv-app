@@ -38846,12 +38846,13 @@ window.agvStocks = function(){
      5. agv-reset         : reinitialisation complete, personnel protege, sauvegarde prealable
      6. agv-forfaits      : bouton Blocs sur chaque fiche concepteur : forfait Pro reglable
      7. agv-stable        : boutiques rattachees stables, lettre libre, nom reel et suivi
-     8. agv-lier          : boutons Rattacher et Detacher sur chaque fiche concepteur
+     8. agv-lier          : rattacher, detacher, et reparer les liens incomplets (concepteur)
      Desactivation individuelle depuis la console :
         AGV_PERF.actif = false;    AGV_FACT.actif = false;
         AGV_PORTAIL.actif = false; AGV_DETTES.actif = false;
         AGV_RESET.actif = false;   AGV_FORFAIT.actif = false;
         AGV_STABLE.actif = false;  AGV_LIER.actif = false;
+     Controle des rattachements : AGV_LIER.controle() puis AGV_LIER.reparer()
      Si un panneau reste ouvert : touche Echap, ou AGV_PORTAIL.degager()
      ================================================================== -->
 <script>
@@ -42855,6 +42856,211 @@ window.agvStocks = function(){
   };
 
   /* =========================================================================
+     LES LIENS INCOMPLETS
+     -------------------------------------------------------------------------
+     Un rattachement s'ecrit en DEUX endroits :
+
+         gdv_shops/<accueil>/blocs/_meta/<lettre>   le renvoi
+         gdv_shops/<rattachee>/rattachement          l'ecriteau
+
+     Rien ne garantissait qu'ils restent d'accord. Trois facons de les desunir :
+       — la seconde ecriture echoue apres la premiere (reseau coupe) ;
+       — un bloc est retire de _meta sans que l'ecriteau soit efface — c'est ce
+         que faisait la suppression de bloc avant le correctif ;
+       — un rattachement ecrase la lettre d'un autre, car elle etait choisie
+         par LETTRES[existants.length] au lieu d'une place libre : l'occupant
+         precedent perd son renvoi mais garde son ecriteau.
+
+     Resultat : la boutique se croit rattachee — donc refuse tout nouveau
+     rattachement — alors que la boutique d'accueil ne la voit nulle part.
+
+     Ce module retrouve ces liens et les remet d'aplomb, dans un sens comme
+     dans l'autre. Aucune donnee de boutique n'est touchee.
+     ========================================================================= */
+
+  function metasDe(uids, cb) {
+    var res = {}, i = 0, actifs = 0, faits = 0, total = uids.length;
+    if (!total) { cb(res); return; }
+    function pomper() {
+      while (actifs < 6 && i < total) {
+        var u = uids[i]; i++; actifs++;
+        (function (h) {
+          lire('gdv_shops/' + h + '/blocs/_meta', function (v) {
+            res[h] = v || {};
+            actifs--; faits++;
+            if (faits >= total) cb(res); else pomper();
+          });
+        })(u);
+      }
+    }
+    pomper();
+  }
+
+  API.verifier = function (cb) {
+    chargerRattachements(function (etats) {
+      var tous = boutiques().map(function (s) { return s.uid; });
+      metasDe(tous, function (metas) {
+        var bilan = { sains: [], absentsChezAccueil: [], mauvaiseLettre: [], ecriteauManquant: [] };
+
+        // 1. Ce que declarent les boutiques rattachees
+        Object.keys(etats).forEach(function (s) {
+          var r = etats[s];
+          if (!r) return;
+          var meta = metas[r.vers] || {};
+          var chez = meta[r.bloc];
+          if (chez && String(chez.source) === String(s)) { bilan.sains.push({ source: s, hote: r.vers, bloc: r.bloc }); return; }
+          var ailleurs = Object.keys(meta).filter(function (L) {
+            return meta[L] && String(meta[L].source) === String(s);
+          })[0];
+          if (ailleurs) bilan.mauvaiseLettre.push({ source: s, hote: r.vers, dit: r.bloc, reel: ailleurs });
+          else bilan.absentsChezAccueil.push({ source: s, hote: r.vers, bloc: r.bloc });
+        });
+
+        // 2. Ce que declarent les boutiques d'accueil
+        Object.keys(metas).forEach(function (h) {
+          var meta = metas[h] || {};
+          Object.keys(meta).forEach(function (L) {
+            var m = meta[L];
+            if (!m || !m.source) return;
+            if (!etats[m.source]) bilan.ecriteauManquant.push({ source: m.source, hote: h, bloc: L });
+          });
+        });
+
+        cb && cb(bilan, metas);
+      });
+    }, true);
+    return 'vérification en cours...';
+  };
+
+  API.controle = function () {
+    API.verifier(function (b) {
+      console.log('--- Contrôle des rattachements ---');
+      console.log('  Liens corrects : ' + b.sains.length);
+      b.sains.forEach(function (x) {
+        console.log('     ' + nomDe(x.source) + ' → bloc ' + x.bloc + ' de ' + nomDe(x.hote));
+      });
+      if (b.absentsChezAccueil.length) {
+        console.log('  INVISIBLES chez la boutique d\'accueil : ' + b.absentsChezAccueil.length);
+        b.absentsChezAccueil.forEach(function (x) {
+          console.log('     ' + nomDe(x.source) + ' se croit bloc ' + x.bloc + ' de ' +
+            nomDe(x.hote) + ' — qui ne la voit pas');
+        });
+      }
+      if (b.mauvaiseLettre.length) {
+        console.log('  Lettre incohérente : ' + b.mauvaiseLettre.length);
+        b.mauvaiseLettre.forEach(function (x) {
+          console.log('     ' + nomDe(x.source) + ' dit bloc ' + x.dit + ', elle est en ' + x.reel);
+        });
+      }
+      if (b.ecriteauManquant.length) {
+        console.log('  Écriteau manquant côté boutique : ' + b.ecriteauManquant.length);
+        b.ecriteauManquant.forEach(function (x) {
+          console.log('     ' + nomDe(x.hote) + ' liste ' + nomDe(x.source) +
+            ' en bloc ' + x.bloc + ', mais son code ouvre encore une boutique à part');
+        });
+      }
+      var k = b.absentsChezAccueil.length + b.mauvaiseLettre.length + b.ecriteauManquant.length;
+      console.log(k ? 'Pour réparer : AGV_LIER.reparer()' : 'Tous les liens sont cohérents.');
+    });
+    return 'contrôle en cours...';
+  };
+
+  /* ---- remettre un lien d'aplomb ---- */
+
+  function retablirChezAccueil(x, metas, cb) {
+    var meta = metas[x.hote] || {};
+    var lettre = (x.bloc && !meta[x.bloc]) ? x.bloc : premiereLibre(meta);
+    if (!lettre) { cb('Plus aucune lettre libre chez ' + nomDe(x.hote)); return; }
+
+    lire('gdv_shops/' + x.source + '/info', function (info) {
+      var nom = String(((info || {}).entreprise) || ((info || {}).nom) || '').trim();
+      if (SANS_NOM.test(nom)) nom = nomDe(x.source);
+      var f = fiche(x.source) || {};
+
+      var r = ref('gdv_shops/' + x.hote + '/blocs/_meta/' + lettre);
+      if (!r) { cb('Base indisponible'); return; }
+      r.set({
+        nom: nom, cree: Date.now(), source: x.source,
+        codeSource: f.codeAcces || '', rattacheLe: Date.now(), retabli: true
+      }).then(function () {
+        // l'ecriteau doit designer la meme lettre
+        if (lettre === x.bloc) return null;
+        return ref('gdv_shops/' + x.source + '/rattachement').set({
+          vers: x.hote, versNom: nomDe(x.hote), bloc: lettre, le: Date.now()
+        });
+      }).then(function () {
+        meta[lettre] = { nom: nom, source: x.source };
+        ETATS[x.source] = { vers: x.hote, versNom: nomDe(x.hote), bloc: lettre };
+        try { if (window.AGV_STABLE) window.AGV_STABLE.oublier(x.hote); } catch (e) {}
+        cb(null, lettre);
+      }).catch(function (e) { cb(e && e.message ? e.message : String(e)); });
+    });
+  }
+
+  function corrigerLettre(x, cb) {
+    var r = ref('gdv_shops/' + x.source + '/rattachement');
+    if (!r) { cb('Base indisponible'); return; }
+    r.set({ vers: x.hote, versNom: nomDe(x.hote), bloc: x.reel, le: Date.now() })
+      .then(function () {
+        ETATS[x.source] = { vers: x.hote, versNom: nomDe(x.hote), bloc: x.reel };
+        cb(null, x.reel);
+      }).catch(function (e) { cb(e && e.message ? e.message : String(e)); });
+  }
+
+  function reposerEcriteau(x, cb) {
+    var r = ref('gdv_shops/' + x.source + '/rattachement');
+    if (!r) { cb('Base indisponible'); return; }
+    r.set({ vers: x.hote, versNom: nomDe(x.hote), bloc: x.bloc, le: Date.now() })
+      .then(function () {
+        ETATS[x.source] = { vers: x.hote, versNom: nomDe(x.hote), bloc: x.bloc };
+        cb(null, x.bloc);
+      }).catch(function (e) { cb(e && e.message ? e.message : String(e)); });
+  }
+
+  API.reparer = function () {
+    API.verifier(function (b, metas) {
+      var travaux = []
+        .concat(b.absentsChezAccueil.map(function (x) { return { type: 'accueil', x: x }; }))
+        .concat(b.mauvaiseLettre.map(function (x) { return { type: 'lettre', x: x }; }))
+        .concat(b.ecriteauManquant.map(function (x) { return { type: 'ecriteau', x: x }; }));
+
+      if (!travaux.length) { console.log('Rien à réparer : tous les liens sont cohérents.'); return; }
+      console.log(travaux.length + ' lien(s) à remettre d\'aplomb...');
+
+      var i = 0;
+      (function suivant() {
+        if (i >= travaux.length) {
+          console.log('Terminé. Relancez AGV_LIER.controle() pour vérifier.');
+          try { if (typeof window.agvRenderListe === 'function') window.agvRenderListe(); } catch (e) {}
+          return;
+        }
+        var t = travaux[i++];
+        function fini(err, l) {
+          if (err) console.log('  échec — ' + nomDe(t.x.source) + ' : ' + err);
+          else console.log('  ✅ ' + nomDe(t.x.source) + ' → bloc ' + l + ' de ' + nomDe(t.x.hote));
+          suivant();
+        }
+        if (t.type === 'accueil') retablirChezAccueil(t.x, metas, fini);
+        else if (t.type === 'lettre') corrigerLettre(t.x, fini);
+        else reposerEcriteau(t.x, fini);
+      })();
+    });
+    return 'réparation en cours...';
+  };
+
+  API.retablir = function (codeAccueil, codeRattachee) {
+    var h = parCode(codeAccueil), s = parCode(codeRattachee);
+    if (!h || !s) { console.log('Boutique introuvable'); return; }
+    metasDe([h], function (metas) {
+      retablirChezAccueil({ hote: h, source: s, bloc: (ETATS[s] || {}).bloc }, metas, function (err, l) {
+        if (err) { console.log('Échec : ' + err); return; }
+        console.log('✅ ' + nomDe(s) + ' est désormais visible comme bloc ' + l + ' de ' + nomDe(h));
+      });
+    });
+    return 'rétablissement en cours...';
+  };
+
+  /* =========================================================================
      LE PANNEAU
      ========================================================================= */
 
@@ -42883,12 +43089,48 @@ window.agvStocks = function(){
     var boite = document.getElementById('agv-lier-boite');
     if (!boite) return;
 
-    etatAccueil(hote, function (etat) {
+    // La liste des ecriteaux doit etre fraiche : c'est elle qui revele les
+    // boutiques rattachees a cet hote sans y figurer.
+    chargerRattachements(function () {
+      etatAccueil(hote, function (etat) {
       var attaches = Object.keys(etat.meta)
         .filter(function (k) { return k !== 'A' && k.indexOf('_') !== 0; }).sort();
       var occupes = 1 + attaches.length;
       var sourcesPrises = {};
       attaches.forEach(function (b) { if (etat.meta[b].source) sourcesPrises[etat.meta[b].source] = b; });
+
+      // Boutiques qui se declarent rattachees a CET hote sans y figurer :
+      // c'est exactement le cas ou l'accueil ne les voit pas alors qu'elles
+      // sont considerees comme deja rattachees.
+      var invisibles = Object.keys(ETATS).filter(function (u) {
+        var r = ETATS[u];
+        return r && String(r.vers) === String(hote) && !sourcesPrises[u];
+      });
+
+      var alerte = invisibles.length
+        ? '<div style="margin:12px 0;padding:12px 14px;border-radius:10px;' +
+          'background:rgba(249,115,22,.1);border:1px solid rgba(249,115,22,.45);' +
+          'font-size:12.5px;color:#fdba74;line-height:1.6">' +
+          '<b>' + invisibles.length + ' boutique(s) rattachée(s) à celle-ci n\'y figurent pas.</b><br>' +
+          'Leur écriteau désigne cette boutique, mais le renvoi manque ici — c\'est pourquoi ' +
+          'elles sont refusées au rattachement alors qu\'elles restent invisibles.' +
+          invisibles.map(function (u) {
+            var r = ETATS[u];
+            return '<div style="display:flex;justify-content:space-between;align-items:center;gap:9px;' +
+              'margin-top:9px;padding:8px 10px;border-radius:8px;background:rgba(0,0,0,.25);flex-wrap:wrap">' +
+              '<div style="color:#e2e8f0"><b>' + esc(nomDe(u)) + '</b>' +
+              '<div style="font-size:10.5px;color:#94a3b8">se déclare bloc ' + esc(r.bloc || '?') + '</div></div>' +
+              '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
+              '<button class="agv-lier-fix" data-uid="' + esc(u) + '" ' +
+              'style="padding:5px 11px;border:none;border-radius:7px;background:#16a34a;color:#fff;' +
+              'font-size:11px;font-weight:700;cursor:pointer;font-family:inherit">Rendre visible ici</button>' +
+              '<button class="agv-lier-libere" data-uid="' + esc(u) + '" ' +
+              'style="padding:5px 11px;border:1px solid rgba(239,68,68,.45);border-radius:7px;' +
+              'background:transparent;color:#f87171;font-size:11px;font-weight:700;cursor:pointer;' +
+              'font-family:inherit">Libérer</button></div></div>';
+          }).join('') +
+          '</div>'
+        : '';
 
       var listeBlocs = '<div style="font-size:12px;font-weight:800;color:#93c5fd;margin:14px 0 7px">' +
         'Blocs de cette boutique</div>' +
@@ -42975,10 +43217,11 @@ window.agvStocks = function(){
             'style="padding:8px 14px;border:none;border-radius:8px;background:#b91c1c;color:#fff;' +
             'font-size:12.5px;font-weight:700;cursor:pointer;font-family:inherit">' +
             'Détacher cette boutique</button></div></div>'
-          : listeBlocs + quotaHtml + choixHtml) +
+          : alerte + listeBlocs + quotaHtml + choixHtml) +
         '<div id="agv-lier-msg" style="font-size:12.5px;margin-top:11px;min-height:18px;line-height:1.55"></div>';
 
       brancher(hote);
+      });
     });
   }
 
@@ -43054,6 +43297,42 @@ window.agvStocks = function(){
               dessiner(hote);
             });
           };
+        });
+      };
+    });
+
+    Array.prototype.forEach.call(boite.querySelectorAll('.agv-lier-fix'), function (b) {
+      b.onclick = function () {
+        var source = b.getAttribute('data-uid');
+        b.disabled = true;
+        dire('Rétablissement...', '#94a3b8');
+        metasDe([hote], function (metas) {
+          retablirChezAccueil({ hote: hote, source: source, bloc: (ETATS[source] || {}).bloc },
+            metas, function (err, lettre) {
+              if (err) { dire(esc(err), '#f87171'); b.disabled = false; return; }
+              toast(nomDe(source) + ' est maintenant visible comme bloc ' + lettre, '#22c55e');
+              dessiner(hote);
+            });
+        });
+      };
+    });
+
+    Array.prototype.forEach.call(boite.querySelectorAll('.agv-lier-libere'), function (b) {
+      b.onclick = function () {
+        var source = b.getAttribute('data-uid');
+        if (!confirm('Libérer « ' + nomDe(source) + ' » ?\n\n' +
+          'Son écriteau de rattachement est retiré : elle redevient une boutique ' +
+          'autonome et son code fonctionne à nouveau. Ses données ne bougent pas.')) return;
+        b.disabled = true;
+        var r = ref('gdv_shops/' + source + '/rattachement');
+        if (!r) { dire('Base indisponible', '#f87171'); return; }
+        r.set(null).then(function () {
+          ETATS[source] = null;
+          toast(nomDe(source) + ' est libérée', '#22c55e');
+          dessiner(hote);
+        }).catch(function (e) {
+          dire(esc(e && e.message ? e.message : e), '#f87171');
+          b.disabled = false;
         });
       };
     });
