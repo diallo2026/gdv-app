@@ -38848,13 +38848,16 @@ window.agvStocks = function(){
       7. agv-stable        : boutiques rattachees stables, lettre libre, nom reel et suivi
       8. agv-lier          : rattacher, detacher, reparer les liens incomplets (concepteur)
       9. agv-gerants       : acces des gerants aux boutiques rattachees, droits qui suivent
-     10. agv-connexion     : connexion des gerants des boutiques rattachees par le code de la mere
+     10. agv-connexion     : connexion par le code de la mere ; homonymes reconnus au mot de passe
+     11. agv-comptes       : un seul nom d utilisateur pour plusieurs gerants, mots de passe uniques
      Desactivation individuelle depuis la console :
         AGV_PERF.actif = false;    AGV_FACT.actif = false;
         AGV_PORTAIL.actif = false; AGV_DETTES.actif = false;
         AGV_RESET.actif = false;   AGV_FORFAIT.actif = false;
         AGV_STABLE.actif = false;  AGV_LIER.actif = false;
         AGV_GERANTS.actif = false; AGV_CONNEXION.actif = false;
+        AGV_COMPTES.actif = false;
+     Etat des comptes : AGV_COMPTES.etat()
      Diagnostic connexion : AGV_CONNEXION.verifier("identifiant")
      Controle des rattachements : AGV_LIER.controle() puis AGV_LIER.reparer()
      Si un panneau reste ouvert : touche Echap, ou AGV_PORTAIL.degager()
@@ -44183,14 +44186,36 @@ window.agvStocks = function(){
     });
   }
 
-  function chercherCompte(uidBoutique, identifiant, cb) {
+  // Les deux boucles de l'application (lignes 17789 et 30963) ecrasent leur
+  // variable a chaque tour : sur plusieurs comptes portant le meme nom
+  // d'utilisateur, seul LE DERNIER etait retenu, et lui seul pouvait ouvrir.
+  // On renvoie donc la liste complete.
+  function chercherComptes(uidBoutique, identifiant, cb) {
     lire('gdv_shops/' + uidBoutique + '/comptes', function (comptes) {
-      var trouve = null;
+      var l = [];
       Object.keys(comptes || {}).forEach(function (k) {
         var c = comptes[k];
-        if (c && normId(c.identifiant) === identifiant) trouve = c;
+        if (c && normId(c.identifiant) === identifiant) l.push(c);
       });
-      cb(trouve);
+      cb(l);
+    });
+  }
+
+  function chercherCompte(uidBoutique, identifiant, cb) {
+    chercherComptes(uidBoutique, identifiant, function (l) { cb(l[0] || null); });
+  }
+
+  // Parmi des homonymes, c'est le mot de passe qui designe la personne.
+  function reconnaitre(liste, mdp, cb) {
+    empreinte(mdp).then(function (h) {
+      var actifs = liste.filter(function (c) { return c.actif !== false; });
+      var trouve = null;
+      actifs.forEach(function (c) { if (!trouve && c.empreinte === h) trouve = c; });
+      if (trouve) return cb(trouve, null);
+      // le mot de passe correspond a un compte desactive : le dire clairement
+      var suspendu = null;
+      liste.forEach(function (c) { if (!suspendu && c.actif === false && c.empreinte === h) suspendu = c; });
+      cb(null, suspendu ? 'desactive' : 'motdepasse');
     });
   }
 
@@ -44199,9 +44224,9 @@ window.agvStocks = function(){
      ========================================================================= */
 
   function ouvrirBoutique(cible, compte, cb) {
-    lire('gdv_shops/' + cible.uid + '/info', function (info) {
+    function suite(info) {
       info = info || {};
-      var shop = {
+      var shop = cible.shop || {
         uid: cible.uid,
         entreprise: info.entreprise || info.nom || cible.nom || 'Boutique',
         nom: info.nom || info.entreprise || cible.nom || '',
@@ -44212,7 +44237,7 @@ window.agvStocks = function(){
         codeAcces: info.codeAcces || '',
         codeFondateur: info.codeFondateur || ''
       };
-      for (var k in info) if (shop[k] === undefined) shop[k] = info[k];
+      if (!cible.shop) { for (var k in info) if (shop[k] === undefined) shop[k] = info[k]; }
 
       var gid = compte.gerantId != null ? compte.gerantId : null;
       var fondateur = (compte.role === 'fondateur');
@@ -44242,7 +44267,12 @@ window.agvStocks = function(){
         try { window.agvLaunchApp(shop); } catch (e) { log('lancement', e && e.message); }
         cb && cb();
       }, 500);
-    });
+    }
+
+    // La fiche de la boutique est deja connue quand la personne se connecte
+    // chez elle : inutile de la relire.
+    if (cible.shop) suite(null);
+    else lire('gdv_shops/' + cible.uid + '/info', suite);
   }
 
   /* =========================================================================
@@ -44277,11 +44307,30 @@ window.agvStocks = function(){
       var btn = document.getElementById('agvcu-btn');
       function fini() { if (btn) { btn.disabled = false; btn.textContent = 'Se connecter'; } }
 
-      // 1. Le compte est-il dans la boutique dont le code a ete saisi ?
-      chercherCompte(u, identifiant, function (ici) {
-        if (ici) return suite.apply(self, args);      // chemin habituel, inchange
+      // 1. Combien de comptes portent ce nom d'utilisateur dans la boutique saisie ?
+      chercherComptes(u, identifiant, function (ici) {
 
-        // 2. Sinon, on regarde les boutiques rattachees a celle-ci.
+        // Un seul : la chaine d'origine sait faire, on ne touche a rien.
+        if (ici.length === 1) return suite.apply(self, args);
+
+        // Plusieurs personnes partagent ce nom d'utilisateur. L'application
+        // ne teste que le dernier trouve : c'est nous qui reconnaissons la
+        // bonne, par son mot de passe.
+        if (ici.length > 1) {
+          if (btn) { btn.disabled = true; btn.textContent = 'Verification...'; }
+          return reconnaitre(ici, mdp, function (compte, souci) {
+            fini();
+            if (compte) {
+              log(ici.length + ' comptes portent « ' + identifiant + ' » — reconnu par le mot de passe');
+              return ouvrirBoutique({ uid: u, shop: shop }, compte, fini);
+            }
+            message(souci === 'desactive'
+              ? 'Ce compte est désactivé. Contactez le fondateur.'
+              : 'Identifiant ou mot de passe incorrect.', false);
+          });
+        }
+
+        // 2. Aucun ici : on regarde les boutiques rattachees a celle-ci.
         if (btn) { btn.disabled = true; btn.textContent = 'Verification...'; }
         boutiquesLiees(u, function (liees) {
           if (!liees.length) { fini(); return suite.apply(self, args); }
@@ -44290,24 +44339,17 @@ window.agvStocks = function(){
           (function suivante() {
             if (i >= liees.length) { fini(); return suite.apply(self, args); }
             var cible = liees[i++];
-            chercherCompte(cible.uid, identifiant, function (compte) {
-              if (!compte) return suivante();
-
-              if (compte.actif === false) {
-                fini();
-                message('Ce compte est désactivé. Contactez le fondateur.', false);
-                return;
-              }
-              empreinte(mdp).then(function (h) {
-                if (h !== compte.empreinte) {
-                  fini();
-                  // Le mot de passe est faux pour CE compte : inutile de
-                  // poursuivre, l'identifiant a ete reconnu ici.
-                  message('Identifiant ou mot de passe incorrect.', false);
-                  return;
+            chercherComptes(cible.uid, identifiant, function (liste) {
+              if (!liste.length) return suivante();
+              reconnaitre(liste, mdp, function (compte, souci) {
+                if (compte) {
+                  log('compte reconnu dans la boutique rattachée ' + (cible.nom || cible.uid));
+                  return ouvrirBoutique(cible, compte, fini);
                 }
-                log('compte trouvé dans la boutique rattachée ' + (cible.nom || cible.uid));
-                ouvrirBoutique(cible, compte, fini);
+                fini();
+                message(souci === 'desactive'
+                  ? 'Ce compte est désactivé. Contactez le fondateur.'
+                  : 'Identifiant ou mot de passe incorrect.', false);
               });
             });
           })();
@@ -44353,16 +44395,270 @@ window.agvStocks = function(){
         (function suivante() {
           if (i >= liees.length) { console.log('Recherche terminée.'); return; }
           var c = liees[i++];
-          chercherCompte(c.uid, id, function (compte) {
+          chercherComptes(c.uid, id, function (liste) {
             console.log('  ' + (c.nom || c.uid) + ' (bloc ' + c.bloc + ') : ' +
-              (compte ? 'TROUVÉ — rôle ' + compte.role +
-                (compte.actif === false ? ' — COMPTE DÉSACTIVÉ' : '') : 'absent'));
+              (liste.length ? liste.length + ' compte(s) — ' + liste.map(function(x){
+                return x.role + (x.actif === false ? ' (désactivé)' : ''); }).join(', ') : 'absent'));
             suivante();
           });
         })();
       });
     });
     return 'recherche en cours...';
+  };
+
+})();
+
+</script>
+<script>
+/* =============================================================================
+   APP AGV — MODULE 11 : PLUSIEURS GERANTS, UN SEUL NOM D'UTILISATEUR  (v1.0)
+   -----------------------------------------------------------------------------
+   CE QUI EMPECHAIT LE PARTAGE D'UN NOM D'UTILISATEUR
+
+   A l'enregistrement d'un compte (ligne 17940) :
+
+       var doublon = false;
+       Object.keys(comptes || {}).forEach(function(k){
+         if(k !== cle && comptes[k]
+            && normaliserIdentifiant(comptes[k].identifiant) === identifiant) doublon = true;
+       });
+       if(doublon) return noteComptes('Ce nom d\'utilisateur est deja pris ...', false);
+
+   Deux personnes ne pouvaient donc pas partager « boutique@kaloum.gn ».
+
+   CE QUE CE MODULE CHANGE
+
+     — LE NOM D'UTILISATEUR PEUT ETRE PARTAGE. Une boutique de dix gerants
+       peut n'avoir qu'un seul nom d'utilisateur a retenir.
+
+     — LE MOT DE PASSE, LUI, DOIT ETRE UNIQUE. C'est lui qui designe la
+       personne : deux comptes portant le meme nom d'utilisateur ET le meme
+       mot de passe seraient rigoureusement indiscernables. L'application
+       ouvrirait la session de l'un pour l'autre, et le journal attribuerait
+       les ventes a la mauvaise personne. L'enregistrement est donc refuse.
+
+   Le mot de passe n'est jamais stocke ni compare en clair : la comparaison
+   porte sur l'empreinte, exactement comme a la connexion.
+
+   COTE CONNEXION, le module 10 a ete complete : l'application ne testait que
+   le DERNIER compte trouve pour un nom d'utilisateur donne (ses deux boucles,
+   lignes 17789 et 30963, ecrasent leur variable a chaque tour). Elle les
+   examine desormais tous, et reconnait la personne a son mot de passe.
+
+   INSTALLATION : charger apres les modules 1 a 10.
+   DESACTIVATION : AGV_COMPTES.actif = false
+   ============================================================================= */
+(function () {
+  'use strict';
+
+  var API = window.AGV_COMPTES = { actif: true, version: '1.0' };
+  var NOEUD = 'comptes';
+
+  function log() {
+    try { console.log.apply(console, ['[AGV-COMPTES]'].concat([].slice.call(arguments))); } catch (e) {}
+  }
+  function normId(v) { return String(v == null ? '' : v).trim().toLowerCase(); }
+  function uid() {
+    var s = window._currentShop || window._shopLoginData || {};
+    return s.uid || null;
+  }
+  function base() { return (window.db && window.db.ref) ? window.db : null; }
+
+  // Meme empreinte que l'application (lignes 30905 et 17700) : sans quoi les
+  // comptes crees ici seraient refuses a la connexion.
+  function empreinte(txt) {
+    try {
+      if (window.crypto && window.crypto.subtle && window.isSecureContext) {
+        var buf = new TextEncoder().encode('agv$' + txt);
+        return window.crypto.subtle.digest('SHA-256', buf).then(function (h) {
+          var b = Array.prototype.slice.call(new Uint8Array(h));
+          return 's:' + b.map(function (x) { return ('0' + x.toString(16)).slice(-2); }).join('');
+        });
+      }
+    } catch (e) {}
+    var h1 = 5381, s = 'agv$' + txt;
+    for (var i = 0; i < s.length; i++) { h1 = ((h1 * 33) ^ s.charCodeAt(i)) >>> 0; }
+    return Promise.resolve('f:' + h1.toString(16) + ':' + s.length);
+  }
+
+  function note(txt, ok) {
+    var n = document.getElementById('agvcu-note');
+    if (n) { n.style.color = ok ? '#4ade80' : '#f87171'; n.textContent = txt; }
+    else { try { if (window.showToast) window.showToast(txt); } catch (e) {} }
+  }
+
+  function champ(id) {
+    var e = document.getElementById(id);
+    return e ? String(e.value || '') : '';
+  }
+
+  function lireComptes(u) {
+    var d = base();
+    if (!d || !u) return Promise.resolve(null);
+    return d.ref('gdv_shops/' + u + '/' + NOEUD).once('value')
+      .then(function (s) { return s.val() || {}; }, function () { return null; });
+  }
+
+  function rafraichir() {
+    // chargerComptes() n'est pas accessible depuis l'exterieur : on redemande
+    // le panneau, qui la rappelle lui-meme.
+    try { if (typeof window.agvComptesOuvrir === 'function') window.agvComptesOuvrir(); } catch (e) {}
+  }
+
+  /* =========================================================================
+     ENREGISTREMENT
+     ========================================================================= */
+
+  function enregistrer(cle, role, gerantId) {
+    var u = uid();
+    var d = base();
+    if (!u || !d) return note('Connexion indisponible.', false);
+
+    var identifiant = normId(champ('agvcu-id-' + cle));
+    var mdp = champ('agvcu-mdp-' + cle).trim();
+    if (identifiant.length < 3) {
+      return note('Le nom d\'utilisateur doit faire au moins 3 caracteres.', false);
+    }
+
+    lireComptes(u).then(function (comptes) {
+      if (comptes === null) return note('Lecture impossible. Reessayez.', false);
+      var existant = comptes[cle] || null;
+
+      if (!existant && mdp.length < 4) {
+        return note('Choisissez un mot de passe d\'au moins 4 caracteres.', false);
+      }
+      if (mdp && mdp.length < 4) {
+        return note('Le mot de passe doit faire au moins 4 caracteres.', false);
+      }
+
+      // Le nom d'utilisateur partage est desormais permis : on ne verifie
+      // plus les homonymes. Seul le mot de passe doit rester unique.
+      var homonymes = Object.keys(comptes).filter(function (k) {
+        return k !== cle && comptes[k] && normId(comptes[k].identifiant) === identifiant;
+      });
+
+      var suite = mdp ? empreinte(mdp) : Promise.resolve(existant ? existant.empreinte : null);
+
+      return suite.then(function (h) {
+        if (!h) return note('Mot de passe manquant.', false);
+
+        // DEUX COMPTES NE PEUVENT PAS AVOIR LE MEME MOT DE PASSE.
+        // Sinon rien ne permettrait de distinguer les deux personnes.
+        var collision = null;
+        Object.keys(comptes).forEach(function (k) {
+          if (k === cle || collision) return;
+          if (comptes[k] && comptes[k].empreinte === h) collision = comptes[k];
+        });
+        if (collision) {
+          var meme = normId(collision.identifiant) === identifiant;
+          return note(meme
+            ? 'Ce mot de passe est deja celui d\'une autre personne portant le meme nom '
+              + 'd\'utilisateur. Choisissez-en un different : c\'est lui qui distingue les deux.'
+            : 'Ce mot de passe est deja utilise dans cette boutique. Choisissez-en un autre.',
+            false);
+        }
+
+        var data = {
+          identifiant: identifiant,
+          empreinte: h,
+          role: role === 'fondateur' ? 'fondateur' : 'gerant',
+          actif: true,
+          majLe: Date.now()
+        };
+        if (gerantId) data.gerantId = isNaN(Number(gerantId)) ? gerantId : Number(gerantId);
+
+        return d.ref('gdv_shops/' + u + '/' + NOEUD + '/' + cle).update(data).then(function () {
+          var msg = 'Compte enregistre : ' + identifiant;
+          if (homonymes.length) {
+            msg += ' — ' + (homonymes.length + 1) + ' personnes partagent ce nom d\'utilisateur, '
+                 + 'chacune avec son mot de passe.';
+          }
+          note(msg, true);
+          try {
+            if (typeof window.agvJournaliser === 'function') {
+              window.agvJournaliser('Compte de connexion',
+                identifiant + (homonymes.length ? ' (nom partagé)' : ''));
+            }
+          } catch (e) {}
+          log('compte ' + cle + ' enregistre — ' + identifiant +
+            (homonymes.length ? ' (' + (homonymes.length + 1) + ' homonymes)' : ''));
+          setTimeout(rafraichir, 900);
+        });
+      });
+    }).catch(function (e) {
+      note('Enregistrement impossible : ' + (e && e.message ? e.message : e), false);
+    });
+  }
+
+  /* =========================================================================
+     INSTALLATION
+     ========================================================================= */
+
+  function poser() {
+    if (typeof window.agvCompteEnregistrer !== 'function') return false;
+    if (window.agvCompteEnregistrer.__agvComptes) return true;
+    var origine = window.agvCompteEnregistrer;
+    var neuf = function (cle, role, gerantId) {
+      if (!API.actif) return origine.apply(this, arguments);
+      return enregistrer(cle, role, gerantId);
+    };
+    neuf.__agvComptes = true;
+    neuf.__agvOrig = origine;
+    window.agvCompteEnregistrer = neuf;
+    log('module actif — v' + API.version + ' — noms partagés autorisés, mots de passe uniques');
+    return true;
+  }
+
+  // On tente immediatement : si agvCompteEnregistrer est deja en place, le
+  // module est actif des le chargement, sans laisser passer un enregistrement
+  // par l'ancienne regle.
+  var essais = 0;
+  if (!poser()) {
+    var horloge = setInterval(function () {
+      essais++;
+      if (poser() || essais > 900) clearInterval(horloge);
+    }, 500);
+  }
+
+  /* =========================================================================
+     ETAT DES COMPTES
+     ========================================================================= */
+
+  API.etat = function () {
+    var u = uid();
+    if (!u) { console.log('Ouvrez d\'abord une boutique.'); return; }
+    lireComptes(u).then(function (c) {
+      if (!c || !Object.keys(c).length) { console.log('Aucun compte de connexion.'); return; }
+      var parNom = {};
+      Object.keys(c).forEach(function (k) {
+        var id = normId(c[k].identifiant);
+        (parNom[id] = parNom[id] || []).push({ cle: k, c: c[k] });
+      });
+      console.log('--- Comptes de connexion ---');
+      Object.keys(parNom).sort().forEach(function (id) {
+        var l = parNom[id];
+        console.log('  ' + id + (l.length > 1 ? '  (' + l.length + ' personnes)' : ''));
+        l.forEach(function (x) {
+          console.log('     ' + x.cle + ' — ' + x.c.role +
+            (x.c.gerantId ? ' #' + x.c.gerantId : '') +
+            (x.c.actif === false ? ' — DÉSACTIVÉ' : ''));
+        });
+      });
+      // une collision d'empreintes rendrait deux personnes indiscernables
+      var vues = {}, doubles = [];
+      Object.keys(c).forEach(function (k) {
+        var h = c[k].empreinte;
+        if (!h) return;
+        if (vues[h]) doubles.push(vues[h] + ' et ' + k); else vues[h] = k;
+      });
+      if (doubles.length) {
+        console.log('ATTENTION — mots de passe identiques (comptes indiscernables) :');
+        doubles.forEach(function (d) { console.log('     ' + d); });
+        console.log('  Changez le mot de passe de l\'un des deux.');
+      }
+    });
+    return 'lecture en cours...';
   };
 
 })();
