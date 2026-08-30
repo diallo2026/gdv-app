@@ -38848,19 +38848,20 @@ window.agvStocks = function(){
       7. agv-stable        : boutiques rattachees stables, lettre libre, nom reel et suivi
       8. agv-lier          : rattacher, detacher, reparer les liens incomplets (concepteur)
       9. agv-gerants       : acces des gerants aux boutiques rattachees, droits qui suivent
-     10. agv-connexion     : connexion par le code de la mere ; homonymes reconnus au mot de passe
-     11. agv-comptes       : un seul nom d utilisateur pour plusieurs gerants, mots de passe uniques
+     10. agv-connexion     : connexion par le code de la mere : comptes ET anciens codes
+     11. agv-comptes       : un nom d utilisateur pour plusieurs gerants, mots de passe uniques
+     12. agv-porte         : une boutique rattachee ne s ouvre plus que par sa boutique mere
      Desactivation individuelle depuis la console :
         AGV_PERF.actif = false;    AGV_FACT.actif = false;
         AGV_PORTAIL.actif = false; AGV_DETTES.actif = false;
         AGV_RESET.actif = false;   AGV_FORFAIT.actif = false;
         AGV_STABLE.actif = false;  AGV_LIER.actif = false;
         AGV_GERANTS.actif = false; AGV_CONNEXION.actif = false;
-        AGV_COMPTES.actif = false;
+        AGV_COMPTES.actif = false; AGV_PORTE.actif = false;
+     Acces direct d une boutique : AGV_PORTE.verifier()
      Etat des comptes : AGV_COMPTES.etat()
      Diagnostic connexion : AGV_CONNEXION.verifier("identifiant")
      Controle des rattachements : AGV_LIER.controle() puis AGV_LIER.reparer()
-     Si un panneau reste ouvert : touche Echap, ou AGV_PORTAIL.degager()
      ================================================================== -->
 <script>
 /* =============================================================================
@@ -44337,7 +44338,7 @@ window.agvStocks = function(){
 
           var i = 0;
           (function suivante() {
-            if (i >= liees.length) { fini(); return suite.apply(self, args); }
+            if (i >= liees.length) { return anciensCodes(liees); }
             var cible = liees[i++];
             chercherComptes(cible.uid, identifiant, function (liste) {
               if (!liste.length) return suivante();
@@ -44353,6 +44354,47 @@ window.agvStocks = function(){
               });
             });
           })();
+
+          /* ---------------------------------------------------------------
+             SECONDE PASSE : LES ANCIENS CODES
+             Beaucoup de gerants n'ont pas encore de compte : ils entrent
+             avec le code que le fondateur leur a donne. L'application le
+             prevoit (ligne 17804, « periode de transition ») mais ne
+             consulte que la boutique dont le code a ete saisi. On refait
+             donc la meme recherche dans les boutiques rattachees.
+             Cette passe ne demarre qu'apres l'echec de TOUS les comptes :
+             un vrai compte a toujours la priorite sur un ancien code.
+             --------------------------------------------------------------- */
+          function anciensCodes(l) {
+            var j = 0;
+            (function encore() {
+              if (j >= l.length) { fini(); return suite.apply(self, args); }
+              var cible = l[j++];
+              lire('gdv_shops/' + cible.uid + '/info', function (info) {
+                info = info || {};
+                if (info.codeFondateur && mdp === String(info.codeFondateur)) {
+                  log('ancien code fondateur reconnu — ' + (cible.nom || cible.uid));
+                  return ouvrirBoutique(cible, { role: 'fondateur' }, fini);
+                }
+                lire('gdv_shops/' + cible.uid + '/data/gerants', function (g) {
+                  var liste = !g ? [] : (Array.isArray(g) ? g.filter(Boolean)
+                    : Object.keys(g).map(function (k) { return g[k]; }));
+                  var trouve = null;
+                  liste.forEach(function (x) {
+                    if (!trouve && x && x.code && String(x.code) === mdp) trouve = x;
+                  });
+                  if (!trouve) return encore();
+                  if (trouve.bloque) {
+                    fini();
+                    return message('Ce compte est bloqué. Contactez le fondateur.', false);
+                  }
+                  log('ancien code gérant reconnu — ' + (trouve.nom || trouve.id) +
+                    ' chez ' + (cible.nom || cible.uid));
+                  ouvrirBoutique(cible, { role: 'gerant', gerantId: trouve.id }, fini);
+                });
+              });
+            })();
+          }
         });
       });
     };
@@ -44363,9 +44405,10 @@ window.agvStocks = function(){
     return true;
   }
 
-  // Le verrou d'identifiant s'installe avec un delai : on se pose apres lui,
-  // et on se repose si une autre couche vient recouvrir la fonction.
+  // On tente immediatement, puis on veille : une autre couche peut venir
+  // recouvrir la fonction apres nous, il faut alors se reposer par-dessus.
   var essais = 0;
+  poser();
   setInterval(function () {
     essais++;
     if (essais > 1200) return;
@@ -44657,6 +44700,222 @@ window.agvStocks = function(){
         doubles.forEach(function (d) { console.log('     ' + d); });
         console.log('  Changez le mot de passe de l\'un des deux.');
       }
+    });
+    return 'lecture en cours...';
+  };
+
+})();
+
+</script>
+<script>
+/* =============================================================================
+   APP AGV — MODULE 12 : UNE BOUTIQUE RATTACHEE PASSE PAR SA MERE  (v1.0)
+   -----------------------------------------------------------------------------
+   CE QUI SE PASSAIT
+
+   Le rattachement n'ecrit que deux renvois. Rien, dans l'ecran de connexion,
+   ne tenait compte de l'ecriteau « gdv_shops/<uid>/rattachement » : la
+   boutique rattachee restait joignable par son propre code, exactement comme
+   avant. Une meme boutique avait donc DEUX portes d'entree :
+
+       — par son ancien code, en dehors de toute supervision ;
+       — par le code de la boutique mere, comme un bloc.
+
+   Deux portes, c'est deux comptabilites possibles pour les memes donnees, et
+   un fondateur qui ne voit pas tout ce qui se passe chez lui.
+
+   CE MODULE FERME LA PREMIERE PORTE.
+
+   Des qu'une boutique porte un ecriteau de rattachement, son code n'ouvre
+   plus l'ecran de connexion : il indique la boutique mere a utiliser. Le
+   detachement rouvre l'acces immediatement — la verification est faite en
+   direct, rien n'est fige.
+
+   PRUDENCE : la fermeture n'a lieu que sur une lecture ABOUTIE. Si le reseau
+   ne repond pas, l'ecran s'affiche normalement. Une coupure ne doit jamais
+   enfermer quelqu'un dehors.
+
+   Aucune donnee de boutique n'est lue ni modifiee : seul l'ecriteau de
+   rattachement est consulte.
+
+   INSTALLATION : charger apres les modules 1 a 11.
+   DESACTIVATION : AGV_PORTE.actif = false
+   ============================================================================= */
+(function () {
+  'use strict';
+
+  var API = window.AGV_PORTE = { actif: true, version: '1.0' };
+
+  function log() {
+    try { console.log.apply(console, ['[AGV-PORTE]'].concat([].slice.call(arguments))); } catch (e) {}
+  }
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+    });
+  }
+  function ref(p) {
+    if (typeof window._agvRefBrut === 'function') return window._agvRefBrut(p);
+    return (window.db && window.db.ref) ? window.db.ref(p) : null;
+  }
+
+  // Renvoie l'ecriteau, ou false si la lecture n'a pas abouti.
+  // La distinction est capitale : « pas rattachee » et « je ne sais pas »
+  // ne doivent pas produire le meme comportement.
+  function ecriteau(uid, cb) {
+    var r = ref('gdv_shops/' + uid + '/rattachement');
+    if (!r) { cb(false); return; }
+    var fait = false;
+    var t = setTimeout(function () { if (!fait) { fait = true; cb(false); } }, 7000);
+    try {
+      r.once('value').then(
+        function (s) { if (!fait) { fait = true; clearTimeout(t); cb(s.val() || null); } },
+        function () { if (!fait) { fait = true; clearTimeout(t); cb(false); } }
+      );
+    } catch (e) { if (!fait) { fait = true; clearTimeout(t); cb(false); } }
+  }
+
+  function nomMere(r, cb) {
+    if (r.versNom) { cb(r.versNom); return; }
+    var x = ref('gdv_shops/' + r.vers + '/info');
+    if (!x) { cb(''); return; }
+    x.once('value').then(function (s) {
+      var i = s.val() || {};
+      cb(i.entreprise || i.nom || '');
+    }, function () { cb(''); });
+  }
+
+  function codeMere(r, cb) {
+    var x = ref('gdv_shops/' + r.vers + '/info');
+    if (!x) { cb(''); return; }
+    x.once('value').then(function (s) {
+      var i = s.val() || {};
+      cb(i.codeAcces || '');
+    }, function () { cb(''); });
+  }
+
+  /* =========================================================================
+     L'ECRAN DE RENVOI
+     ========================================================================= */
+
+  function afficherRenvoi(container, shop, r) {
+    nomMere(r, function (nom) {
+      codeMere(r, function (code) {
+        container.innerHTML =
+          '<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;' +
+          'background:#060d24;padding:20px;font-family:system-ui,-apple-system,sans-serif">' +
+          '<div style="max-width:420px;width:100%;background:#0a1628;border:1px solid rgba(37,99,235,.3);' +
+          'border-radius:16px;padding:28px 26px;text-align:center">' +
+          '<div style="font-size:38px">🏪</div>' +
+          '<h2 style="color:#e2e8f0;font-size:18px;margin:12px 0 6px">' +
+          esc(shop.entreprise || 'Cette boutique') + '</h2>' +
+          '<div style="color:#94a3b8;font-size:13.5px;line-height:1.65;margin-bottom:18px">' +
+          'Cette boutique est rattachée à <b style="color:#93c5fd">' +
+          esc(nom || 'une boutique mère') + '</b>.<br>' +
+          'Elle ne s\'ouvre plus par son propre code.</div>' +
+          '<div style="background:#060d24;border:1px solid rgba(37,99,235,.25);border-radius:11px;' +
+          'padding:14px;margin-bottom:16px">' +
+          '<div style="color:#64748b;font-size:11px;text-transform:uppercase;letter-spacing:.05em">' +
+          'Code à utiliser</div>' +
+          '<div style="color:#60a5fa;font-size:22px;font-weight:800;letter-spacing:.08em;margin-top:4px">' +
+          esc(code || '—') + '</div>' +
+          '<div style="color:#64748b;font-size:11.5px;margin-top:7px;line-height:1.55">' +
+          'Entrez ce code, puis vos identifiants habituels. Vous arriverez ' +
+          'directement dans votre boutique.</div></div>' +
+          (code
+            ? '<button id="agv-porte-go" style="width:100%;padding:12px;border:none;border-radius:10px;' +
+              'background:#2563eb;color:#fff;font-size:14px;font-weight:700;cursor:pointer;' +
+              'font-family:inherit">Continuer avec ce code</button>'
+            : '') +
+          '<button id="agv-porte-retour" style="width:100%;margin-top:9px;padding:11px;' +
+          'border:1px solid rgba(148,163,184,.3);border-radius:10px;background:transparent;' +
+          'color:#94a3b8;font-size:13px;cursor:pointer;font-family:inherit">Retour</button>' +
+          '</div></div>';
+
+        var go = document.getElementById('agv-porte-go');
+        if (go) go.onclick = function () {
+          try {
+            var champ = document.getElementById('landing-shop-code');
+            if (champ) champ.value = code;
+            if (typeof window.showLanding === 'function') window.showLanding();
+            setTimeout(function () {
+              var c = document.getElementById('landing-shop-code');
+              if (c) c.value = code;
+              if (typeof window.agvShopCodeSubmit === 'function') window.agvShopCodeSubmit();
+              else if (typeof window.agvOuvrirBoutique === 'function') window.agvOuvrirBoutique();
+            }, 250);
+          } catch (e) {}
+        };
+        var ret = document.getElementById('agv-porte-retour');
+        if (ret) ret.onclick = function () {
+          try { if (typeof window.showLanding === 'function') window.showLanding(); } catch (e) {}
+        };
+
+        log('accès direct refusé pour ' + (shop.entreprise || shop.uid) +
+          ' — renvoi vers ' + (nom || r.vers));
+      });
+    });
+  }
+
+  /* =========================================================================
+     L'INTERCEPTION DE L'ECRAN DE CONNEXION
+     ========================================================================= */
+
+  function poser() {
+    if (typeof window.agvRenderShopLogin !== 'function') return false;
+    if (window.agvRenderShopLogin.__agvPorte) return true;
+
+    var origine = window.agvRenderShopLogin;
+
+    var neuf = function (shop, container) {
+      var self = this, args = arguments;
+      if (!API.actif || !shop || !shop.uid || !container) return origine.apply(self, args);
+
+      // On affiche d'abord un temps d'attente tres court, puis l'ecran voulu.
+      container.innerHTML = '<div style="min-height:100vh;display:flex;align-items:center;' +
+        'justify-content:center;background:#060d24"><div style="color:#60a5fa;font-size:14px">' +
+        'Chargement...</div></div>';
+
+      ecriteau(shop.uid, function (r) {
+        // false = lecture non aboutie : on n'enferme personne dehors.
+        if (r === false || !r || !r.vers) return origine.apply(self, args);
+
+        // Le cache local de ce code ne doit plus servir de raccourci.
+        try {
+          if (shop.codeAcces) localStorage.removeItem('agv_shop_' + shop.codeAcces);
+        } catch (e) {}
+
+        afficherRenvoi(container, shop, r);
+      });
+    };
+
+    neuf.__agvPorte = true;
+    neuf.__agvOrig = origine;
+    window.agvRenderShopLogin = neuf;
+    log('module actif — v' + API.version);
+    return true;
+  }
+
+  var essais = 0;
+  if (!poser()) {
+    var horloge = setInterval(function () {
+      essais++;
+      if (poser() || essais > 900) clearInterval(horloge);
+    }, 400);
+  }
+
+  /* =========================================================================
+     VERIFICATION
+     ========================================================================= */
+
+  API.verifier = function (uidBoutique) {
+    var u = uidBoutique || (window._shopLoginData || window._currentShop || {}).uid;
+    if (!u) { console.log('Aucune boutique identifiée.'); return; }
+    ecriteau(u, function (r) {
+      if (r === false) { console.log('Lecture impossible — l\'accès reste ouvert par prudence.'); return; }
+      if (!r || !r.vers) { console.log('Cette boutique n\'est rattachée à personne : son code fonctionne.'); return; }
+      console.log('Rattachée à ' + (r.versNom || r.vers) + ' (bloc ' + (r.bloc || '?') + ')' +
+        ' — son propre code n\'ouvre plus rien.');
     });
     return 'lecture en cours...';
   };
