@@ -38838,21 +38838,26 @@ window.agvStocks = function(){
 
 
 <!-- ==================================================================
-     App AGV — VERSION AGV-17 — fichier du 2026-08-30 18:35 UTC
+     App AGV — VERSION AGV-31 — fichier du 2026-09-01 01:46 UTC
 
-     REGLE D ACCES RETENUE :
-       · chaque boutique rattachee reste joignable par SON PROPRE CODE
-         et son propre lien, comme avant le rattachement ;
-       · chaque gerant travaille chez lui, sans rien changer ;
-       · le code de la boutique mere est une porte EN PLUS, pas obligee ;
-       · le fondateur voit toutes les boutiques depuis le portail.
+     LE GERANT NE POUVAIT PAS CHANGER DE BOUTIQUE
 
-     VERIFIER QUE C EST BIEN CE FICHIER : la console doit afficher
-        AGV AGV-17   fichier du 2026-08-30 18:35 UTC — 16 modules
-     et « ecouteur orphelin detache » ne doit apparaitre QU UNE FOIS.
+     Le changement se faisait EN PLACE. Or les ecouteurs Firebase de la
+     boutique quittee restent branches (l.989, l.22301 et suivantes) et
+     reecrivent products, gerants, ventes une fraction de seconde plus
+     tard : le gerant croyait n avoir pas bouge.
 
-      1. agv-version       : repere de version : annonce au chargement quel fichier tourne
-      2. agv-performance   : sauvegarde differentielle, index memoire, orphelin detache UNE fois
+     L application elle-meme recharge la page pour changer de bloc
+     (l.26056) — c est le seul moyen sur de repartir avec des ecouteurs
+     propres. Le module 10 procede de meme : il laisse une consigne de
+     reprise, recharge, puis ouvre la boutique demandee et consomme la
+     consigne pour qu un rechargement ulterieur ne la rejoue pas.
+
+     VERSION : la console doit afficher
+        AGV AGV-31   fichier du 2026-09-01 01:46 UTC — 22 modules
+
+      1. agv-version       : repere de version
+      2. agv-performance   : sauvegarde differentielle ; plus d index sur la recherche produit
       3. agv-factures      : numerotation, vendeur, dates, remise/frais, livraison, pagination
       4. agv-portail       : entree directe, suppression/detachement de bloc, sortie de secours Echap
       5. agv-dettes        : boule de neige, cache cloisonne, doublons, nettoyage de bloc
@@ -38860,13 +38865,19 @@ window.agvStocks = function(){
       7. agv-forfaits      : bouton Blocs sur chaque fiche concepteur : forfait Pro reglable
       8. agv-stable        : boutiques rattachees stables, lettre libre, nom reel et suivi
       9. agv-lier          : rattacher, detacher, reparer les liens incomplets (concepteur)
-     10. agv-gerants       : acces des gerants aux boutiques rattachees, droits qui suivent
-     11. agv-connexion     : deux sels d empreinte + deux normalisations d identifiant
+     10. agv-gerants       : NAVIGATION : rechargement + reprise, ecouteurs repartis propres
+     11. agv-connexion     : un compte lie a une fiche de gerant ouvre une session de GERANT
      12. agv-comptes       : un nom d utilisateur pour plusieurs gerants, meme retaille que l app
-     13. agv-acces         : CHAQUE BOUTIQUE GARDE SON CODE ET SON LIEN — barrage v1 retire
+     13. agv-acces         : chaque boutique garde son code ET son lien
      14. agv-choix         : liste des gerants sous l ecran unifie
-     15. agv-ecran         : ecran visible : ouvre la session lui-meme, codes hors du DOM
-     16. agv-audit         : AGV_AUDIT.lancer() — audit en lecture seule de vos vraies donnees
+     15. agv-ecran         : ecran visible : les codes sont lus dans la BASE, plus dans la page
+     16. agv-dest          : choix de la boutique sous le mot de passe + controle des acces
+     17. agv-mdp           : MOTS DE PASSE DES GERANTS : un seul mot de passe, plusieurs boutiques
+     18. agv-simple        : pastille refermable, effacee des qu elle generait le travail
+     19. agv-bouton        : le bouton de connexion rebranche sur la chaine corrigee
+     20. agv-role          : la session ne change pas de role — dans LES DEUX SENS
+     21. agv-trace         : TRACEUR : nomme la fonction qui refuse + AGV_TRACE.diagnostic()
+     22. agv-audit         : AGV_AUDIT.lancer() — audit en lecture seule de vos vraies donnees
      ================================================================== -->
 <script>
 /* =============================================================================
@@ -38879,15 +38890,29 @@ window.agvStocks = function(){
 (function () {
   'use strict';
   var V = {
-    version: 'AGV-17',
-    date: '2026-08-30 18:35 UTC',
-    modules: 16,
+    version: 'AGV-31',
+    date: '2026-09-01 01:46 UTC',
+    modules: 22,
     corrections: [
       'empreinte : deux sels (agvc$ a l ecriture, agv$ a la verification)',
       'identifiant : deux normalisations (l arobase retiree a l ecriture)',
       'ecran visible : la session est ouverte sans relire le DOM vide',
       'ecouteur orphelin : detache une seule fois, plus de boucle',
-      'CHAQUE BOUTIQUE GARDE SON CODE — le barrage de la v1 est retire'
+      'CHAQUE BOUTIQUE GARDE SON CODE — le barrage de la v1 est retire',
+      'STOCK : la recherche de produit est rendue a la fonction d origine',
+      'CHOIX DE LA BOUTIQUE sous le champ mot de passe, avec autorisations',
+      'GERANTS RATTACHES : fiche chez eux, compte chez l accueil — relies',
+      'LIEN DE LA BOUTIQUE : les codes sont lus dans la BASE, plus dans la page',
+      'currentGerantId : chaine du select alignee sur le type de la fiche',
+      'MOT DE PASSE CENTRAL : un seul mot de passe pour toutes ses boutiques',
+      'UN SEUL SYSTEME D ACCES : onglets Gerants et Personnel retires',
+      'LE BOUTON DE CONNEXION contournait tous les correctifs (l.17703)',
+      'FAILLE FERMEE : un compte lie a une fiche ouvre une session de GERANT',
+      'LIGNE 935 : une fiche introuvable promouvait le gerant en FONDATEUR',
+      'la veille n agit que sur un gerant OBSERVE dans ce chargement de page',
+      'NAVIGATION : la page se recharge, les ecouteurs repartent propres',
+      'NAVIGATION : les lettres de bloc sont relatives a la boutique mere',
+      'STOCK : l index produits suivait un tableau remplace par Firebase'
     ]
   };
   window.AGV_VERSION = V;
@@ -38898,7 +38923,7 @@ window.agvStocks = function(){
   V.etat = function () {
     var noms = ['AGV_PERF', 'AGV_FACT', 'AGV_PORTAIL', 'AGV_DETTES', 'AGV_RESET',
                 'AGV_FORFAIT', 'AGV_STABLE', 'AGV_LIER', 'AGV_GERANTS', 'AGV_CONNEXION',
-                'AGV_COMPTES', 'AGV_ACCES', 'AGV_CHOIX', 'AGV_ECRAN', 'AGV_AUDIT'];
+                'AGV_COMPTES', 'AGV_ACCES', 'AGV_CHOIX', 'AGV_ECRAN', 'AGV_AUDIT', 'AGV_DEST', 'AGV_MDP', 'AGV_SIMPLE', 'AGV_TRACE', 'AGV_BOUTON', 'AGV_ROLE'];
     var absents = noms.filter(function (n) { return typeof window[n] !== 'object'; });
     console.log('Version ' + V.version + ' — fichier du ' + V.date);
     console.log(absents.length ? 'MODULES ABSENTS : ' + absents.join(', ')
@@ -39190,8 +39215,8 @@ window.agvStocks = function(){
      changent reellement.
      ========================================================================== */
 
-  var IDX = { refProduit: null, nomProduit: null, soldeClient: null, achatsClient: null };
-  var empreinteProduits = '', empreinteFactures = '';
+  var IDX = { soldeClient: null, achatsClient: null };
+  var empreinteFactures = '';
 
   function empreinte(arr) {
     arr = normaliser(arr);
@@ -39200,20 +39225,31 @@ window.agvStocks = function(){
     return arr.length + '|' + (d && (d.id || d.reference || '')) + '|' + (f && (f.id || f.reference || ''));
   }
 
-  function indexProduits() {
-    var prods = normaliser(lire('products'));
-    var emp = empreinte(prods) + '|' + prods.length;
-    if (IDX.refProduit && emp === empreinteProduits) return;
-    empreinteProduits = emp;
-    IDX.refProduit = new Map();
-    IDX.nomProduit = new Map();
-    prods.forEach(function (p) {
-      if (!p) return;
-      if (p.reference) IDX.refProduit.set(String(p.reference), p);
-      if (p.ref) IDX.refProduit.set(String(p.ref), p);
-      if (p.designation) IDX.nomProduit.set(String(p.designation).toLowerCase(), p);
-    });
-  }
+  /* --------------------------------------------------------------------------
+     POURQUOI UN PRODUIT POUVAIT PARAITRE EN RUPTURE APRES UNE ENTREE
+
+     L'empreinte ci-dessous ne regarde que la LONGUEUR du tableau et les
+     identifiants du premier et du dernier element. Une entree de stock ne
+     change aucun des trois : l'index n'etait donc jamais reconstruit.
+
+     Tant que le tableau « products » restait le meme objet en memoire, cela
+     n'avait aucune consequence : la Map garde des REFERENCES, elle voyait
+     donc les valeurs a jour. Mais l'ecouteur Firebase REMPLACE le tableau a
+     chaque instantane. L'index continuait alors de pointer sur les anciens
+     objets, figes a la valeur qu'ils avaient au moment de l'indexation.
+
+     Consequence exacte : l'inventaire, qui lit « products », affichait le
+     stock augmente ; la vente, qui passe par getProductFromInput() et donc
+     par l'index, lisait l'ancien objet et annoncait « Stock insuffisant ».
+
+     On surveille desormais l'IDENTITE du tableau, et on verifie que l'objet
+     rendu appartient bien au tableau vivant.
+     -------------------------------------------------------------------------- */
+
+
+  /* indexProduits() et verifier() ont ete retires avec l'enveloppe de
+     getProductFromInput : plus rien ne les utilisait, et les garder aurait
+     invite a rebrancher l'index un jour. */
 
   function indexFactures() {
     var facts = normaliser(lire('factureVentes'));
@@ -39231,19 +39267,43 @@ window.agvStocks = function(){
   }
 
   function poserIndex() {
-    if (typeof window.getProductFromInput === 'function' && !window.getProductFromInput.__agvWrapped) {
-      var origGPI = window.getProductFromInput;
-      var f1 = function (val) {
-        try {
-          indexProduits();
-          if (typeof val !== 'string') return origGPI(val);
-          var m = val.match(/\(([^)]+)\)$/);
-          if (m) return IDX.refProduit.get(m[1]) || undefined;
-          return IDX.nomProduit.get(val.toLowerCase()) || undefined;
-        } catch (e) { return origGPI(val); }
-      };
-      f1.__agvWrapped = true; window.getProductFromInput = f1;
-    }
+    /* ------------------------------------------------------------------------
+       getProductFromInput N'EST PLUS REMPLACEE — REGRESSION A NE PAS REFAIRE
+
+       Cette fonction (ligne 5457) est celle qui retrouve l'article au moment
+       de la vente. L'originale ne regarde qu'un seul champ :
+
+           const m = val.match(/\(([^)]+)\)$/);
+           if(m){ const ref = m[1]; return products.find(p => p.reference === ref); }
+
+       Mon index, lui, rangeait DEUX champs dans la meme table :
+
+           if (p.reference) IDX.refProduit.set(String(p.reference), p);
+           if (p.ref)       IDX.refProduit.set(String(p.ref), p);
+
+       Des qu'un second article portait dans « ref » le code qui est la
+       « reference » d'un autre — un produit duplique, une variante, un code
+       de famille recopie — il ecrasait l'entree du premier. La recherche
+       renvoyait alors le MAUVAIS article, souvent celui a zero :
+
+           « Ciment 50kg (CIM01) », 120 en stock
+              original  -> Ciment 50kg, stock 120        vente acceptee
+              mon index -> Ciment 50kg (lot 2), stock 0  « Stock insuffisant (dispo: 0) »
+
+       Le stock etait donc bien augmente par les entrees ; c'est la lecture qui
+       designait un autre produit. Chercher dans un tableau de quelques
+       centaines d'articles ne coute rien : l'index n'apportait aucun gain
+       mesurable et introduisait ce risque. On laisse la fonction d'origine.
+       ------------------------------------------------------------------------ */
+
+    // Si une version precedente de ce module l'avait enveloppee, on la rend.
+    try {
+      var g = window.getProductFromInput;
+      if (g && g.__agvWrapped && g.__agvOrig) {
+        window.getProductFromInput = g.__agvOrig;
+        log('recherche de produit rendue a la fonction d\'origine');
+      }
+    } catch (e) {}
 
     if (typeof window.getSoldeClient === 'function' && !window.getSoldeClient.__agvWrapped) {
       var origSolde = window.getSoldeClient;
@@ -39251,7 +39311,7 @@ window.agvStocks = function(){
         try { indexFactures(); return IDX.soldeClient.get(String(id)) || 0; }
         catch (e) { return origSolde(id); }
       };
-      f2.__agvWrapped = true; window.getSoldeClient = f2;
+      f2.__agvWrapped = true; f2.__agvOrig = origSolde; window.getSoldeClient = f2;
     }
 
     if (typeof window.getTotalAchatsClient === 'function' && !window.getTotalAchatsClient.__agvWrapped) {
@@ -39260,9 +39320,9 @@ window.agvStocks = function(){
         try { indexFactures(); return IDX.achatsClient.get(String(id)) || 0; }
         catch (e) { return origAchats(id); }
       };
-      f3.__agvWrapped = true; window.getTotalAchatsClient = f3;
+      f3.__agvWrapped = true; f3.__agvOrig = origAchats; window.getTotalAchatsClient = f3;
     }
-    log('index memoire installes');
+    log('index memoire installes (soldes clients uniquement)');
   }
 
   /* ==========================================================================
@@ -43650,6 +43710,7 @@ window.agvStocks = function(){
   var API = window.AGV_GERANTS = { actif: true, version: '1.0' };
   var LETTRES = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
   var CLE_REPRISE = 'agv_reprise_bloc';
+  var CLE_BOUTIQUE = 'agv_reprise_boutique';   // changement de boutique du gerant
 
   function log() {
     try { console.log.apply(console, ['[AGV-GERANTS]'].concat([].slice.call(arguments))); } catch (e) {}
@@ -43710,7 +43771,27 @@ window.agvStocks = function(){
     return null;
   }
 
-  function lireAutorises(u, g, cb) {
+  /* -------------------------------------------------------------------------
+     LES AUTORISATIONS VIVENT CHEZ LA BOUTIQUE D'ACCUEIL
+
+     « blocs/_acces » et « blocs/_affect » sont ecrits par le fondateur dans
+     la boutique qui accueille les blocs. Un gerant qui a ouvert une boutique
+     RATTACHEE cherchait ces noeuds chez elle, ou ils n'existent pas : il
+     n'avait donc jamais qu'une seule boutique, et le bouton « Mes boutiques »
+     ne s'affichait pas. On remonte a la mere par son ecriteau de rattachement.
+     ------------------------------------------------------------------------- */
+  function accueilDe(u, cb) {
+    lire('gdv_shops/' + u + '/rattachement', function (r) {
+      cb(r && r.vers ? String(r.vers) : u);
+    });
+  }
+  API.accueilDe = accueilDe;
+
+  function lireAutorises(u0, g, cb) {
+    accueilDe(u0, function (u) { lireAutorisesChez(u, u0, g, cb); });
+  }
+
+  function lireAutorisesChez(u, ouvert, g, cb) {
     var res = { attache: null, acces: null }, reste = 2;
     function fin() {
       if (--reste) return;
@@ -43721,7 +43802,7 @@ window.agvStocks = function(){
       }
       if (!Object.keys(l).length) l.A = true;          // repli : le bloc d'origine
       try { localStorage.setItem(cleAcces(u, g), JSON.stringify({ blocs: l, le: Date.now() })); } catch (e) {}
-      cb(l, res.attache || 'A');
+      cb(l, res.attache || 'A', u);
     }
     lire('gdv_shops/' + u + '/blocs/_affect/' + g, function (v) { res.attache = v; fin(); });
     lire('gdv_shops/' + u + '/blocs/_acces/' + g, function (v) { res.acces = v; fin(); });
@@ -43808,21 +43889,72 @@ window.agvStocks = function(){
   API.ouvrir = function (b) {
     var u = uid(), g = gid();
     if (!u || !g) { dire('Session non identifiée'); return; }
-    if (b === blocActif()) { fermerSelecteur(); return; }
 
-    lireAutorises(u, g, function (permis) {
+    /* NE PAS COMPARER LA LETTRE DU BLOC A blocActif().
+
+       Les lettres A, B, C sont relatives a la boutique d'ACCUEIL. Un gerant
+       place dans une boutique rattachee a toujours blocActif() === 'A', parce
+       que chez lui c'est le bloc A. Cliquer sur « A » — la boutique mere —
+       tombait donc sur « c'est deja ouvert » et ne faisait rien ; et sa propre
+       boutique, affichee sous la lettre B, semblait etre une autre.
+       La comparaison se fait plus bas, sur l'identifiant de la boutique
+       reellement visee, qui lui n'est pas ambigu. */
+
+    lireAutorises(u, g, function (permis, attache, accueil) {
       if (!permis[b]) { dire('Vous n\'avez pas accès à cette boutique'); return; }
       memoriserFiche();
-      try { localStorage.setItem('agv_bloc_g_' + u + '_' + g, b); } catch (e) {}
-      try {
-        sessionStorage.setItem(CLE_REPRISE, JSON.stringify({
-          uid: u, bloc: b,
-          code: window._lastShopCode || (window._currentShop || {}).codeAcces || '',
-          role: 'gerant', gerantId: g, t: Date.now()
-        }));
-      } catch (e) {}
-      dire('Ouverture de la boutique...');
-      setTimeout(function () { location.reload(); }, 350);
+
+      /* Le bloc vise appartient a la boutique d'ACCUEIL, pas forcement a celle
+         qui est ouverte. Si le gerant se trouve dans une boutique rattachee et
+         qu'il veut passer a une autre, recharger sur place ne l'emmenerait
+         nulle part : il faut ouvrir la boutique de destination. */
+      lire('gdv_shops/' + accueil + '/blocs/_meta/' + b, function (m) {
+        var source = (m && m.source) ? String(m.source) : null;
+        var destUid = (b === 'A') ? accueil : (source || accueil);
+
+        // Deja sur place : rien a faire, on referme simplement.
+        if (String(destUid) === String(u) && (b === blocActif() || destUid !== accueil)) {
+          fermerSelecteur();
+          dire('Vous êtes déjà dans cette boutique');
+          return;
+        }
+
+        if (String(destUid) !== String(u)) {
+          /* IL FAUT RECHARGER LA PAGE.
+
+             Changer de boutique en place ne suffit pas : les ecouteurs
+             Firebase de la boutique quittee restent branches (ligne 989,
+             ligne 22301 et suivantes) et reecrivent products, gerants,
+             ventes... une fraction de seconde plus tard. Le gerant croyait
+             alors n'avoir pas bouge.
+
+             L'application elle-meme recharge la page pour changer de bloc
+             (ligne 26056) : c'est le seul moyen sur de repartir avec des
+             ecouteurs propres. On procede de meme, en laissant une consigne
+             de reprise que ce module relit au demarrage. */
+          fermerSelecteur();
+          try {
+            localStorage.setItem('agv_bloc_g_' + destUid + '_' + g, 'A');
+            sessionStorage.setItem(CLE_BOUTIQUE, JSON.stringify({
+              uid: destUid, nom: (m && m.nom) || '', gid: g, le: Date.now()
+            }));
+          } catch (e) {}
+          dire('Ouverture de ' + ((m && m.nom) || 'la boutique') + '...');
+          setTimeout(function () { location.reload(); }, 350);
+          return;
+        }
+
+        try { localStorage.setItem('agv_bloc_g_' + u + '_' + g, b); } catch (e) {}
+        try {
+          sessionStorage.setItem(CLE_REPRISE, JSON.stringify({
+            uid: u, bloc: b,
+            code: window._lastShopCode || (window._currentShop || {}).codeAcces || '',
+            role: 'gerant', gerantId: g, t: Date.now()
+          }));
+        } catch (e) {}
+        dire('Ouverture de la boutique...');
+        setTimeout(function () { location.reload(); }, 350);
+      });
     });
   };
 
@@ -43831,16 +43963,32 @@ window.agvStocks = function(){
      ========================================================================= */
 
   var NOMS = {};
+  var SOURCES = {};      // lettre de bloc -> uid de la boutique reelle
 
-  function chargerNoms(u, cb) {
-    lire('gdv_shops/' + u + '/blocs/_meta', function (m) {
-      NOMS = {};
-      var s = (window._currentShop || {});
-      NOMS.A = s.entreprise || 'Boutique principale';
-      Object.keys(m || {}).forEach(function (b) {
-        if (m[b] && m[b].nom) NOMS[b] = m[b].nom;
+  // Les noms des blocs sont eux aussi ranges chez la boutique d'accueil :
+  // les lire dans la boutique ouverte donnait « BLOC B », « BLOC C ».
+  function chargerNoms(u0, cb) {
+    accueilDe(u0, function (u) {
+      lire('gdv_shops/' + u + '/blocs/_meta', function (m) {
+        NOMS = {};
+        m = m || {};
+        NOMS.A = (m.A && m.A.nom) || '';
+        SOURCES = {};
+        Object.keys(m).forEach(function (b) {
+          if (b.indexOf('_') === 0) return;
+          if (m[b] && m[b].nom) NOMS[b] = m[b].nom;
+          SOURCES[b] = (m[b] && m[b].source) ? String(m[b].source) : String(u);
+        });
+        SOURCES.A = String(u);
+        if (!NOMS.A) {
+          lire('gdv_shops/' + u + '/info', function (i) {
+            NOMS.A = (i && (i.entreprise || i.nom)) || 'Boutique principale';
+            cb(NOMS);
+          });
+          return;
+        }
+        cb(NOMS);
       });
-      cb(NOMS);
     });
   }
 
@@ -43867,7 +44015,9 @@ window.agvStocks = function(){
           '<div style="font-size:12.5px;color:#64748b;margin:2px 0 14px">' +
           l.length + ' boutique(s) accessible(s)</div>' +
           l.map(function (b) {
-            var ouvert = (b === blocActif());
+            // « ouverte » se juge sur la boutique reelle, pas sur la lettre :
+            // chez un gerant d'une boutique rattachee, blocActif() vaut 'A'.
+            var ouvert = (String(SOURCES[b] || u) === String(u));
             return '<button class="agv-ger-b" data-b="' + esc(b) + '" style="display:block;width:100%;' +
               'text-align:left;padding:12px 14px;margin-bottom:8px;border-radius:11px;cursor:pointer;' +
               'font-family:inherit;border:1px solid ' + (ouvert ? '#1d4ed8' : '#dbe3ec') + ';' +
@@ -44086,13 +44236,50 @@ window.agvStocks = function(){
         Object.keys(permis).sort().forEach(function (b) {
           console.log('  ' + b + ' — ' + (noms[b] || 'BLOC ' + b) +
             (b === attache ? '  (votre boutique d\'attache)' : '') +
-            (b === blocActif() ? '  ← ouverte' : ''));
+            (String(SOURCES[b] || u) === String(u) ? '  ← ouverte' : ''));
         });
         console.log('Pour ouvrir : AGV_GERANTS.ouvrir("B")');
       });
     });
     return 'lecture en cours...';
   };
+
+  /* =========================================================================
+     LA REPRISE APRES RECHARGEMENT
+     -------------------------------------------------------------------------
+     Le gerant a demande une autre boutique, la page s'est rechargee. On relit
+     la consigne et on ouvre la boutique demandee. La consigne est consommee
+     immediatement : un rechargement ulterieur ne doit pas la rejouer.
+     ========================================================================= */
+
+  function reprendreBoutique() {
+    var r = null;
+    try {
+      var b = sessionStorage.getItem(CLE_BOUTIQUE);
+      if (b) r = JSON.parse(b);
+    } catch (e) {}
+    if (!r || !r.uid) return false;
+
+    // Une consigne perimee ne doit pas ressurgir des jours plus tard.
+    if (Date.now() - (r.le || 0) > 120000) {
+      try { sessionStorage.removeItem(CLE_BOUTIQUE); } catch (e) {}
+      return false;
+    }
+    if (!window.AGV_CONNEXION || !window.AGV_CONNEXION.ouvrirBoutique) return false;
+
+    try { sessionStorage.removeItem(CLE_BOUTIQUE); } catch (e) {}
+    log('reprise après rechargement — ouverture de ' + (r.nom || r.uid));
+    window.AGV_CONNEXION.ouvrirBoutique(
+      { uid: r.uid, nom: r.nom || '' },
+      { role: 'gerant', gerantId: r.gid });
+    return true;
+  }
+
+  var essaisReprise = 0;
+  var horlogeReprise = setInterval(function () {
+    essaisReprise++;
+    if (reprendreBoutique() || essaisReprise > 40) clearInterval(horlogeReprise);
+  }, 400);
 
   var essais = 0;
   var horloge = setInterval(function () {
@@ -44372,6 +44559,83 @@ window.agvStocks = function(){
      OUVRIR LA BOUTIQUE DE LA PERSONNE
      ========================================================================= */
 
+  /* -------------------------------------------------------------------------
+     OU CETTE PERSONNE TRAVAILLE-T-ELLE VRAIMENT ?
+
+     Un compte porte un « gerantId ». Si ce gerantId ne designe aucune fiche
+     de la boutique ou le compte est range, mais qu'il en designe une dans une
+     boutique rattachee, alors la personne appartient a CETTE boutique : c'est
+     le rangement en deux endroits decrit plus haut. On l'y envoie.
+     ------------------------------------------------------------------------- */
+  function chezLui(u, shop, compte, cb) {
+    var gid = compte && compte.gerantId;
+    if (gid == null || compte.role === 'fondateur') { cb({ uid: u, shop: shop }); return; }
+
+    lire('gdv_shops/' + u + '/data/gerants', function (ici) {
+      var l = !ici ? [] : (Array.isArray(ici) ? ici.filter(Boolean)
+        : Object.keys(ici).map(function (k) { return ici[k]; }));
+      var present = l.some(function (g) { return g && String(g.id) === String(gid); });
+      if (present) { cb({ uid: u, shop: shop }); return; }
+
+      boutiquesLiees(u, function (liees) {
+        if (!liees.length) { cb({ uid: u, shop: shop }); return; }
+        var i = 0;
+        (function encore() {
+          if (i >= liees.length) { cb({ uid: u, shop: shop }); return; }
+          var c = liees[i++];
+          lire('gdv_shops/' + c.uid + '/data/gerants', function (v) {
+            var m = !v ? [] : (Array.isArray(v) ? v.filter(Boolean)
+              : Object.keys(v).map(function (k) { return v[k]; }));
+            if (m.some(function (g) { return g && String(g.id) === String(gid); })) {
+              log('fiche trouvée dans ' + (c.nom || c.uid) + ' — ouverture de SA boutique');
+              cb({ uid: c.uid, nom: c.nom });
+              return;
+            }
+            encore();
+          });
+        })();
+      });
+    });
+  }
+
+  /* -------------------------------------------------------------------------
+     L'IDENTIFIANT DU GERANT DOIT AVOIR EXACTEMENT LE TYPE DE SA FICHE
+
+     La ligne 1817 fait « currentGerantId = gerantId » avec la valeur d'un
+     <select>, c'est-a-dire une CHAINE. Or getCurrentGerant() (ligne 4583)
+     compare en strict :
+
+         gerants.find(x => x.id === currentGerantId)
+
+     « 701 » n'est pas 701 : la recherche echoue, la personne entre mais son
+     compte gerant reste introuvable — ni droits, ni nom, ni ventes rattachees.
+     Convertir en nombre a l'aveugle ne suffit pas : certaines fiches ont un
+     identifiant textuel. On lit donc la fiche et on reprend SON type.
+     ------------------------------------------------------------------------- */
+  function poserGerant(uidBoutique, gid) {
+    function poser(v) {
+      try { currentGerantId = v; } catch (e) {}
+      window.currentGerantId = v;
+    }
+    if (gid == null) { poser(null); return; }
+    poser(gid);                       // valeur provisoire, corrigee des la lecture
+
+    lire('gdv_shops/' + uidBoutique + '/data/gerants', function (v) {
+      var l = !v ? [] : (Array.isArray(v) ? v.filter(Boolean)
+        : Object.keys(v).map(function (k) { return v[k]; }));
+      var exact = null;
+      l.forEach(function (g) {
+        if (!exact && g && g.id != null && String(g.id) === String(gid)) exact = g.id;
+      });
+      if (exact != null && exact !== gid) {
+        log('identifiant du gérant aligné sur sa fiche : ' +
+            JSON.stringify(gid) + ' -> ' + JSON.stringify(exact));
+      }
+      poser(exact != null ? exact : gid);
+    });
+  }
+  API.poserGerant = poserGerant;
+
   function ouvrirBoutique(cible, compte, cb) {
     function suite(info) {
       info = info || {};
@@ -44388,8 +44652,34 @@ window.agvStocks = function(){
       };
       if (!cible.shop) { for (var k in info) if (shop[k] === undefined) shop[k] = info[k]; }
 
+      /* L'IDENTIFIANT DU GERANT DOIT AVOIR LE MEME TYPE QUE SA FICHE.
+
+         La ligne 1817 fait « currentGerantId = gerantId » avec la valeur d'un
+         <select>, c'est-a-dire une CHAINE. Or getCurrentGerant() (ligne 4583)
+         compare en strict :
+
+             gerants.find(x => x.id === currentGerantId)
+
+         « 701 » n'est pas 701 : la recherche echoue, la personne entre mais
+         son compte gerant reste introuvable — ni droits, ni nom, ni ventes
+         rattachees. On aligne donc le type sur celui de la fiche. */
       var gid = compte.gerantId != null ? compte.gerantId : null;
-      var fondateur = (compte.role === 'fondateur');
+      /* LE ROLE NE PEUT PAS VENIR DU SEUL CHAMP « role » DU COMPTE.
+
+         Un compte qui designe un gerantId designe une FICHE DE GERANT. Si son
+         champ « role » porte « fondateur » — parce qu il a ete cree par
+         megarde depuis « Acces de connexion », ou repris d un ancien compte —
+         la session s ouvrait avec les pleins pouvoirs du fondateur alors que
+         la personne est un gerant. C est une faille, pas une commodite.
+
+         Regle retenue : des qu un gerantId est present, la session est celle
+         d un GERANT. Le role « fondateur » n est accorde qu a un compte SANS
+         gerantId, c est-a-dire qui ne renvoie a aucune fiche de personnel. */
+      var fondateur = (compte.role === 'fondateur') && (gid == null);
+      if (compte.role === 'fondateur' && gid != null) {
+        log('compte marqué « fondateur » mais rattaché à la fiche ' + gid +
+            ' — session ouverte en GÉRANT');
+      }
 
       // La personne entre chez elle : bloc A de SA boutique.
       try {
@@ -44404,9 +44694,8 @@ window.agvStocks = function(){
       window._lastShopCode = shop.codeAcces || window._lastShopCode || '';
 
       try { currentRole = fondateur ? 'fondateur' : 'gerant'; } catch (e) {}
-      try { currentGerantId = fondateur ? null : gid; } catch (e) {}
       window.currentRole = fondateur ? 'fondateur' : 'gerant';
-      window.currentGerantId = fondateur ? null : gid;
+      poserGerant(cible.uid, fondateur ? null : gid);
 
       log('ouverture directe de ' + shop.entreprise + ' (' + cible.uid + ') pour ' +
         (fondateur ? 'le fondateur' : 'le gérant ' + gid));
@@ -44476,7 +44765,15 @@ window.agvStocks = function(){
               log(ici.length > 1
                 ? ici.length + ' comptes portent « ' + identifiant + ' » — reconnu par le mot de passe'
                 : 'compte reconnu dans ' + (shop.entreprise || u));
-              return ouvrirBoutique({ uid: u, shop: shop }, compte, fini);
+              // SA FICHE EST-ELLE VRAIMENT ICI ? Le compte d'un gerant de
+              // boutique rattachee est enregistre chez l'accueil
+              // (agvCompteEnregistrer, ligne 17961, via uidBoutique()) alors
+              // que sa fiche est chez lui (cheminGerants, ligne 36426).
+              // Ouvrir l'accueil le placerait dans une boutique qui n'est pas
+              // la sienne, sans permissions et sans ses donnees.
+              return chezLui(u, shop, compte, function (cible) {
+                ouvrirBoutique(cible, compte, fini);
+              });
             }
             if (souci === 'desactive') {
               return message('Ce compte est désactivé. Contactez le fondateur.', false);
@@ -44537,6 +44834,8 @@ window.agvStocks = function(){
              un vrai compte garde toujours la priorite sur un ancien code.
              --------------------------------------------------------------- */
           function anciensCodes(l) {
+            var s = window.AGV_SIMPLE;
+            if (s && s.codesFiches === false) { fini(); return suite.apply(self, args); }
             var j = 0;
             (function encore() {
               if (j >= l.length) { fini(); return suite.apply(self, args); }
@@ -45456,8 +45755,20 @@ window.agvStocks = function(){
     });
   }
 
-  function codeDe(uidBoutique, gerantId) {
-    return CODES[cle(uidBoutique, gerantId)] || '';
+  // Le code est cherche d'abord en memoire ; si la ligne vient d'etre ajoutee
+  // par le remplissage asynchrone (ligne 1747) et n'a pas encore ete captee,
+  // on le prend dans la page et on l'y capte au passage. La reconnaissance ne
+  // depend donc plus de l'ordre d'arrivee des reponses Firebase.
+  function codeDe(uidBoutique, gerantId, opt) {
+    var m = CODES[cle(uidBoutique, gerantId)];
+    if (m) return m;
+    if (opt && opt.dataset && opt.dataset.code) {
+      var c = opt.dataset.code;
+      CODES[cle(uidBoutique, gerantId)] = c;
+      try { delete opt.dataset.code; opt.removeAttribute('data-code'); } catch (e) {}
+      return c;
+    }
+    return '';
   }
 
   /* =========================================================================
@@ -45475,6 +45786,20 @@ window.agvStocks = function(){
     if (!shop.uid) return;
     sel.setAttribute('data-agv-ecran', shop.uid);
     enCours = true;
+
+    /* LES CODES VIENNENT DE LA BASE, PLUS DE LA PAGE.
+
+       Le remplissage d'origine est asynchrone (ligne 1747) : sur le chemin du
+       lien, il repond APRES nous. Se fier a ce que contient le <select> a un
+       instant donne, c'est courir apres une liste qui n'est pas encore la.
+       On lit donc directement les fiches de la boutique d'accueil, exactement
+       comme on lit celles des boutiques rattachees. */
+    lire('gdv_shops/' + shop.uid + '/data/gerants', function (g) {
+      tab(g).forEach(function (x) {
+        if (x && x.id != null && x.code) CODES[cle(shop.uid, x.id)] = String(x.code);
+      });
+      log(Object.keys(CODES).length + ' code(s) lus dans la base');
+    });
 
     liees(shop.uid, function (l) {
       if (!l.length) { enCours = false; return; }
@@ -45559,6 +45884,10 @@ window.agvStocks = function(){
       var sel = document.getElementById('sl-gerant-select');
       if (!sel) return;
       var shop = window._shopLoginData || {};
+      // Le remplissage d'origine ajoute ses lignes quand Firebase repond,
+      // souvent apres nous : on repasse a chaque battement pour capter les
+      // codes des lignes nouvellement arrivees.
+      retirerCodesDuDom(sel, shop.uid);
       if (sel.getAttribute('data-agv-ecran') !== (shop.uid || '')) completerListe();
     } catch (e) {}
   }, 700);
@@ -45567,8 +45896,15 @@ window.agvStocks = function(){
      2. OUVRIR LA BONNE BOUTIQUE
      ========================================================================= */
 
+  // Les codes de fiche ne sont acceptes que si AGV_SIMPLE les autorise
+  // encore. Le fondateur les neutralise quand chacun a son mot de passe.
+  function codesAutorises() {
+    var s = window.AGV_SIMPLE;
+    return !s || s.codesFiches !== false;
+  }
+
   function verifierEtOuvrir(cible, gerantId, nom, code, emp, mdp, apres) {
-    if (code && mdp === String(code)) {
+    if (code && codesAutorises() && mdp === String(code)) {
       log('code de fiche reconnu — ' + nom + ' chez ' + (cible.nom || cible.uid));
       dire('Connexion réussie !', true);
       return ouvrir(cible, { role: 'gerant', gerantId: gerantId }, apres);
@@ -45603,7 +45939,7 @@ window.agvStocks = function(){
 
         var autre = opt.dataset ? opt.dataset.shop : null;
         var emp = opt.dataset ? opt.dataset.emp : '';
-        var code = codeDe(autre || shop.uid, sel.value);
+        var code = codeDe(autre || shop.uid, sel.value, opt);
         var nom = (opt.dataset && opt.dataset.nom) || opt.textContent;
 
         // Une personne d'une boutique rattachee : l'application ouvrirait la
@@ -45628,7 +45964,7 @@ window.agvStocks = function(){
            alors que nous venons justement de l'en retirer. Elle comparerait
            donc a une valeur vide et repondrait « Code gerant incorrect » a
            tout le monde. C'est nous qui ouvrons la session. */
-        if (code && mdp === String(code)) {
+        if (code && codesAutorises() && mdp === String(code)) {
           log('code de fiche reconnu — ' + nom);
           dire('Connexion réussie !', true);
           return ouvrir({ uid: shop.uid, shop: shop, nom: shop.entreprise },
@@ -45728,6 +46064,1734 @@ window.agvStocks = function(){
     }
     return sel.querySelectorAll('option[value]').length + ' personne(s)';
   };
+
+})();
+
+</script>
+<script>
+/* =============================================================================
+   APP AGV — MODULE 17 : CHOISIR SA BOUTIQUE A LA CONNEXION  (v1.0)
+   -----------------------------------------------------------------------------
+   CE QUI MANQUAIT
+
+   Jusqu'ici, la boutique ouverte etait DEDUITE : celle dont le code avait ete
+   saisi, ou celle ou l'identifiant se trouvait. Le gerant ne pouvait pas dire
+   ou il voulait aller, et quand la deduction se trompait, il n'avait aucun
+   moyen de rectifier.
+
+   CE MODULE AJOUTE, SOUS LE CHAMP MOT DE PASSE, une liste « Ma boutique » qui
+   reunit la boutique d'accueil et toutes celles qui lui sont rattachees. Le
+   gerant choisit sa boutique, saisit son code, et il y entre directement.
+
+   COMMENT L'ACCES EST VERIFIE, DANS CET ORDRE :
+
+     1. DANS LA BOUTIQUE CHOISIE ELLE-MEME
+        — son onglet « Gerants & Acces » : le code de sa fiche ;
+        — ses comptes : identifiant et mot de passe.
+        C'est le cas du gerant qui travaille dans cette boutique.
+
+     2. DEPUIS LA BOUTIQUE D'ACCUEIL, SI LE FONDATEUR L'A AUTORISE
+        — le gerant est reconnu dans la boutique mere, et le noeud
+          « blocs/_acces/<son id> » ou son affectation « blocs/_affect »
+          designe le bloc de la boutique choisie.
+        C'est le panneau « Acces des gerants aux boutiques » qui remplit ce
+        noeud : ce que le fondateur y coche devient ici une porte ouverte.
+
+     3. LE CODE FONDATEUR de la boutique choisie ouvre aussi, en fondateur.
+
+   Sinon l'acces est refuse, avec la raison exacte — pas un « code incorrect »
+   qui ne dit rien.
+
+   Ce module ne modifie AUCUNE donnee : il lit des fiches, des comptes et des
+   autorisations, puis ouvre une session.
+
+   INSTALLATION : charger apres les modules 1 a 16.
+   DESACTIVATION : AGV_DEST.actif = false
+   ============================================================================= */
+(function () {
+  'use strict';
+
+  var API = window.AGV_DEST = { actif: true, version: '1.0' };
+
+  function log() {
+    try { console.log.apply(console, ['[AGV-DEST]'].concat([].slice.call(arguments))); } catch (e) {}
+  }
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+    });
+  }
+  function C() { return window.AGV_CONNEXION || null; }
+  function lire(p, cb) {
+    var c = C();
+    if (c && c.lire) return c.lire(p, cb);
+    var r = (window.db && window.db.ref) ? window.db.ref(p) : null;
+    if (!r) { cb(null); return; }
+    r.once('value').then(function (s) { cb(s.val()); }, function () { cb(null); });
+  }
+  function empreintes(txt) {
+    var c = C();
+    if (c && c.empreintes) return c.empreintes(txt);
+    var l = ['agvc$', 'agv$'].map(function (sel) {
+      var h = 5381, s = sel + txt;
+      for (var i = 0; i < s.length; i++) { h = ((h * 33) ^ s.charCodeAt(i)) >>> 0; }
+      return 'f:' + h.toString(16) + ':' + s.length;
+    });
+    return Promise.resolve(l);
+  }
+  function memeId(stocke, saisi) {
+    var c = C();
+    if (c && c.memeIdentifiant) return c.memeIdentifiant(stocke, saisi);
+    return String(stocke || '').trim().toLowerCase() === String(saisi || '').trim().toLowerCase();
+  }
+  function ouvrir(cible, compte) {
+    var c = C();
+    if (c && c.ouvrirBoutique) return c.ouvrirBoutique(cible, compte);
+    log('module de connexion absent — ouverture impossible');
+  }
+  function dire(txt, ok) {
+    try { if (typeof window.agvShopLoginMsg === 'function') return window.agvShopLoginMsg(txt, ok); } catch (e) {}
+    try { if (typeof window.messageConnexion === 'function') return window.messageConnexion(txt, ok); } catch (e) {}
+    try { if (window.showToast) window.showToast(txt); } catch (e) {}
+  }
+  function tab(v) {
+    if (!v) return [];
+    if (Array.isArray(v)) return v.filter(Boolean);
+    try { return Object.keys(v).map(function (k) { return v[k]; }).filter(Boolean); } catch (e) { return []; }
+  }
+
+  /* =========================================================================
+     1. LA LISTE DES BOUTIQUES ATTEIGNABLES
+     ========================================================================= */
+
+  var DESTS = [];        // { uid, nom, bloc }  — bloc 'A' pour la boutique d'accueil
+  var chargeePour = null;
+
+  function charger(uid, nomAccueil, cb) {
+    if (chargeePour === uid && DESTS.length) { cb(DESTS); return; }
+    lire('gdv_shops/' + uid + '/blocs/_meta', function (meta) {
+      var l = [{ uid: uid, nom: nomAccueil || 'Boutique principale', bloc: 'A', accueil: true }];
+      Object.keys(meta || {}).sort().forEach(function (b) {
+        var m = meta[b];
+        if (!m || b.indexOf('_') === 0) return;
+        if (m.source && String(m.source) !== String(uid)) {
+          l.push({ uid: m.source, nom: m.nom || ('Bloc ' + b), bloc: b });
+        }
+      });
+      DESTS = l;
+      chargeePour = uid;
+      cb(l);
+    });
+  }
+
+  /* =========================================================================
+     2. LA LISTE SOUS LE CHAMP MOT DE PASSE
+     ========================================================================= */
+
+  function poserSous(champMdp, id) {
+    if (!champMdp || !champMdp.parentNode) return false;
+    if (document.getElementById(id)) return true;
+
+    var shop = window._shopLoginData || window._currentShop || {};
+    if (!shop.uid) return false;
+
+    var zone = document.createElement('div');
+    zone.id = id;
+    zone.style.cssText = 'margin-top:10px';
+    zone.innerHTML =
+      '<label style="display:block;font-size:11.5px;font-weight:700;color:#64748b;' +
+      'margin-bottom:5px">Ma boutique</label>' +
+      '<select class="agv-dest-sel" style="width:100%;padding:11px 12px;border:1px solid #cbd5e1;' +
+      'border-radius:9px;font-size:14px;font-family:inherit;background:#fff;color:#0f172a;' +
+      'box-sizing:border-box"><option value="">Chargement...</option></select>' +
+      '<div class="agv-dest-note" style="font-size:11.5px;color:#64748b;margin-top:5px;' +
+      'line-height:1.5"></div>';
+    champMdp.parentNode.insertBefore(zone, champMdp.nextSibling);
+
+    charger(shop.uid, shop.entreprise, function (l) {
+      var s = zone.querySelector('.agv-dest-sel');
+      if (!s) return;
+      s.innerHTML = l.map(function (d) {
+        return '<option value="' + esc(d.uid) + '" data-bloc="' + esc(d.bloc) + '">' +
+          esc(d.nom) + (d.accueil ? '' : '  ·  bloc ' + esc(d.bloc)) + '</option>';
+      }).join('');
+      var note = zone.querySelector('.agv-dest-note');
+      if (note) {
+        note.textContent = l.length > 1
+          ? l.length + ' boutiques accessibles depuis ce code. Choisissez la vôtre.'
+          : 'Une seule boutique est rattachée à ce code.';
+      }
+      log(l.length + ' boutique(s) proposée(s) à la connexion');
+    });
+    return true;
+  }
+
+  function destinationChoisie() {
+    var s = document.querySelector('#agv-dest-shop .agv-dest-sel') ||
+            document.querySelector('#agv-dest-unifie .agv-dest-sel');
+    if (!s || !s.value) return null;
+    var o = s.options[s.selectedIndex];
+    return {
+      uid: s.value,
+      bloc: (o && o.getAttribute('data-bloc')) || 'A',
+      nom: (o && o.textContent || '').split('  ·  ')[0].trim()
+    };
+  }
+  API.choisie = destinationChoisie;
+
+  setInterval(function () {
+    if (!API.actif) return;
+    try {
+      poserSous(document.getElementById('sl-gerant-pwd'), 'agv-dest-shop');
+      poserSous(document.getElementById('agvcu-pwd'), 'agv-dest-unifie');
+    } catch (e) {}
+  }, 800);
+
+  /* =========================================================================
+     3. LA VERIFICATION D'ACCES
+     ========================================================================= */
+
+  // 1. La personne appartient-elle a la boutique choisie ?
+  function chezElle(dest, identifiant, mdp, cb) {
+    var reste = 2, gerants = null, comptes = null;
+    function fin() {
+      if (--reste) return;
+
+      // a) le code inscrit sur sa fiche, onglet « Gerants & Acces »
+      var parFiche = null;
+      var s = window.AGV_SIMPLE;
+      var codesOk = !s || s.codesFiches !== false;
+      tab(gerants).forEach(function (g) {
+        if (parFiche || !g || !codesOk) return;
+        if (g.code && String(g.code) === mdp) parFiche = g;
+      });
+      if (parFiche) {
+        if (parFiche.bloque) return cb(null, 'Ce compte est bloqué. Contactez le fondateur.');
+        return cb({ role: 'gerant', gerantId: parFiche.id, nom: parFiche.nom }, null);
+      }
+
+      // b) un compte identifiant + mot de passe
+      var candidats = [];
+      Object.keys(comptes || {}).forEach(function (k) {
+        var c = comptes[k];
+        if (!c) return;
+        if (!identifiant || memeId(c.identifiant, identifiant)) candidats.push(c);
+      });
+      if (!candidats.length) return cb(null, null);        // rien ici, on cherchera ailleurs
+
+      empreintes(mdp).then(function (h) {
+        var actif = null, suspendu = null;
+        candidats.forEach(function (c) {
+          if (!c.empreinte || h.indexOf(c.empreinte) < 0) return;
+          if (c.actif === false) { suspendu = suspendu || c; return; }
+          actif = actif || c;
+        });
+        if (actif) return cb({ role: actif.role === 'fondateur' ? 'fondateur' : 'gerant',
+                               gerantId: actif.gerantId }, null);
+        if (suspendu) return cb(null, 'Ce compte est désactivé. Contactez le fondateur.');
+        cb(null, null);
+      });
+    }
+    lire('gdv_shops/' + dest.uid + '/data/gerants', function (v) { gerants = v; fin(); });
+    lire('gdv_shops/' + dest.uid + '/comptes', function (v) { comptes = v || {}; fin(); });
+  }
+
+  // 2. La personne vient de la boutique d'accueil.
+  //
+  //    DEUX SITUATIONS TRES DIFFERENTES, ET C'EST TOUT LE PROBLEME :
+  //
+  //    a) SON COMPTE EST CHEZ L'ACCUEIL MAIS SA FICHE EST DANS LA BOUTIQUE
+  //       CHOISIE. C'est le cas de TOUS les gerants des boutiques rattachees.
+  //       Quand le fondateur ouvre le bloc B et cree un gerant :
+  //
+  //         sa fiche   -> cheminGerants(), ligne 36426 :
+  //                       if(src) return 'gdv_shops/' + src + '/data/gerants';
+  //                       soit gdv_shops/<rattachee>/data/gerants
+  //
+  //         son compte -> agvCompteEnregistrer(), ligne 17961 :
+  //                       d.ref('gdv_shops/' + uid + '/' + NOEUD + ...)
+  //                       avec uidBoutique() = _currentShop.uid, ligne 17636,
+  //                       soit gdv_shops/<accueil>/comptes
+  //
+  //       Les deux moitiés sont donc rangees dans deux boutiques differentes,
+  //       et la personne devenait invisible des deux cotes. Ici, un compte de
+  //       l'accueil dont le gerantId designe une fiche de la boutique choisie
+  //       APPARTIENT a cette boutique : aucune autorisation n'est requise, il
+  //       est chez lui.
+  //
+  //    b) SA FICHE EST BIEN CHEZ L'ACCUEIL et il veut aller ailleurs. La,
+  //       il faut que le fondateur l'ait autorise (blocs/_acces ou _affect).
+  function depuisAccueil(accueil, dest, identifiant, mdp, cb) {
+    var reste = 5, gerants = null, comptes = null, acces = null, affect = null, fichesDest = null;
+    function fin() {
+      if (--reste) return;
+
+      // Les identifiants de fiches de la boutique CHOISIE
+      var chezDest = {};
+      tab(fichesDest).forEach(function (g) { if (g && g.id != null) chezDest[String(g.id)] = g; });
+
+      function verdict(gid, nom) {
+        if (gid != null && chezDest[String(gid)]) {
+          var f = chezDest[String(gid)];
+          if (f.bloque) return { refus: 'Ce compte est bloqué. Contactez le fondateur.' };
+          return { ok: { role: 'gerant', gerantId: gid, nom: f.nom || nom }, sien: true };
+        }
+        var a = (acces || {})[String(gid)];
+        if (a && a[dest.bloc]) return { ok: { role: 'gerant', gerantId: gid, nom: nom } };
+        if (String((affect || {})[String(gid)] || '') === String(dest.bloc)) {
+          return { ok: { role: 'gerant', gerantId: gid, nom: nom } };
+        }
+        return { refus: 'PASAUTORISE:' + (nom || 'Ce gérant') };
+      }
+
+      var trouve = null;
+      var s2 = window.AGV_SIMPLE;
+      var codesOk2 = !s2 || s2.codesFiches !== false;
+      tab(gerants).forEach(function (g) {
+        if (trouve || !g || !codesOk2) return;
+        if (g.code && String(g.code) === mdp && !g.bloque) trouve = { id: g.id, nom: g.nom };
+      });
+      if (trouve) {
+        var v = verdict(trouve.id, trouve.nom);
+        return v.ok ? cb(v.ok, null) : cb(null, v.refus);
+      }
+
+      var candidats = [];
+      Object.keys(comptes || {}).forEach(function (k) {
+        var c = comptes[k];
+        if (!c || c.actif === false) return;
+        if (!identifiant || memeId(c.identifiant, identifiant)) candidats.push(c);
+      });
+      if (!candidats.length) return cb(null, null);
+
+      empreintes(mdp).then(function (h) {
+        var ok = null;
+        candidats.forEach(function (c) {
+          if (!ok && c.empreinte && h.indexOf(c.empreinte) >= 0) ok = c;
+        });
+        if (!ok) return cb(null, null);
+        if (ok.role === 'fondateur') return cb({ role: 'fondateur' }, null);   // le fondateur va partout
+        var w = verdict(ok.gerantId, ok.identifiant);
+        if (w.sien) log('compte logé chez l\'accueil, fiche dans ' + dest.nom + ' — il est chez lui');
+        return w.ok ? cb(w.ok, null) : cb(null, w.refus);
+      });
+    }
+    lire('gdv_shops/' + accueil + '/data/gerants', function (v) { gerants = v; fin(); });
+    lire('gdv_shops/' + accueil + '/comptes', function (v) { comptes = v || {}; fin(); });
+    lire('gdv_shops/' + accueil + '/blocs/_acces', function (v) { acces = v || {}; fin(); });
+    lire('gdv_shops/' + accueil + '/blocs/_affect', function (v) { affect = v || {}; fin(); });
+    lire('gdv_shops/' + dest.uid + '/data/gerants', function (v) { fichesDest = v; fin(); });
+  }
+
+  // 3. Le code fondateur de la boutique choisie
+  function codeFondateur(dest, mdp, cb) {
+    lire('gdv_shops/' + dest.uid + '/info', function (info) {
+      info = info || {};
+      cb(info.codeFondateur && mdp === String(info.codeFondateur) ? { role: 'fondateur' } : null);
+    });
+  }
+
+  /* Enchainement complet. cb(true) si une session a ete ouverte. */
+  API.entrer = function (dest, identifiant, mdp, cb) {
+    var accueil = (window._shopLoginData || window._currentShop || {}).uid;
+    if (!dest || !dest.uid || !mdp) { cb(false); return; }
+
+    chezElle(dest, identifiant, mdp, function (ok, souci) {
+      if (souci) { dire(souci, false); cb(true); return; }
+      if (ok) {
+        log('reconnu dans ' + dest.nom + ' — ' + ok.role);
+        dire('Connexion réussie !', true);
+        ouvrir({ uid: dest.uid, nom: dest.nom }, ok);
+        cb(true); return;
+      }
+
+      if (String(dest.uid) === String(accueil)) { cb(false); return; }
+
+      depuisAccueil(accueil, dest, identifiant, mdp, function (ok2, souci2) {
+        if (souci2 && String(souci2).indexOf('PASAUTORISE:') === 0) {
+          dire(souci2.slice(12) + ' n\'a pas accès à « ' + dest.nom +
+               ' ». Le fondateur doit l\'y autoriser : Paramétrage → Accès des gérants aux boutiques.',
+               false);
+          cb(true); return;
+        }
+        if (souci2) { dire(souci2, false); cb(true); return; }
+        if (ok2) {
+          log('autorisé depuis la boutique d\'accueil vers ' + dest.nom);
+          dire('Connexion réussie !', true);
+          ouvrir({ uid: dest.uid, nom: dest.nom }, ok2);
+          cb(true); return;
+        }
+
+        codeFondateur(dest, mdp, function (f) {
+          if (!f) { cb(false); return; }
+          log('code fondateur de ' + dest.nom + ' reconnu');
+          dire('Connexion réussie !', true);
+          ouvrir({ uid: dest.uid, nom: dest.nom }, f);
+          cb(true);
+        });
+      });
+    });
+  };
+
+  /* =========================================================================
+     4. BRANCHEMENT SUR LES DEUX ECRANS
+     ========================================================================= */
+
+  function brancherEcranBoutique() {
+    if (typeof window.agvShopLogin !== 'function' || window.agvShopLogin.__agvDest) return false;
+    var suite = window.agvShopLogin;
+    var neuf = function (role) {
+      var self = this, args = arguments;
+      if (!API.actif || role !== 'gerant') return suite.apply(self, args);
+
+      var dest = destinationChoisie();
+      var mdp = String((document.getElementById('sl-gerant-pwd') || {}).value || '').trim();
+      if (!dest || !mdp) return suite.apply(self, args);
+
+      // Le nom choisi dans la liste des gerants sert d'identifiant eventuel
+      var sel = document.getElementById('sl-gerant-select');
+      var opt = sel && sel.value ? sel.querySelector('option[value="' + sel.value + '"]') : null;
+      var ident = (opt && opt.dataset && opt.dataset.ident) || '';
+
+      API.entrer(dest, ident, mdp, function (fait) {
+        if (!fait) suite.apply(self, args);      // on n'a rien pu conclure : chemin habituel
+      });
+    };
+    neuf.__agvDest = true;
+    neuf.__agvOrig = suite;
+    window.agvShopLogin = neuf;
+    return true;
+  }
+
+  function brancherEcranUnifie() {
+    if (typeof window.agvConnexionUnique !== 'function' || window.agvConnexionUnique.__agvDest) return false;
+    var suite = window.agvConnexionUnique;
+    var neuf = function () {
+      var self = this, args = arguments;
+      if (!API.actif) return suite.apply(self, args);
+
+      var dest = destinationChoisie();
+      if (!dest) return suite.apply(self, args);
+      var accueil = (window._shopLoginData || window._currentShop || {}).uid;
+      if (String(dest.uid) === String(accueil)) return suite.apply(self, args);
+
+      var ident = String((document.getElementById('agvcu-id') || {}).value || '').trim();
+      var mdp = String((document.getElementById('agvcu-pwd') || {}).value || '').trim();
+      if (!mdp) return suite.apply(self, args);
+
+      API.entrer(dest, ident, mdp, function (fait) {
+        if (!fait) suite.apply(self, args);
+      });
+    };
+    neuf.__agvDest = true;
+    neuf.__agvOrig = suite;
+    window.agvConnexionUnique = neuf;
+    return true;
+  }
+
+  var essais = 0;
+  var horloge = setInterval(function () {
+    essais++;
+    var a = brancherEcranBoutique(), b = brancherEcranUnifie();
+    if (a || b) log('module actif — v' + API.version + ' — choix de la boutique à la connexion');
+    if (essais > 900) clearInterval(horloge);
+  }, 600);
+
+  /* =========================================================================
+     VERIFICATION
+     ========================================================================= */
+
+  API.etat = function () {
+    var shop = window._shopLoginData || window._currentShop || {};
+    if (!shop.uid) { console.log('Aucune boutique saisie.'); return; }
+    charger(shop.uid, shop.entreprise, function (l) {
+      console.log('--- Boutiques atteignables avec ce code ---');
+      l.forEach(function (d) {
+        console.log('  ' + (d.accueil ? '■' : '□') + ' ' + d.nom + '  (bloc ' + d.bloc + ')');
+      });
+      console.log('Le gérant choisit la sienne sous le champ mot de passe.');
+    });
+    return 'lecture en cours...';
+  };
+
+})();
+
+</script>
+<script>
+/* =============================================================================
+   APP AGV — MODULE 18 : MOT DE PASSE CENTRALISE DES GERANTS  (v1.0)
+   -----------------------------------------------------------------------------
+   CE QUE CE MODULE MET EN PLACE
+
+   Un gerant a UN SEUL mot de passe, defini par le fondateur, et ce mot de
+   passe lui ouvre TOUTES les boutiques qu'on lui a autorisees. Il n'a plus
+   un code par boutique a retenir.
+
+   OU EST RANGE QUOI, ET POURQUOI
+
+     · le mot de passe        gdv_shops/<mere>/comptes/<cle>
+       Un seul endroit, celui que la connexion consulte en premier. C'est ce
+       qui rend le mot de passe « central » : peu importe la boutique par
+       laquelle il entre, c'est la meme empreinte qui est verifiee.
+
+     · les boutiques permises gdv_shops/<mere>/blocs/_acces/<idGerant>
+       Le meme noeud que le panneau « Acces des gerants aux boutiques ». Les
+       deux ecrans agissent sur la meme chose : ce qui est coche ici apparait
+       la-bas, et inversement.
+
+     · sa fiche               inchangee, la ou elle a toujours ete
+       Ce module ne deplace ni ne recopie aucune fiche de personnel.
+
+   L'EMPREINTE EST CELLE DE L'APPLICATION — sel « agvc$ », SHA-256 quand la
+   connexion est securisee, repli sinon. Un mot de passe defini ici est donc
+   reconnu par tous les chemins de connexion existants, sans exception.
+
+   AUCUN MOT DE PASSE N'EST STOCKE EN CLAIR, ni affiche apres coup : le
+   fondateur le lit une fois, au moment ou il le definit.
+
+   INSTALLATION : charger apres les modules 1 a 17.
+   DESACTIVATION : AGV_MDP.actif = false
+   ============================================================================= */
+(function () {
+  'use strict';
+
+  var API = window.AGV_MDP = { actif: true, version: '1.0' };
+
+  function log() {
+    try { console.log.apply(console, ['[AGV-MDP]'].concat([].slice.call(arguments))); } catch (e) {}
+  }
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+    });
+  }
+  function C() { return window.AGV_CONNEXION || null; }
+  function ref(p) {
+    if (typeof window._agvRefBrut === 'function') return window._agvRefBrut(p);
+    return (window.db && window.db.ref) ? window.db.ref(p) : null;
+  }
+  function lire(p, cb) {
+    var c = C();
+    if (c && c.lire) return c.lire(p, cb);
+    var r = ref(p);
+    if (!r) { cb(null); return; }
+    r.once('value').then(function (s) { cb(s.val()); }, function () { cb(null); });
+  }
+  function tab(v) {
+    if (!v) return [];
+    if (Array.isArray(v)) return v.filter(Boolean);
+    try { return Object.keys(v).map(function (k) { return v[k]; }).filter(Boolean); } catch (e) { return []; }
+  }
+  function role() {
+    try { if (window.currentRole) return window.currentRole; } catch (e) {}
+    try { return currentRole; } catch (e) {}
+    return null;
+  }
+  function dire(m) {
+    try { if (window.showToast) return window.showToast(m); } catch (e) {}
+    try { if (window.agvToast) return window.agvToast(m, '#22c55e', 4000); } catch (e) {}
+    console.log('[AGV-MDP] ' + m);
+  }
+
+  // La retaille exacte de l'application (normaliserIdentifiant, ligne 17631)
+  function normId(v) {
+    var s = String(v == null ? '' : v).toLowerCase().trim();
+    try { s = s.normalize('NFD').replace(/[\u0300-\u036f]/g, ''); } catch (e) {}
+    return s.replace(/\s+/g, '.').replace(/[^a-z0-9._-]/g, '');
+  }
+
+  // L'empreinte de l'application : sel « agvc$ », SHA-256 puis repli
+  function empreinte(txt) {
+    var c = C();
+    if (c && c.empreinte) return c.empreinte(txt);
+    try {
+      if (window.crypto && window.crypto.subtle && window.isSecureContext) {
+        var buf = new TextEncoder().encode('agvc$' + txt);
+        return window.crypto.subtle.digest('SHA-256', buf).then(function (h) {
+          var b = Array.prototype.slice.call(new Uint8Array(h));
+          return 's:' + b.map(function (x) { return ('0' + x.toString(16)).slice(-2); }).join('');
+        });
+      }
+    } catch (e) {}
+    var h1 = 5381, s = 'agvc$' + txt;
+    for (var i = 0; i < s.length; i++) { h1 = ((h1 * 33) ^ s.charCodeAt(i)) >>> 0; }
+    return Promise.resolve('f:' + h1.toString(16) + ':' + s.length);
+  }
+
+  /* =========================================================================
+     RASSEMBLER LE PERSONNEL DE TOUTES LES BOUTIQUES
+     ========================================================================= */
+
+  var ETAT = null;   // { mere, blocs[], gens[], acces, comptes }
+
+  function rassembler(cb) {
+    var mere = (window._currentShop || {}).uid;
+    if (!mere) { cb(null); return; }
+
+    lire('gdv_shops/' + mere + '/blocs/_meta', function (meta) {
+      meta = meta || {};
+      var blocs = [{ bloc: 'A', uid: mere, nom: (window._currentShop || {}).entreprise || 'Boutique principale' }];
+      Object.keys(meta).sort().forEach(function (b) {
+        if (b === 'A' || b.indexOf('_') === 0) return;
+        var m = meta[b];
+        blocs.push({ bloc: b, uid: m.source || mere, nom: m.nom || ('Bloc ' + b), rattachee: !!m.source });
+      });
+
+      var reste = blocs.length + 2, gens = [], acces = null, comptes = null;
+      function fin() {
+        if (--reste) return;
+        // un compte par gerant, s'il en a deja un
+        var parGerant = {};
+        Object.keys(comptes || {}).forEach(function (k) {
+          var c = comptes[k];
+          if (c && c.gerantId != null) parGerant[String(c.gerantId)] = { cle: k, compte: c };
+        });
+        gens.forEach(function (g) {
+          var t = parGerant[String(g.id)];
+          g.cle = t ? t.cle : null;
+          g.identifiant = t ? t.compte.identifiant : '';
+          g.aCompte = !!t;
+          g.actif = t ? (t.compte.actif !== false) : true;
+          // conservee pour detecter deux personnes au meme mot de passe
+          g.empreinte = t ? (t.compte.empreinte || null) : null;
+        });
+        ETAT = { mere: mere, blocs: blocs, gens: gens, acces: acces || {} };
+        cb(ETAT);
+      }
+
+      blocs.forEach(function (b) {
+        lire('gdv_shops/' + b.uid + '/data/gerants', function (v) {
+          tab(v).forEach(function (g) {
+            if (!g || g.id == null) return;
+            gens.push({ id: g.id, nom: g.nom || 'Gérant', poste: g.poste || '',
+                        bloc: b.bloc, boutique: b.nom, bloque: !!g.bloque });
+          });
+          fin();
+        });
+      });
+      lire('gdv_shops/' + mere + '/blocs/_acces', function (v) { acces = v || {}; fin(); });
+      lire('gdv_shops/' + mere + '/comptes', function (v) { comptes = v || {}; fin(); });
+    });
+  }
+
+  /* =========================================================================
+     ENREGISTRER : MOT DE PASSE + BOUTIQUES AUTORISEES
+     ========================================================================= */
+
+  API.definir = function (gerantId, identifiant, motdepasse, blocs, cb) {
+    if (!ETAT) { cb && cb('Panneau non chargé'); return; }
+    var g = ETAT.gens.filter(function (x) { return String(x.id) === String(gerantId); })[0];
+    if (!g) { cb && cb('Gérant introuvable'); return; }
+
+    var id = normId(identifiant || g.nom);
+    if (id.length < 3) { cb && cb('L\'identifiant doit compter au moins 3 caractères.'); return; }
+
+    // les boutiques autorisees, son bloc d'attache toujours compris
+    var permis = {};
+    (blocs || []).forEach(function (b) { permis[b] = true; });
+    permis[g.bloc] = true;
+
+    function ecrireAcces(suite) {
+      var r = ref('gdv_shops/' + ETAT.mere + '/blocs/_acces/' + gerantId);
+      if (!r) { cb && cb('Base indisponible'); return; }
+      r.set(permis).then(function () { suite(); },
+                         function (e) { cb && cb('Autorisations : ' + (e.message || e)); });
+    }
+
+    if (!motdepasse) {
+      // seules les autorisations changent
+      return ecrireAcces(function () {
+        try { localStorage.removeItem('agv_acces_g_' + ETAT.mere + '_' + gerantId); } catch (e) {}
+        log('autorisations mises à jour pour ' + g.nom);
+        cb && cb(null, { blocs: Object.keys(permis) });
+      });
+    }
+
+    if (String(motdepasse).length < 4) {
+      cb && cb('Le mot de passe doit compter au moins 4 caractères.'); return;
+    }
+
+    empreinte(String(motdepasse)).then(function (h) {
+      // Deux personnes ne doivent pas partager la meme empreinte : elles
+      // seraient indiscernables a la connexion.
+      var collision = null;
+      ETAT.gens.forEach(function (x) {
+        if (collision || String(x.id) === String(gerantId)) return;
+        if (x.empreinte && x.empreinte === h) collision = x;
+      });
+      if (collision) {
+        cb && cb('Ce mot de passe est déjà celui de ' + collision.nom +
+                 '. Choisissez-en un autre : c\'est lui qui distingue les deux.');
+        return;
+      }
+
+      var cle = g.cle || ('g' + gerantId + '_' + Date.now().toString(36));
+      var r = ref('gdv_shops/' + ETAT.mere + '/comptes/' + cle);
+      if (!r) { cb && cb('Base indisponible'); return; }
+
+      r.update({
+        identifiant: id,
+        empreinte: h,
+        role: 'gerant',
+        actif: true,
+        gerantId: isNaN(Number(gerantId)) ? gerantId : Number(gerantId),
+        multi: true,
+        majLe: Date.now()
+      }).then(function () {
+        ecrireAcces(function () {
+          try { localStorage.removeItem('agv_acces_g_' + ETAT.mere + '_' + gerantId); } catch (e) {}
+          try {
+            if (typeof window.agvJournaliser === 'function') {
+              window.agvJournaliser('Mot de passe gérant',
+                g.nom + ' — identifiant ' + id + ' — ' + Object.keys(permis).length + ' boutique(s)');
+            }
+          } catch (e) {}
+          // L'etat en memoire doit refleter ce qui vient d'etre ecrit, sans quoi
+          // la personne suivante pourrait recevoir le meme mot de passe.
+          g.cle = cle; g.identifiant = id; g.aCompte = true; g.empreinte = h;
+          ETAT.acces[String(gerantId)] = permis;
+          log('mot de passe défini pour ' + g.nom + ' — ' + Object.keys(permis).join(', '));
+          cb && cb(null, { identifiant: id, blocs: Object.keys(permis) });
+        });
+      }, function (e) { cb && cb('Enregistrement : ' + (e.message || e)); });
+    });
+  };
+
+  /* =========================================================================
+     LE PANNEAU
+     ========================================================================= */
+
+  API.panneau = function () {
+    if (role() !== 'fondateur') { dire('Réservé au fondateur'); return; }
+    var vieux = document.getElementById('agv-mdp-panneau');
+    if (vieux) vieux.remove();
+
+    var ov = document.createElement('div');
+    ov.id = 'agv-mdp-panneau';
+    ov.style.cssText = 'position:fixed;inset:0;z-index:99996;background:rgba(15,23,42,.6);display:flex;' +
+      'align-items:center;justify-content:center;padding:14px;font-family:inherit';
+    ov.innerHTML = '<div id="agv-mdp-boite" style="background:#fff;border-radius:15px;max-width:720px;' +
+      'width:100%;max-height:90vh;overflow:auto;padding:20px 22px">' +
+      '<div style="color:#64748b;font-size:13px;padding:20px 0;text-align:center">Lecture du personnel...</div></div>';
+    document.body.appendChild(ov);
+    ov.onclick = function (e) { if (e.target === ov) ov.remove(); };
+
+    rassembler(function (etat) {
+      if (!etat) { dire('Ouvrez d\'abord une boutique'); ov.remove(); return; }
+      dessiner(etat);
+    });
+  };
+
+  function dessiner(etat) {
+    var boite = document.getElementById('agv-mdp-boite');
+    if (!boite) return;
+
+    if (!etat.gens.length) {
+      boite.innerHTML = '<div style="font-size:16px;font-weight:800;color:#0f172a">' +
+        'Mots de passe des gérants</div>' +
+        '<div style="font-size:13px;color:#64748b;margin-top:12px;line-height:1.6">' +
+        'Aucun gérant enregistré, ni dans cette boutique ni dans celles qui lui sont rattachées.</div>' +
+        '<button id="agv-mdp-x" style="width:100%;margin-top:16px;padding:11px;border:1px solid #dbe3ec;' +
+        'border-radius:10px;background:#f8fafc;font-family:inherit;font-size:13.5px;cursor:pointer">Fermer</button>';
+      boite.querySelector('#agv-mdp-x').onclick = function () {
+        document.getElementById('agv-mdp-panneau').remove();
+      };
+      return;
+    }
+
+    var lignes = etat.gens.map(function (g) {
+      var permis = etat.acces[String(g.id)] || {};
+      var cases = etat.blocs.map(function (b) {
+        var force = (b.bloc === g.bloc);
+        var coche = force || !!permis[b.bloc];
+        return '<label style="display:inline-flex;align-items:center;gap:5px;margin:0 10px 6px 0;' +
+          'font-size:12px;color:#334155;cursor:' + (force ? 'default' : 'pointer') + '">' +
+          '<input type="checkbox" class="agv-mdp-b" data-g="' + esc(g.id) + '" data-bloc="' + esc(b.bloc) + '"' +
+          (coche ? ' checked' : '') + (force ? ' disabled' : '') +
+          ' style="width:15px;height:15px">' + esc(b.nom) +
+          (force ? ' <span style="color:#94a3b8">(son poste)</span>' : '') + '</label>';
+      }).join('');
+
+      return '<div style="border:1px solid #e2e8f0;border-radius:12px;padding:13px 15px;margin-bottom:11px">' +
+        '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap">' +
+        '<div><b style="font-size:14px;color:#0f172a">' + esc(g.nom) + '</b>' +
+        (g.poste ? ' <span style="font-size:11.5px;color:#94a3b8">· ' + esc(g.poste) + '</span>' : '') +
+        '<div style="font-size:11.5px;color:#64748b">' + esc(g.boutique) +
+        (g.aCompte ? ' · identifiant <b>' + esc(g.identifiant) + '</b>'
+                   : ' · <span style="color:#b45309">aucun compte</span>') +
+        (g.bloque ? ' · <span style="color:#b91c1c">fiche bloquée</span>' : '') + '</div></div></div>' +
+        '<div style="margin-top:10px">' + cases + '</div>' +
+        '<div style="display:flex;gap:7px;margin-top:9px;flex-wrap:wrap">' +
+        '<input class="agv-mdp-id" data-g="' + esc(g.id) + '" placeholder="Identifiant" ' +
+        'value="' + esc(g.identifiant || normId(g.nom)) + '" ' +
+        'style="flex:1;min-width:150px;padding:9px 11px;border:1px solid #cbd5e1;border-radius:8px;' +
+        'font-size:13px;font-family:inherit">' +
+        '<input class="agv-mdp-pw" data-g="' + esc(g.id) + '" type="text" placeholder="Nouveau mot de passe" ' +
+        'style="flex:1;min-width:150px;padding:9px 11px;border:1px solid #cbd5e1;border-radius:8px;' +
+        'font-size:13px;font-family:inherit">' +
+        '<button class="agv-mdp-ok" data-g="' + esc(g.id) + '" ' +
+        'style="padding:9px 15px;border:none;border-radius:8px;background:#1d4ed8;color:#fff;' +
+        'font-size:13px;font-weight:700;cursor:pointer;font-family:inherit">Enregistrer</button></div>' +
+        '<div class="agv-mdp-msg" data-g="' + esc(g.id) + '" ' +
+        'style="font-size:12px;margin-top:7px;min-height:15px;line-height:1.5"></div></div>';
+    }).join('');
+
+    boite.innerHTML =
+      '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px">' +
+      '<div><div style="font-size:16px;font-weight:800;color:#0f172a">Mots de passe des gérants</div>' +
+      '<div style="font-size:12.5px;color:#64748b;margin-top:2px">' +
+      'Un seul mot de passe par personne, pour toutes ses boutiques</div></div>' +
+      '<button id="agv-mdp-x" style="padding:7px 13px;border:1px solid #cbd5e1;border-radius:9px;' +
+      'background:#f8fafc;font-family:inherit;font-size:13px;cursor:pointer">Fermer</button></div>' +
+      '<div style="margin:13px 0;padding:11px 13px;background:#f0f9ff;border:1px solid #bae6fd;' +
+      'border-radius:10px;font-size:12.5px;color:#075985;line-height:1.6">' +
+      'Cochez les boutiques que la personne pourra ouvrir, puis donnez-lui un mot de passe. ' +
+      'Ce mot de passe lui ouvrira <b>toutes</b> ces boutiques : elle passera de l\'une à l\'autre ' +
+      'par le bouton <b>🏪 Mes boutiques</b>, en bas à gauche de son écran. ' +
+      'Laissez le mot de passe vide pour ne changer que les autorisations.</div>' +
+      lignes;
+
+    boite.querySelector('#agv-mdp-x').onclick = function () {
+      document.getElementById('agv-mdp-panneau').remove();
+    };
+
+    Array.prototype.forEach.call(boite.querySelectorAll('.agv-mdp-ok'), function (b) {
+      b.onclick = function () {
+        var gid = b.getAttribute('data-g');
+        function ch(sel) { return boite.querySelector(sel + '[data-g="' + gid + '"]'); }
+        var msg = ch('.agv-mdp-msg');
+        var id = (ch('.agv-mdp-id') || {}).value || '';
+        var pw = (ch('.agv-mdp-pw') || {}).value || '';
+        var blocs = [];
+        Array.prototype.forEach.call(boite.querySelectorAll('.agv-mdp-b'), function (c) {
+          if (c.getAttribute('data-g') === gid && c.checked) blocs.push(c.getAttribute('data-bloc'));
+        });
+
+        msg.style.color = '#475569';
+        msg.textContent = 'Enregistrement...';
+        b.disabled = true;
+        API.definir(gid, id, pw, blocs, function (err, fait) {
+          b.disabled = false;
+          if (err) { msg.style.color = '#b91c1c'; msg.textContent = err; return; }
+          msg.style.color = '#15803d';
+          msg.textContent = pw
+            ? 'Mot de passe enregistré. ' + fait.blocs.length + ' boutique(s) accessibles : ' +
+              fait.blocs.join(', ') + '.'
+            : 'Autorisations enregistrées : ' + fait.blocs.join(', ') + '.';
+          var p = ch('.agv-mdp-pw'); if (p) p.value = '';
+        });
+      };
+    });
+  }
+
+  /* =========================================================================
+     LE BOUTON DANS LE PARAMETRAGE DU FONDATEUR
+     ========================================================================= */
+
+  setInterval(function () {
+    if (!API.actif) return;
+    try {
+      var corps = document.getElementById('agv-param-corps');
+      if (!corps || document.getElementById('agv-mdp-lien')) return;
+      if (!corps.querySelector('.b-item')) return;
+      var b = document.createElement('button');
+      b.id = 'agv-mdp-lien';
+      b.textContent = 'Mots de passe des gérants';
+      b.style.cssText = 'display:block;width:100%;margin:8px 0 4px;padding:11px;border:1px solid #7c3aed;' +
+        'border-radius:10px;background:#f5f3ff;color:#6d28d9;font-family:inherit;font-size:13px;' +
+        'font-weight:700;cursor:pointer';
+      b.onclick = function () { API.panneau(); };
+      corps.appendChild(b);
+    } catch (e) {}
+  }, 800);
+
+  /* =========================================================================
+     COMMANDES CONSOLE
+     ========================================================================= */
+
+  API.etat = function () {
+    rassembler(function (e) {
+      if (!e) { console.log('Ouvrez d\'abord une boutique.'); return; }
+      console.log('--- Personnel et boutiques autorisées ---');
+      e.gens.forEach(function (g) {
+        var permis = e.acces[String(g.id)] || {};
+        var l = Object.keys(permis).filter(function (k) { return permis[k]; });
+        if (l.indexOf(g.bloc) < 0) l.push(g.bloc);
+        console.log('  ' + g.nom + '  (' + g.boutique + ')');
+        console.log('     ' + (g.aCompte ? 'identifiant : ' + g.identifiant : 'AUCUN COMPTE — donnez-lui un mot de passe') +
+          '  ·  blocs : ' + l.sort().join(', '));
+      });
+    });
+    return 'lecture en cours...';
+  };
+
+  log('module actif — v' + API.version + ' — AGV_MDP.panneau()');
+
+})();
+
+</script>
+<script>
+/* =============================================================================
+   APP AGV — MODULE 19 : UN SEUL SYSTEME D'ACCES  (v1.0)
+   -----------------------------------------------------------------------------
+   Le fichier accumule TROIS facons distinctes d'entrer, heritees les unes des
+   autres, qui coexistent sans se connaitre :
+
+     1. le CODE de la fiche          onglet « Gerants & Acces », champ « code »
+                                     verifie ligne 1813 et ligne 17804
+     2. le CODE FONDATEUR            info.codeFondateur, ligne 1801
+     3. le COMPTE                    identifiant + mot de passe, gdv_shops/…/comptes
+                                     portail « Acces de connexion », ligne 35640
+
+   C'est cette accumulation qui a produit les refus en cascade : chaque ecran
+   ne connaissait qu'une partie des trois, et le fondateur ne savait plus
+   lequel il venait de renseigner.
+
+   CE MODULE NE GARDE QUE LE TROISIEME — le compte — et retire de la vue les
+   deux premiers :
+
+     · l'onglet « Gerants & Acces » disparait du menu de la boutique ;
+     · les tuiles « Personnel » et « Acces de connexion » disparaissent du
+       portail du fondateur ;
+     · le code de la fiche cesse d'ouvrir une session.
+
+   RIEN N'EST EFFACE DANS LA BASE. Les fiches, les codes et les postes restent
+   ou ils sont : seul leur role de cle d'entree est retire. Un simple
+   « AGV_SIMPLE.actif = false » rend tout en l'etat.
+
+   GARDE-FOU INDISPENSABLE
+   Le code de la fiche n'est neutralise QUE si chaque gerant non bloque possede
+   deja un compte. Sinon le module refuse et NOMME les personnes concernees :
+   les priver de leur code avant de leur avoir donne un mot de passe les
+   mettrait dehors.
+
+   Le fondateur donne les mots de passe dans « Mots de passe des gerants ».
+
+   INSTALLATION : charger apres les modules 1 a 18.
+   DESACTIVATION : AGV_SIMPLE.actif = false
+   ============================================================================= */
+(function () {
+  'use strict';
+
+  var API = window.AGV_SIMPLE = {
+    actif: true,
+    version: '1.0',
+    codesFiches: true      // passe a false une fois tout le monde pourvu
+  };
+
+  function log() {
+    try { console.log.apply(console, ['[AGV-SIMPLE]'].concat([].slice.call(arguments))); } catch (e) {}
+  }
+  function C() { return window.AGV_CONNEXION || null; }
+  function lire(p, cb) {
+    var c = C();
+    if (c && c.lire) return c.lire(p, cb);
+    var r = (window.db && window.db.ref) ? window.db.ref(p) : null;
+    if (!r) { cb(null); return; }
+    r.once('value').then(function (s) { cb(s.val()); }, function () { cb(null); });
+  }
+  function tab(v) {
+    if (!v) return [];
+    if (Array.isArray(v)) return v.filter(Boolean);
+    try { return Object.keys(v).map(function (k) { return v[k]; }).filter(Boolean); } catch (e) { return []; }
+  }
+  function role() {
+    try { if (window.currentRole) return window.currentRole; } catch (e) {}
+    try { return currentRole; } catch (e) {}
+    return null;
+  }
+
+  /* =========================================================================
+     1. RETIRER LES ENTREES DE MENU
+     ========================================================================= */
+
+  function cacher(el, quoi) {
+    if (!el || el.getAttribute('data-agv-simple')) return false;
+    el.setAttribute('data-agv-simple', '1');
+    el.style.display = 'none';
+    log(quoi + ' retiré de la vue');
+    return true;
+  }
+
+  function rendre(el) {
+    if (!el) return;
+    el.removeAttribute('data-agv-simple');
+    el.style.display = '';
+  }
+
+  function menus() {
+    if (!API.actif) return;
+    try {
+      // L'onglet « Gerants & Acces » de la boutique (ligne 2087)
+      cacher(document.getElementById('nav-gerants'), 'onglet « Gérants & Accès »');
+
+      // Les tuiles du portail du fondateur (lignes 35636 et 35640)
+      var tuiles = document.querySelectorAll('.tuile, .grid > div, [onclick]');
+      Array.prototype.forEach.call(tuiles, function (t) {
+        if (!t || t.getAttribute('data-agv-simple')) return;
+        var on = String(t.getAttribute('onclick') || '');
+        if (on.indexOf("agv40Onglet('personnel')") >= 0) cacher(t, 'tuile « Personnel »');
+        else if (on.indexOf('agvComptesOuvrir()') >= 0) cacher(t, 'tuile « Accès de connexion »');
+      });
+    } catch (e) {}
+  }
+
+  setInterval(menus, 900);
+
+  API.remettre = function () {
+    API.actif = false;
+    Array.prototype.forEach.call(document.querySelectorAll('[data-agv-simple]'), rendre);
+    API.codesFiches = true;
+    log('tout est remis en place — les anciens accès fonctionnent à nouveau');
+    return 'rétabli';
+  };
+
+  /* =========================================================================
+     2. LE CODE DE LA FICHE N'OUVRE PLUS
+     -------------------------------------------------------------------------
+     Les modules de connexion consultent AGV_SIMPLE.codesFiches avant
+     d'accepter un code de fiche. On ne le met a false qu'apres avoir verifie
+     que personne ne se retrouverait dehors.
+     ========================================================================= */
+
+  function recenser(cb) {
+    var mere = (window._currentShop || {}).uid;
+    if (!mere) { cb(null); return; }
+
+    lire('gdv_shops/' + mere + '/blocs/_meta', function (meta) {
+      meta = meta || {};
+      var boutiques = [{ uid: mere, nom: (window._currentShop || {}).entreprise || 'Boutique principale' }];
+      Object.keys(meta).forEach(function (b) {
+        var m = meta[b];
+        if (m && m.source && String(m.source) !== String(mere)) {
+          boutiques.push({ uid: m.source, nom: m.nom || ('Bloc ' + b) });
+        }
+      });
+
+      var reste = boutiques.length + 1, gens = [], comptes = null;
+      function fin() {
+        if (--reste) return;
+        var avecCompte = {};
+        Object.keys(comptes || {}).forEach(function (k) {
+          var c = comptes[k];
+          if (c && c.gerantId != null && c.actif !== false) avecCompte[String(c.gerantId)] = true;
+        });
+        var sans = gens.filter(function (g) { return !g.bloque && !avecCompte[String(g.id)]; });
+        cb({ total: gens.length, sans: sans });
+      }
+      boutiques.forEach(function (b) {
+        lire('gdv_shops/' + b.uid + '/data/gerants', function (v) {
+          tab(v).forEach(function (g) {
+            if (g && g.id != null) gens.push({ id: g.id, nom: g.nom || 'Gérant', boutique: b.nom, bloque: !!g.bloque });
+          });
+          fin();
+        });
+      });
+      lire('gdv_shops/' + mere + '/comptes', function (v) { comptes = v || {}; fin(); });
+    });
+  }
+
+  API.verifier = function (cb) {
+    recenser(function (r) {
+      if (!r) { console.log('Ouvrez d\'abord une boutique.'); cb && cb(false); return; }
+      if (!r.sans.length) {
+        console.log('Les ' + r.total + ' gérant(s) ont tous un compte. ' +
+                    'Les anciens codes peuvent être neutralisés sans risque.');
+        cb && cb(true);
+        return;
+      }
+      console.log(r.sans.length + ' gérant(s) n\'ont PAS de compte et n\'entrent que par leur ancien code :');
+      r.sans.forEach(function (g) { console.log('   ' + g.nom + '  (' + g.boutique + ')'); });
+      console.log('Donnez-leur un mot de passe — Paramétrage → Mots de passe des gérants —');
+      console.log('avant de neutraliser les anciens codes.');
+      cb && cb(false);
+    });
+    return 'vérification en cours...';
+  };
+
+  API.neutraliserCodes = function (force) {
+    API.verifier(function (pret) {
+      if (!pret && !force) {
+        console.log('Neutralisation ANNULÉE : des personnes seraient mises dehors.');
+        return;
+      }
+      API.codesFiches = false;
+      try { localStorage.setItem('agv_simple_codes', '0'); } catch (e) {}
+      console.log('✅ Les codes de fiche n\'ouvrent plus de session. ' +
+                  'Seuls les identifiants et mots de passe fonctionnent.');
+    });
+    return 'vérification en cours...';
+  };
+
+  API.reactiverCodes = function () {
+    API.codesFiches = true;
+    try { localStorage.removeItem('agv_simple_codes'); } catch (e) {}
+    console.log('Les anciens codes de fiche fonctionnent à nouveau.');
+    return 'rétabli';
+  };
+
+  try { if (localStorage.getItem('agv_simple_codes') === '0') API.codesFiches = false; } catch (e) {}
+
+  /* =========================================================================
+     3. LE BOUTON DES MOTS DE PASSE, VISIBLE PARTOUT
+     -------------------------------------------------------------------------
+     Il n'etait pose que dans le panneau de parametrage des blocs, qui n'est
+     pas toujours ouvert : le fondateur ne le voyait pas. On le pose aussi en
+     pastille permanente, la ou il ne peut pas etre manque.
+     ========================================================================= */
+
+  /* La pastille ne doit PAS dependre d'une detection de role trop stricte :
+     c'est ce qui la rendait invisible. Elle s'affiche des qu'une boutique est
+     ouverte et que la personne n'est PAS identifiee comme gerant. Si un gerant
+     la voyait par erreur, le panneau lui-meme refuse : « Reserve au fondateur ».
+     Mieux vaut un bouton visible et un panneau qui protege, que l'inverse. */
+  /* La pastille ne doit JAMAIS gener le travail. Elle disparait des qu'un
+     gerant est connecte, des qu'un panneau est ouvert par-dessus, et le
+     fondateur peut la refermer d'un clic sur sa croix : elle ne revient pas
+     de la session. Un bouton reste de toute facon en haut de « Parametres
+     boutique ». Elle masquait l'ecran des ventes ; c'etait inacceptable. */
+  function pastille() {
+    if (!API.actif) return;
+    var v = document.getElementById('agv-simple-chip');
+
+    var r = role();
+    var genante = (r === 'gerant');
+    try { if (sessionStorage.getItem('agv_simple_chip_off') === '1') genante = true; } catch (e) {}
+    // un panneau plein ecran est ouvert : on s'efface
+    if (!genante) {
+      genante = !!(document.getElementById('agv-mdp-panneau') ||
+                   document.getElementById('agv-ger-panneau') ||
+                   document.getElementById('agv-param-boutiques') ||
+                   document.getElementById('agv-accueil') ||
+                   document.querySelector('.modal.active, .modal[style*="display: flex"]'));
+    }
+    if (genante) { if (v) v.remove(); return; }
+
+    if (!(window._currentShop || {}).uid) return;      // pas encore entre
+    if (v) return;
+    if (!window.AGV_MDP) return;
+
+    var b = document.createElement('button');
+    b.id = 'agv-simple-chip';
+    b.textContent = '🔑 Mots de passe des gérants';
+    b.style.cssText = 'position:fixed;right:12px;bottom:12px;z-index:99300;padding:10px 15px;' +
+      'border:none;border-radius:22px;background:#6d28d9;color:#fff;font-size:12.5px;' +
+      'font-weight:700;cursor:pointer;font-family:inherit;box-shadow:0 6px 18px rgba(109,40,217,.4)';
+    b.onclick = function () { try { window.AGV_MDP.panneau(); } catch (e) {} };
+    document.body.appendChild(b);
+
+    var x = document.createElement('button');
+    x.id = 'agv-simple-chip-x';
+    x.textContent = '✕';
+    x.title = 'Masquer ce bouton — il reste dans Paramètres boutique';
+    x.style.cssText = 'position:fixed;right:6px;bottom:44px;z-index:99301;width:22px;height:22px;' +
+      'border:none;border-radius:11px;background:#e2e8f0;color:#475569;font-size:11px;' +
+      'line-height:1;cursor:pointer;font-family:inherit;padding:0';
+    x.onclick = function (e) {
+      if (e && e.stopPropagation) e.stopPropagation();
+      try { sessionStorage.setItem('agv_simple_chip_off', '1'); } catch (er) {}
+      var c = document.getElementById('agv-simple-chip'); if (c) c.remove();
+      x.remove();
+      log('pastille masquée — elle reste accessible dans « Paramètres boutique »');
+    };
+    document.body.appendChild(x);
+    log('pastille « Mots de passe des gérants » posée en bas à droite');
+  }
+
+  setInterval(pastille, 1200);
+
+  /* Second point d'entree : un bouton dans l'onglet « Parametres boutique »,
+     que le fondateur ouvre de toute facon. Deux chemins valent mieux qu'un,
+     puisque la pastille a deja manque a l'appel. */
+  setInterval(function () {
+    if (!API.actif || !window.AGV_MDP) return;
+    if (role() === 'gerant') return;
+    try {
+      if (document.getElementById('agv-simple-lien')) return;
+      var vue = document.getElementById('view-parametres') ||
+                document.getElementById('parametres') ||
+                document.querySelector('[id*="parametres"]');
+      if (!vue || vue.offsetParent === null) return;
+      var b = document.createElement('button');
+      b.id = 'agv-simple-lien';
+      b.textContent = '🔑 Mots de passe des gérants';
+      b.style.cssText = 'display:block;width:100%;margin:12px 0;padding:13px;border:none;' +
+        'border-radius:11px;background:#6d28d9;color:#fff;font-family:inherit;font-size:14px;' +
+        'font-weight:700;cursor:pointer';
+      b.onclick = function () { try { window.AGV_MDP.panneau(); } catch (e) {} };
+      vue.insertBefore(b, vue.firstChild);
+      log('bouton posé en haut de « Paramètres boutique »');
+    } catch (e) {}
+  }, 1300);
+
+  /* =========================================================================
+     ETAT
+     ========================================================================= */
+
+  API.etat = function () {
+    console.log('--- Système d\'accès ---');
+    console.log('  onglets retirés     : ' +
+      document.querySelectorAll('[data-agv-simple]').length + ' élément(s)');
+    console.log('  codes de fiche      : ' +
+      (API.codesFiches ? 'ACCEPTÉS (anciens accès encore valables)'
+                       : 'neutralisés — seuls les comptes ouvrent'));
+    console.log('  identifiant + mot de passe : toujours acceptés');
+    console.log('');
+    console.log('  AGV_SIMPLE.verifier()          qui n\'a pas encore de compte');
+    console.log('  AGV_SIMPLE.neutraliserCodes()  couper les anciens codes');
+    console.log('  AGV_SIMPLE.remettre()          tout rendre en l\'état');
+    return API.codesFiches ? 'codes de fiche encore acceptés' : 'comptes uniquement';
+  };
+
+  log('module actif — v' + API.version + ' — AGV_SIMPLE.etat()');
+
+})();
+
+</script>
+<script>
+/* =============================================================================
+   APP AGV — MODULE 21 : REBRANCHER LE BOUTON DE CONNEXION  (v1.0)
+   -----------------------------------------------------------------------------
+   LA CAUSE DE TOUT, ENFIN TROUVEE
+
+   Ligne 17703, le bouton de l'ecran de connexion est branche ainsi :
+
+       var btn = document.getElementById('agvcu-btn');
+       if(btn) btn.addEventListener('click', function(){ connecter(); });
+
+   « connecter » est une reference LOCALE, capturee dans la fermeture. Ce
+   n'est pas window.agvConnexionUnique. Plus bas, ligne 17827 :
+
+       window.agvConnexionUnique = connecter;
+
+   Les deux designent la meme fonction AU DEPART. Mais quand un module
+   remplace window.agvConnexionUnique, il ne change QUE la propriete de
+   window : la fermeture, elle, garde l'ancienne.
+
+       window.agvConnexionUnique()  ->  la chaine corrigee
+       un clic sur le bouton        ->  connecter() d'origine
+
+   Tous les correctifs — quatre empreintes au lieu d'une, deux normalisations
+   d'identifiant, recherche dans les boutiques rattachees, fiche et compte
+   ranges dans deux boutiques — etaient donc contournes A CHAQUE CLIC. Seule
+   la fonction d'origine s'executait, avec son unique empreinte, et elle
+   repondait « Mot de passe incorrect. » (ligne 17799).
+
+   CE MODULE REBRANCHE le bouton et la touche Entree sur
+   window.agvConnexionUnique, c'est-a-dire sur la chaine complete.
+
+   La methode : on remplace le bouton par une copie de lui-meme. Une copie ne
+   conserve pas les ecouteurs — l'ancien branchement disparait avec l'original,
+   sans qu'on ait a le retrouver. Apparence, identifiant et styles sont
+   preserves. Meme chose pour les deux champs, dont la valeur est recopiee.
+
+   INSTALLATION : charger apres les modules 1 a 20.
+   DESACTIVATION : AGV_BOUTON.actif = false
+   ============================================================================= */
+(function () {
+  'use strict';
+
+  var API = window.AGV_BOUTON = { actif: true, version: '1.0', rebranches: 0 };
+
+  function log() {
+    try { console.log.apply(console, ['[AGV-BOUTON]'].concat([].slice.call(arguments))); } catch (e) {}
+  }
+
+  function lancer() {
+    try {
+      if (typeof window.agvConnexionUnique === 'function') return window.agvConnexionUnique();
+    } catch (e) { log('échec', e && e.message); }
+  }
+
+  // Remplace un element par une copie : les ecouteurs d'origine ne sont pas
+  // recopies, donc l'ancien branchement disparait proprement.
+  function remplacer(el) {
+    if (!el || !el.parentNode) return null;
+    var neuf = el.cloneNode(true);
+    if ('value' in el) { try { neuf.value = el.value; } catch (e) {} }
+    el.parentNode.replaceChild(neuf, el);
+    return neuf;
+  }
+
+  function rebrancher() {
+    if (!API.actif) return;
+
+    var btn = document.getElementById('agvcu-btn');
+    if (!btn || btn.getAttribute('data-agv-bouton')) return;
+
+    // Le bouton
+    var b2 = remplacer(btn);
+    if (!b2) return;
+    b2.setAttribute('data-agv-bouton', '1');
+    b2.addEventListener('click', function (e) {
+      if (e && e.preventDefault) e.preventDefault();
+      lancer();
+    });
+
+    // Les deux champs, pour la touche Entree
+    ['agvcu-id', 'agvcu-pwd'].forEach(function (id) {
+      var c = document.getElementById(id);
+      if (!c || c.getAttribute('data-agv-bouton')) return;
+      var c2 = remplacer(c);
+      if (!c2) return;
+      c2.setAttribute('data-agv-bouton', '1');
+      c2.addEventListener('keydown', function (ev) {
+        if (ev && ev.key === 'Enter') {
+          if (ev.preventDefault) ev.preventDefault();
+          lancer();
+        }
+      });
+    });
+
+    API.rebranches++;
+    log('bouton de connexion rebranché sur la chaîne corrigée ' +
+        '(le branchement d\'origine, ligne 17703, appelait la fonction non corrigée)');
+  }
+
+  setInterval(rebrancher, 600);
+  rebrancher();
+
+  /* =========================================================================
+     VERIFICATION
+     ========================================================================= */
+
+  API.etat = function () {
+    var b = document.getElementById('agvcu-btn');
+    console.log('--- Bouton de connexion ---');
+    if (!b) { console.log('  écran de connexion non affiché'); return; }
+    console.log('  rebranché : ' + (b.getAttribute('data-agv-bouton') ? 'oui' : 'NON'));
+    console.log('  un clic appelle : ' +
+      (b.getAttribute('data-agv-bouton') ? 'window.agvConnexionUnique() — chaîne complète'
+                                         : 'connecter() d\'origine — correctifs contournés'));
+    console.log('  rebranchements depuis le chargement : ' + API.rebranches);
+    return API.rebranches;
+  };
+
+  log('module actif — v' + API.version);
+
+})();
+
+</script>
+<script>
+/* =============================================================================
+   APP AGV — MODULE 22 : LA SESSION NE CHANGE PAS DE ROLE  (v1.0)
+   -----------------------------------------------------------------------------
+   CE QUI PROMOUVAIT LES GERANTS EN FONDATEURS
+
+   Ligne 935, dans l'ecouteur qui recoit les donnees de Firebase :
+
+       if(currentRole==='gerant' && currentGerantId){
+         var _g = gerants.find(function(g){ return g.id == currentGerantId; });
+         if(!_g){ currentRole='fondateur'; currentGerantId=null; }
+       }
+
+   Si la fiche du gerant connecte n'est pas trouvee dans la liste du personnel
+   qui vient d'arriver, l'application le PROMEUT FONDATEUR. L'intention etait
+   sans doute de rattraper une fiche supprimee ; le resultat est qu'une fiche
+   introuvable ouvre les pleins pouvoirs.
+
+   Or la fiche est absente dans exactement les cas qui nous occupent :
+
+     · gerant d'une boutique rattachee — sa fiche est chez elle, la liste
+       chargee est celle d'une autre boutique ;
+     · gerant en visite dans une boutique ou le fondateur l'a autorise ;
+     · fiche pas encore arrivee au moment du premier rendu.
+
+   Et cet ecouteur se declenche a CHAQUE rafraichissement : meme une connexion
+   correcte etait promue une seconde plus tard. C'est pourquoi le probleme
+   revenait quel que soit le chemin de connexion corrige.
+
+   CE MODULE retient qui s'est reellement connecte et retablit la session des
+   qu'elle derive. Une session de gerant reste une session de gerant.
+
+   Le vrai fondateur n'est pas concerne : on ne retablit que ce qui a ete
+   memorise a la connexion, et seulement dans le sens gerant.
+
+   INSTALLATION : charger apres les modules 1 a 21.
+   DESACTIVATION : AGV_ROLE.actif = false
+   ============================================================================= */
+(function () {
+  'use strict';
+
+  var API = window.AGV_ROLE = { actif: true, version: '1.0', retablissements: 0 };
+  var CLE = 'agv_session_role';
+
+  // L'ANCRE : ce qui a ete VU pendant CE chargement de page. Declaree ici,
+  // avant tout usage, pour qu'aucune fonction ne la manipule avant qu'elle
+  // n'existe.
+  var ancre = null;          // { gid, uid } — jamais lu depuis le stockage
+
+  function log() {
+    try { console.log.apply(console, ['[AGV-ROLE]'].concat([].slice.call(arguments))); } catch (e) {}
+  }
+  function lireRole() {
+    try { if (window.currentRole) return window.currentRole; } catch (e) {}
+    try { return currentRole; } catch (e) {}
+    return null;
+  }
+  function lireGid() {
+    try { if (window.currentGerantId != null) return window.currentGerantId; } catch (e) {}
+    try { return currentGerantId; } catch (e) {}
+    return null;
+  }
+  function poser(role, gid) {
+    try { currentRole = role; } catch (e) {}
+    try { currentGerantId = gid; } catch (e) {}
+    window.currentRole = role;
+    window.currentGerantId = gid;
+  }
+
+  /* =========================================================================
+     CE QUI A ETE ETABLI A LA CONNEXION
+     ========================================================================= */
+
+  API.memoriser = function (role, gid, uid) {
+    var s = { role: role, gid: gid, uid: uid || (window._currentShop || {}).uid, le: Date.now() };
+    try { sessionStorage.setItem(CLE, JSON.stringify(s)); } catch (e) {}
+    log('session mémorisée : ' + role + (gid != null ? ' #' + gid : ''));
+    return s;
+  };
+
+  function session() {
+    try {
+      var b = sessionStorage.getItem(CLE);
+      return b ? JSON.parse(b) : null;
+    } catch (e) { return null; }
+  }
+  API.session = session;
+
+  API.oublier = function () {
+    try { sessionStorage.removeItem(CLE); } catch (e) {}
+    ancre = null;
+    log('session oubliée');
+  };
+
+  /* =========================================================================
+     LA VEILLE
+     ========================================================================= */
+
+  /* L'ANCRE : ce que l'on a VU DE SES YEUX pendant CE chargement de page.
+
+     La premiere version se fiait a une session rangee dans sessionStorage.
+     Elle pouvait dater d'une connexion precedente, dans le meme onglet : le
+     fondateur se connectait ensuite et la veille le rabaissait au rang de
+     gerant. C'etait mon erreur, exactement symetrique de celle de la ligne 935.
+
+     On ne retablit donc QUE si l'on a reellement observe, depuis le chargement
+     de cette page, une session de gerant avec son identifiant. Un fondateur
+     qui vient de se connecter n'a jamais ete observe comme gerant : rien ne
+     peut le rabaisser. */
+  function veiller() {
+    if (!API.actif) return;
+
+    var role = lireRole(), gid = lireGid();
+    var uid = (window._currentShop || {}).uid;
+
+    // Session de gerant en cours : c'est elle qui fait foi.
+    if (role === 'gerant' && gid != null) {
+      ancre = { gid: gid, uid: uid };
+      return;
+    }
+
+    // Session de fondateur etablie sans qu'aucun gerant n'ait ete vu ici :
+    // c'est un vrai fondateur, on ne touche a rien.
+    if (!ancre) return;
+
+    // Le fondateur a pris la main volontairement (nouvelle connexion) :
+    // l'ancre n'a plus lieu d'etre.
+    if (role === 'fondateur' && String(ancre.uid || '') !== String(uid || '')) {
+      ancre = null;
+      return;
+    }
+
+    // La session a derive sur place. On la retablit.
+    poser('gerant', ancre.gid);
+    API.retablissements++;
+    if (API.retablissements <= 3 || API.retablissements % 20 === 0) {
+      log('session de gérant rétablie (' + API.retablissements + ')' +
+          ' — la ligne 935 l\'avait promue fondateur');
+    }
+    try { if (typeof window.applyRoleUI === 'function') window.applyRoleUI(); } catch (e) {}
+    try { if (typeof window.appliquerRole === 'function') window.appliquerRole(); } catch (e) {}
+  }
+
+  setInterval(veiller, 400);
+
+  /* =========================================================================
+     LA CONNEXION MEMORISE D'ELLE-MEME
+     -------------------------------------------------------------------------
+     On enveloppe l'ouverture de session des modules de connexion pour retenir
+     ce qui vient d'etre etabli, sans avoir a modifier chacun d'eux.
+     ========================================================================= */
+
+  function brancher() {
+    var C = window.AGV_CONNEXION;
+    if (!C || typeof C.ouvrirBoutique !== 'function' || C.ouvrirBoutique.__agvRole) return false;
+    var origine = C.ouvrirBoutique;
+    var neuf = function (cible, compte, cb) {
+      try {
+        var gid = compte && compte.gerantId != null ? compte.gerantId : null;
+        var estFondateur = compte && compte.role === 'fondateur' && gid == null;
+        API.memoriser(estFondateur ? 'fondateur' : 'gerant', gid, cible && cible.uid);
+        // Une NOUVELLE connexion efface ce qui precede : un fondateur qui
+        // s'installe ne doit pas heriter de l'ancre d'un gerant.
+        ancre = estFondateur ? null : { gid: gid, uid: cible && cible.uid };
+      } catch (e) {}
+      return origine.apply(this, arguments);
+    };
+    neuf.__agvRole = true;
+    C.ouvrirBoutique = neuf;
+    log('module actif — v' + API.version);
+    return true;
+  }
+
+  /* LE MOMENT EXACT OU UNE SESSION S'ETABLIT
+
+     agvLaunchApp est appele APRES que le role et l'identifiant ont ete poses,
+     par TOUS les chemins de connexion — les miens comme ceux d'origine. C'est
+     donc le seul instant ou l'on sait avec certitude ce qui vient d'etre
+     decide, sans rien deviner.
+
+     A cet instant on remet l'ancre a zero puis on la reconstitue d'apres ce
+     qui est reellement en place : un fondateur repart sans ancre, un gerant
+     repart avec la sienne. Une ancre ne peut donc jamais survivre a une
+     nouvelle connexion. */
+  function brancherLancement() {
+    if (typeof window.agvLaunchApp !== 'function' || window.agvLaunchApp.__agvRole) return false;
+    var origine = window.agvLaunchApp;
+    var neuf = function () {
+      try {
+        var r = lireRole(), g = lireGid();
+        var u = (arguments[0] && arguments[0].uid) || (window._currentShop || {}).uid;
+        ancre = (r === 'gerant' && g != null) ? { gid: g, uid: u } : null;
+        log('session établie : ' + (r || '—') + (g != null ? ' #' + g : '') +
+            (ancre ? '' : ' — aucune ancre'));
+      } catch (e) {}
+      return origine.apply(this, arguments);
+    };
+    neuf.__agvRole = true;
+    neuf.__agvOrig = origine;
+    window.agvLaunchApp = neuf;
+    return true;
+  }
+
+  setInterval(function () {
+    try {
+      if (typeof window.agvLaunchApp === 'function' && !window.agvLaunchApp.__agvRole) {
+        brancherLancement();
+      }
+    } catch (e) {}
+  }, 500);
+  brancherLancement();
+
+  var essais = 0;
+  if (!brancher()) {
+    var horloge = setInterval(function () {
+      essais++;
+      if (brancher() || essais > 900) clearInterval(horloge);
+    }, 400);
+  }
+
+  // L'ecran de boutique (ligne 1817) etablit la session sans passer par nous :
+  // on retient ce qu'on y trouve, une fois la session installee.
+  setTimeout(function attraper() {
+    try {
+      if (lireRole() === 'gerant' && lireGid() != null && !session()) {
+        API.memoriser('gerant', lireGid(), (window._currentShop || {}).uid);
+      }
+    } catch (e) {}
+    setTimeout(attraper, 1500);
+  }, 2500);
+
+  API.liberer = function () {
+    ancre = null;
+    API.oublier();
+    console.log('Ancre levée : plus rien ne peut rabaisser la session en cours.');
+    return 'libéré';
+  };
+
+  /* =========================================================================
+     VERIFICATION
+     ========================================================================= */
+
+  API.etat = function () {
+    var s = session();
+    console.log('--- Session ---');
+    console.log('  rôle en cours   : ' + (lireRole() || '—') +
+                (lireGid() != null ? '  #' + lireGid() : ''));
+    console.log('  rôle mémorisé   : ' + (s ? s.role + (s.gid != null ? ' #' + s.gid : '') : 'aucun'));
+    console.log('  ancre observée  : ' + (ancre ? 'gérant #' + ancre.gid + ' dans ' + ancre.uid
+                                                : 'aucune — un fondateur ne sera pas rabaissé'));
+    console.log('  rétablissements : ' + API.retablissements +
+      (API.retablissements ? '  ← la ligne 935 tentait de promouvoir ce gérant' : ''));
+    return s;
+  };
+
+})();
+
+</script>
+<script>
+/* =============================================================================
+   APP AGV — MODULE 20 : TRACEUR DES REFUS DE CONNEXION  (v1.0)
+   -----------------------------------------------------------------------------
+   Nous tournons depuis plusieurs echanges parce que « mot de passe incorrect »
+   ne dit rien : ce libelle existe a SEPT endroits differents du fichier, et
+   chacun correspond a une verification differente.
+
+       ligne  1801   « Code fondateur incorrect »
+       ligne  1824   « Code gerant incorrect »
+       ligne 13097   « Mot de passe incorrect. »
+       ligne 15950   « Mot de passe incorrect. »        (espace concepteur)
+       ligne 17799   « Mot de passe incorrect. »        (connexion unifiee)
+       ligne 17819   « utilisateur ou mot de passe incorrect. »
+       ligne 30968   « Identifiant ou mot de passe incorrect. »   (verrou)
+
+   Ce module intercepte l'affichage de ces messages et note, dans la console,
+   QUI vient de refuser. Une seule tentative suffit alors a savoir quelle
+   verification bloque, au lieu d'essayer une correction a l'aveugle.
+
+   IL N'EMPECHE NI NE MODIFIE AUCUNE CONNEXION : il observe et raconte.
+   AUCUN MOT DE PASSE N'EST JOURNALISE — seuls le nom du refus et sa
+   provenance apparaissent.
+
+   Usage : ouvrir la console, faire UNE tentative, puis lire.
+           AGV_TRACE.rapport()  redonne le dernier refus et son origine.
+
+   INSTALLATION : charger apres les modules 1 a 19.
+   ============================================================================= */
+(function () {
+  'use strict';
+
+  var API = window.AGV_TRACE = { actif: true, version: '1.0', dernier: null };
+
+  var ORIGINES = [
+    { motif: /agv-?ecran|verifierEtOuvrir/i,   qui: 'module 15 (écran visible)' },
+    { motif: /agv-?dest|entrer|chezElle|depuisAccueil/i, qui: 'module 16 (choix de la boutique)' },
+    { motif: /agv-?connexion|reconnaitre|anciensCodes/i, qui: 'module 11 (connexion)' },
+    { motif: /verrouIdentifiant|empreinte33/i, qui: "le verrou d'identifiant, ligne 30936" },
+    { motif: /agvShopLogin/i,                  qui: "l'écran de boutique, ligne 1782" },
+    { motif: /connecter/i,                     qui: 'la connexion unifiée, ligne 17788' }
+  ];
+
+  function provenance() {
+    var pile = '';
+    try { pile = new Error().stack || ''; } catch (e) {}
+    for (var i = 0; i < ORIGINES.length; i++) {
+      if (ORIGINES[i].motif.test(pile)) return ORIGINES[i].qui;
+    }
+    var m = pile.match(/index\.html:(\d+)/g);
+    return m && m.length > 2 ? 'ligne ' + m[2].split(':')[1] : 'origine indéterminée';
+  }
+
+  var REFUS = /incorrect|desactiv|désactiv|bloqu|introuvable|pas accès|pas d'accès/i;
+
+  function tracer(nom, txt, ok) {
+    if (!API.actif) return;
+    if (ok === true) {
+      console.log('%c[AGV-TRACE] ACCEPTÉ ', 'background:#16a34a;color:#fff', txt);
+      API.dernier = { resultat: 'accepté', message: txt, via: nom };
+      return;
+    }
+    if (!REFUS.test(String(txt || ''))) return;
+    var d = provenance();
+    API.dernier = { resultat: 'refusé', message: txt, via: nom, origine: d };
+    console.log('%c[AGV-TRACE] REFUS ', 'background:#b91c1c;color:#fff',
+                '« ' + txt +' »');
+    console.log('            affiché par : ' + nom);
+    console.log('            refusé par  : ' + d);
+  }
+
+  function envelopper(nom) {
+    var f = window[nom];
+    if (typeof f !== 'function' || f.__agvTrace) return false;
+    var neuf = function (txt, ok) {
+      try { tracer(nom, txt, ok); } catch (e) {}
+      return f.apply(this, arguments);
+    };
+    neuf.__agvTrace = true;
+    neuf.__agvOrig = f;
+    window[nom] = neuf;
+    return true;
+  }
+
+  setInterval(function () {
+    try {
+      envelopper('agvShopLoginMsg');
+      envelopper('messageConnexion');
+      envelopper('noteComptes');
+    } catch (e) {}
+  }, 800);
+
+  API.rapport = function () {
+    if (!API.dernier) {
+      console.log('Aucune tentative observée. Faites un essai de connexion, puis relancez.');
+      return;
+    }
+    var d = API.dernier;
+    console.log('--- Dernière tentative ---');
+    console.log('  résultat    : ' + d.resultat);
+    console.log('  message     : ' + d.message);
+    console.log('  affiché par : ' + d.via);
+    if (d.origine) console.log('  refusé par  : ' + d.origine);
+    return d;
+  };
+
+  /* =========================================================================
+     DIAGNOSTIC COMPLET, EN UNE COMMANDE
+     ========================================================================= */
+
+  API.diagnostic = function () {
+    var noms = ['AGV_VERSION', 'AGV_PERF', 'AGV_FACT', 'AGV_PORTAIL', 'AGV_DETTES',
+                'AGV_RESET', 'AGV_FORFAIT', 'AGV_STABLE', 'AGV_LIER', 'AGV_GERANTS',
+                'AGV_CONNEXION', 'AGV_COMPTES', 'AGV_ACCES', 'AGV_CHOIX', 'AGV_ECRAN',
+                'AGV_DEST', 'AGV_MDP', 'AGV_SIMPLE', 'AGV_AUDIT'];
+    var absents = noms.filter(function (n) { return typeof window[n] !== 'object'; });
+
+    console.log('════════ DIAGNOSTIC AGV ════════');
+    var v = window.AGV_VERSION;
+    console.log('Version      : ' + (v ? v.version + ' — fichier du ' + v.date
+                                       : 'INCONNUE — ancien fichier en cache'));
+    console.log('Modules      : ' + (absents.length ? 'MANQUANTS → ' + absents.join(', ')
+                                                    : noms.length + ' présents'));
+
+    var r = null;
+    try { r = window.currentRole || currentRole; } catch (e) {}
+    var g = null;
+    try { g = window.currentGerantId || currentGerantId; } catch (e) {}
+    var s = window._currentShop || window._shopLoginData || {};
+    console.log('Rôle         : ' + (r || 'non connecté'));
+    console.log('Gérant       : ' + (g != null ? g + '  (' + typeof g + ')' : '—'));
+    console.log('Boutique     : ' + (s.entreprise || '—') + '  ' + (s.uid || ''));
+
+    console.log('');
+    console.log('Bouton « Mots de passe des gérants » :');
+    if (!window.AGV_MDP) console.log('   module 17 absent — le bouton ne peut pas apparaître');
+    else if (r !== 'fondateur') console.log('   caché : il ne s\'affiche que pour le FONDATEUR');
+    else if (document.getElementById('agv-simple-chip')) console.log('   posé, en bas à DROITE de l\'écran');
+    else console.log('   module présent, rôle correct, mais pastille absente — ouvrez AGV_MDP.panneau()');
+
+    console.log('');
+    console.log('Codes de fiche : ' +
+      (window.AGV_SIMPLE && window.AGV_SIMPLE.codesFiches === false
+        ? 'NEUTRALISÉS — seuls les comptes ouvrent'
+        : 'encore acceptés'));
+
+    if (window.getCurrentGerant) {
+      var f = null;
+      try { f = window.getCurrentGerant(); } catch (e) {}
+      console.log('getCurrentGerant() : ' + (f ? f.nom || 'trouvé' : 'undefined — compte gérant introuvable'));
+    }
+
+    console.log('');
+    console.log('Ensuite : faites UNE tentative de connexion, puis AGV_TRACE.rapport()');
+    console.log('════════════════════════════════');
+    return absents.length ? 'modules manquants' : 'complet';
+  };
+
+  try {
+    console.log('%c[AGV-TRACE] ', 'background:#0369a1;color:#fff',
+                'actif — tapez AGV_TRACE.diagnostic() puis faites une tentative');
+  } catch (e) {}
 
 })();
 
