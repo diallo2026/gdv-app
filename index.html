@@ -38838,46 +38838,51 @@ window.agvStocks = function(){
 
 
 <!-- ==================================================================
-     App AGV — VERSION AGV-31 — fichier du 2026-09-01 01:46 UTC
+     App AGV — VERSION AGV-37 — fichier du 2026-09-05 22:39 UTC
 
-     LE GERANT NE POUVAIT PAS CHANGER DE BOUTIQUE
+     LE SENS DE LA DETTE SE LIT A LA COULEUR
 
-     Le changement se faisait EN PLACE. Or les ecouteurs Firebase de la
-     boutique quittee restent branches (l.989, l.22301 et suivantes) et
-     reecrivent products, gerants, ventes une fraction de seconde plus
-     tard : le gerant croyait n avoir pas bouge.
+       ROUGE  #c0141c   le client doit a la boutique   (montant positif)
+       VERT   #15803d   la boutique doit au client     (montant negatif)
+       NEUTRE #111      compte solde                   (montant nul)
 
-     L application elle-meme recharge la page pour changer de bloc
-     (l.26056) — c est le seul moyen sur de repartir avec des ecouteurs
-     propres. Le module 10 procede de meme : il laisse une consigne de
-     reprise, recharge, puis ouvre la boutique demandee et consomme la
-     consigne pour qu un rechargement ulterieur ne la rejoue pas.
+     La regle s applique au « Reste a Payer » ET aux deux lignes de solde,
+     dans le tableau borde du bas de facture.
+
+     Le signe est lu sur le montant tel qu il est ecrit — « 2 294 500 »,
+     « -2 294 500 », « (2 294 500) » — sans recalcul : aucune valeur n est
+     modifiee, seule sa couleur change.
 
      VERSION : la console doit afficher
-        AGV AGV-31   fichier du 2026-09-01 01:46 UTC — 22 modules
+        AGV AGV-37   fichier du 2026-09-05 22:39 UTC — 27 modules
 
-      1. agv-version       : repere de version
-      2. agv-performance   : sauvegarde differentielle ; plus d index sur la recherche produit
-      3. agv-factures      : numerotation, vendeur, dates, remise/frais, livraison, pagination
-      4. agv-portail       : entree directe, suppression/detachement de bloc, sortie de secours Echap
-      5. agv-dettes        : boule de neige, cache cloisonne, doublons, nettoyage de bloc
-      6. agv-reset         : reinitialisation complete, personnel protege, sauvegarde prealable
-      7. agv-forfaits      : bouton Blocs sur chaque fiche concepteur : forfait Pro reglable
-      8. agv-stable        : boutiques rattachees stables, lettre libre, nom reel et suivi
-      9. agv-lier          : rattacher, detacher, reparer les liens incomplets (concepteur)
-     10. agv-gerants       : NAVIGATION : rechargement + reprise, ecouteurs repartis propres
-     11. agv-connexion     : un compte lie a une fiche de gerant ouvre une session de GERANT
-     12. agv-comptes       : un nom d utilisateur pour plusieurs gerants, meme retaille que l app
-     13. agv-acces         : chaque boutique garde son code ET son lien
-     14. agv-choix         : liste des gerants sous l ecran unifie
-     15. agv-ecran         : ecran visible : les codes sont lus dans la BASE, plus dans la page
-     16. agv-dest          : choix de la boutique sous le mot de passe + controle des acces
-     17. agv-mdp           : MOTS DE PASSE DES GERANTS : un seul mot de passe, plusieurs boutiques
-     18. agv-simple        : pastille refermable, effacee des qu elle generait le travail
-     19. agv-bouton        : le bouton de connexion rebranche sur la chaine corrigee
-     20. agv-role          : la session ne change pas de role — dans LES DEUX SENS
-     21. agv-trace         : TRACEUR : nomme la fonction qui refuse + AGV_TRACE.diagnostic()
-     22. agv-audit         : AGV_AUDIT.lancer() — audit en lecture seule de vos vraies donnees
+      1. agv-version           : repere de version
+      2. agv-performance       : sauvegarde differentielle ; cache des soldes clients oubliable
+      3. agv-factures          : numerotation, vendeur, dates, remise/frais, livraison, pagination
+      4. agv-portail           : entree directe, suppression/detachement de bloc, sortie de secours Echap
+      5. agv-dettes            : boule de neige, cache cloisonne, doublons, nettoyage de bloc
+      6. agv-reset             : reinitialisation complete, personnel protege, sauvegarde prealable
+      7. agv-forfaits          : bouton Blocs sur chaque fiche concepteur : forfait Pro reglable
+      8. agv-stable            : boutiques rattachees stables, lettre libre, nom reel et suivi
+      9. agv-lier              : rattacher, detacher, reparer les liens incomplets (concepteur)
+     10. agv-gerants           : navigation : rechargement + reprise, ecouteurs repartis propres
+     11. agv-connexion         : ouvrir une autre boutique passe par un RECHARGEMENT
+     12. agv-comptes           : un nom d utilisateur pour plusieurs gerants, meme retaille que l app
+     13. agv-acces             : chaque boutique garde son code ET son lien
+     14. agv-choix             : liste des gerants sous l ecran unifie
+     15. agv-ecran             : ecran visible : les codes sont lus dans la BASE, plus dans la page
+     16. agv-dest              : choix de la boutique sous le mot de passe + controle des acces
+     17. agv-mdp               : MOTS DE PASSE DES GERANTS : un seul mot de passe, plusieurs boutiques
+     18. agv-simple            : pastille refermable, effacee des qu elle generait le travail
+     19. agv-bouton            : le bouton de connexion rebranche sur la chaine corrigee
+     20. agv-role              : la session ne change pas de role — dans LES DEUX SENS
+     21. agv-session           : la session ne se referme pas seule apres une connexion reussie
+     22. agv-licence           : LICENCE : une boutique rattachee vit sous celle de sa mere
+     23. agv-stock             : STOCK : la vente retrouve le meme produit que l entree
+     24. agv-facture-couleur   : FACTURE : bas en tableau ; ROUGE si le client doit, VERT si la boutique doit
+     25. agv-solde             : SOLDE CLIENT : mis a jour seul apres facture ou versement
+     26. agv-trace             : TRACEUR : nomme la fonction qui refuse + AGV_TRACE.diagnostic()
+     27. agv-audit             : AGV_AUDIT.lancer() — audit en lecture seule de vos vraies donnees
      ================================================================== -->
 <script>
 /* =============================================================================
@@ -38890,9 +38895,9 @@ window.agvStocks = function(){
 (function () {
   'use strict';
   var V = {
-    version: 'AGV-31',
-    date: '2026-09-01 01:46 UTC',
-    modules: 22,
+    version: 'AGV-37',
+    date: '2026-09-05 22:39 UTC',
+    modules: 27,
     corrections: [
       'empreinte : deux sels (agvc$ a l ecriture, agv$ a la verification)',
       'identifiant : deux normalisations (l arobase retiree a l ecriture)',
@@ -38911,6 +38916,11 @@ window.agvStocks = function(){
       'LIGNE 935 : une fiche introuvable promouvait le gerant en FONDATEUR',
       'la veille n agit que sur un gerant OBSERVE dans ce chargement de page',
       'NAVIGATION : la page se recharge, les ecouteurs repartent propres',
+      'STOCK : la vente cherche le produit comme l entree (designation ET code)',
+      'LA SESSION NE SE REFERME PAS SEULE apres une connexion reussie',
+      'LICENCE : une boutique rattachee vit sous celle de sa mere',
+      'FACTURE : bas en tableau ; ROUGE si le client doit, VERT si la boutique doit',
+      'SOLDE CLIENT : mis a jour seul apres facture ou versement',
       'NAVIGATION : les lettres de bloc sont relatives a la boutique mere',
       'STOCK : l index produits suivait un tableau remplace par Firebase'
     ]
@@ -38923,7 +38933,7 @@ window.agvStocks = function(){
   V.etat = function () {
     var noms = ['AGV_PERF', 'AGV_FACT', 'AGV_PORTAIL', 'AGV_DETTES', 'AGV_RESET',
                 'AGV_FORFAIT', 'AGV_STABLE', 'AGV_LIER', 'AGV_GERANTS', 'AGV_CONNEXION',
-                'AGV_COMPTES', 'AGV_ACCES', 'AGV_CHOIX', 'AGV_ECRAN', 'AGV_AUDIT', 'AGV_DEST', 'AGV_MDP', 'AGV_SIMPLE', 'AGV_TRACE', 'AGV_BOUTON', 'AGV_ROLE'];
+                'AGV_COMPTES', 'AGV_ACCES', 'AGV_CHOIX', 'AGV_ECRAN', 'AGV_AUDIT', 'AGV_DEST', 'AGV_MDP', 'AGV_SIMPLE', 'AGV_TRACE', 'AGV_BOUTON', 'AGV_ROLE', 'AGV_STOCK', 'AGV_SESSION', 'AGV_LICENCE', 'AGV_FACTURE', 'AGV_SOLDE'];
     var absents = noms.filter(function (n) { return typeof window[n] !== 'object'; });
     console.log('Version ' + V.version + ' — fichier du ' + V.date);
     console.log(absents.length ? 'MODULES ABSENTS : ' + absents.join(', ')
@@ -39324,6 +39334,16 @@ window.agvStocks = function(){
     }
     log('index memoire installes (soldes clients uniquement)');
   }
+
+  /* Les soldes clients sont gardes en memoire pour eviter de les recalculer a
+     chaque affichage. Apres une facture ou un versement, ce cache doit tomber,
+     sinon l'ecran resservirait le montant d'avant. */
+  API.oublierIndex = function () {
+    empreinteFactures = '';
+    IDX.soldeClient = null;
+    IDX.achatsClient = null;
+    return 'soldes clients à recalculer';
+  };
 
   /* ==========================================================================
      5. ECRITURE DU CACHE LOCAL HORS DU CHEMIN CRITIQUE
@@ -44636,7 +44656,81 @@ window.agvStocks = function(){
   }
   API.poserGerant = poserGerant;
 
+  /* -------------------------------------------------------------------------
+     OUVRIR UNE AUTRE BOUTIQUE EXIGE UN RECHARGEMENT
+
+     C'est ce qui distinguait le fondateur du gerant. Le fondateur change de
+     boutique par le portail, ligne 26056 :
+
+         sessionStorage.setItem(CLE_REPRISE, ...);
+         setTimeout(function(){ location.reload(); }, 350);
+
+     La page se recharge : machinerie neuve, aucun reste. Le gerant, lui,
+     entrait EN PLACE. Restaient alors actifs, pour la boutique quittee :
+
+         ref.on('value', ...)        ligne 989   reecrit les donnees
+         surveillerAcces(shop)       ligne 14754 surveille SA licence
+         agvLoadShopLogin en attente ligne 14874 rappelle SON ecran
+
+     window._agvDbListener est bien ecrase (ligne 990), mais l'ANCIEN ecouteur
+     n'est jamais detache : il continue de repondre. La boutique du gerant
+     s'ouvrait, puis la machinerie de la precedente la refermait.
+
+     On procede donc comme le fondateur : consigne, rechargement, ouverture.
+     ------------------------------------------------------------------------- */
+  var CLE_BOUTIQUE = 'agv_reprise_boutique';
+
+  function passerParRechargement(cible, compte) {
+    var saisie = (window._shopLoginData || window._currentShop || {}).uid;
+    // Meme boutique : rien a nettoyer, on ouvre directement.
+    if (!cible || !cible.uid || String(cible.uid) === String(saisie)) return false;
+    try {
+      sessionStorage.setItem(CLE_BOUTIQUE, JSON.stringify({
+        uid: cible.uid,
+        nom: cible.nom || '',
+        role: compte && compte.role === 'fondateur' && compte.gerantId == null ? 'fondateur' : 'gerant',
+        gid: compte && compte.gerantId != null ? compte.gerantId : null,
+        le: Date.now()
+      }));
+    } catch (e) { return false; }
+    message('Ouverture de ' + (cible.nom || 'votre boutique') + '...', true);
+    log('rechargement pour ouvrir ' + (cible.nom || cible.uid) +
+        ' — la machinerie de la boutique saisie doit être quittée');
+    setTimeout(function () { try { location.reload(); } catch (e) {} }, 400);
+    return true;
+  }
+
+  /* La consigne est relue au demarrage, puis consommee immediatement pour
+     qu'un rechargement ulterieur ne la rejoue pas. */
+  function reprendre() {
+    var r = null;
+    try {
+      var b = sessionStorage.getItem(CLE_BOUTIQUE);
+      if (b) r = JSON.parse(b);
+    } catch (e) {}
+    if (!r || !r.uid) return false;
+    if (Date.now() - (r.le || 0) > 120000) {
+      try { sessionStorage.removeItem(CLE_BOUTIQUE); } catch (e) {}
+      return false;
+    }
+    if (!window.agvLaunchApp) return false;
+    try { sessionStorage.removeItem(CLE_BOUTIQUE); } catch (e) {}
+    log('reprise après rechargement — ouverture de ' + (r.nom || r.uid));
+    ouvrirBoutique({ uid: r.uid, nom: r.nom, direct: true },
+                   { role: r.role, gerantId: r.gid });
+    return true;
+  }
+
+  var essaisReprise = 0;
+  var horlogeReprise = setInterval(function () {
+    essaisReprise++;
+    if (reprendre() || essaisReprise > 40) clearInterval(horlogeReprise);
+  }, 400);
+
   function ouvrirBoutique(cible, compte, cb) {
+    // Sauf reprise, changer de boutique passe par un rechargement.
+    if (!(cible && cible.direct) && passerParRechargement(cible, compte)) return;
+
     function suite(info) {
       info = info || {};
       var shop = cible.shop || {
@@ -47625,6 +47719,1073 @@ window.agvStocks = function(){
     console.log('  rétablissements : ' + API.retablissements +
       (API.retablissements ? '  ← la ligne 935 tentait de promouvoir ce gérant' : ''));
     return s;
+  };
+
+})();
+
+</script>
+<script>
+/* =============================================================================
+   APP AGV — MODULE 24 : LA SESSION NE SE REFERME PAS TOUTE SEULE  (v1.0)
+   -----------------------------------------------------------------------------
+   LE SYMPTOME
+
+   Le gerant saisit ses identifiants, sa boutique apparait une fraction de
+   seconde, puis l'ecran de connexion revient. La connexion a donc REUSSI :
+   c'est l'affichage qui bascule ensuite.
+
+   L'application change d'ecran par agvShow(). Apres un lancement reussi, un
+   appel tardif — une lecture Firebase qui revient, un rendu differe, une
+   verification de licence lancee avant la connexion et qui repond apres —
+   rappelle agvShow('agv-shop-login') et recouvre l'application.
+
+   Cela ne se voyait pas sur la boutique d'accueil, dont l'ecran de connexion
+   etait deja celui de la boutique ouverte. Sur une boutique RATTACHEE, la
+   session s'ouvre ailleurs que la ou l'ecran a ete charge : l'appel tardif
+   arrive donc systematiquement.
+
+   CE MODULE
+
+   Tant qu'une session est reellement ouverte — une boutique, un role — tout
+   retour vers l'ecran de connexion ou la page d'accueil est REFUSE, et
+   l'origine de la tentative est nommee dans la console.
+
+   UNE VRAIE DECONNEXION RESTE POSSIBLE : doLogout est reconnu et laisse
+   passer. Rien n'est verrouille, seul l'accident est ecarte.
+
+   Verifier : AGV_SESSION.etat()
+
+   INSTALLATION : charger apres les modules 1 a 23.
+   DESACTIVATION : AGV_SESSION.actif = false
+   ============================================================================= */
+(function () {
+  'use strict';
+
+  var API = window.AGV_SESSION = { actif: true, version: '1.0', bloques: 0, dernier: null };
+
+  var ECRANS = ['agv-shop-login', 'agv-landing', 'agv-auth'];
+
+  function log() {
+    try { console.log.apply(console, ['[AGV-SESSION]'].concat([].slice.call(arguments))); } catch (e) {}
+  }
+  function role() {
+    try { if (window.currentRole) return window.currentRole; } catch (e) {}
+    try { return currentRole; } catch (e) {}
+    return null;
+  }
+  function ouverte() {
+    return !!((window._currentShop || {}).uid && role());
+  }
+
+  var origine = null;      // d'ou vient la tentative
+
+  function provenance() {
+    var pile = '';
+    try { pile = new Error().stack || ''; } catch (e) {}
+    if (/doLogout/.test(pile)) return 'doLogout';
+    if (/agvLoadShopLogin|verifierAcces|afficher/.test(pile)) {
+      return "agvLoadShopLogin — l'écran chargé avant la connexion répond en retard";
+    }
+    if (/ouvertureDirecte|demarrer/.test(pile)) return "l'ouverture directe de la boutique mémorisée";
+    if (/agvDeconnexion|agv41/.test(pile)) return 'la déconnexion en deux temps';
+    var m = pile.match(/index\.html:(\d+)/g);
+    return m && m.length > 1 ? 'ligne ' + m[1].split(':')[1] : 'origine indéterminée';
+  }
+
+  /* =========================================================================
+     UNE VRAIE DECONNEXION EST RECONNUE
+     ========================================================================= */
+
+  var deconnexionVoulue = false;
+
+  function brancherLogout() {
+    if (typeof window.doLogout !== 'function' || window.doLogout.__agvSession) return false;
+    var vieux = window.doLogout;
+    var neuf = function () {
+      deconnexionVoulue = true;
+      setTimeout(function () { deconnexionVoulue = false; }, 4000);
+      return vieux.apply(this, arguments);
+    };
+    neuf.__agvSession = true;
+    neuf.__agvOrig = vieux;
+    window.doLogout = neuf;
+    return true;
+  }
+
+  /* =========================================================================
+     LE FILTRE SUR agvShow
+     ========================================================================= */
+
+  function brancherShow() {
+    if (typeof window.agvShow !== 'function' || window.agvShow.__agvSession) return false;
+    var vieux = window.agvShow;
+
+    var neuf = function (ecran) {
+      if (API.actif && ECRANS.indexOf(String(ecran)) >= 0 && ouverte() && !deconnexionVoulue) {
+        var d = provenance();
+        API.bloques++;
+        API.dernier = { ecran: ecran, origine: d, le: Date.now() };
+        if (API.bloques <= 5) {
+          log('retour vers « ' + ecran + ' » refusé — une session est ouverte (' +
+              ((window._currentShop || {}).entreprise || '') + ', ' + role() + ')');
+          log('   demandé par : ' + d);
+        }
+        return;
+      }
+      return vieux.apply(this, arguments);
+    };
+    neuf.__agvSession = true;
+    neuf.__agvOrig = vieux;
+    window.agvShow = neuf;
+    log('module actif — v' + API.version);
+    return true;
+  }
+
+  var essais = 0;
+  var horloge = setInterval(function () {
+    essais++;
+    brancherShow();
+    brancherLogout();
+    if (essais > 900) clearInterval(horloge);
+  }, 400);
+  brancherShow();
+  brancherLogout();
+
+  /* =========================================================================
+     VERIFICATION
+     ========================================================================= */
+
+  API.etat = function () {
+    var s = window._currentShop || {};
+    console.log('--- Session ---');
+    console.log('  boutique : ' + (s.entreprise || '—') + '  ' + (s.uid || ''));
+    console.log('  rôle     : ' + (role() || 'non connecté'));
+    console.log('  retours vers l\'écran de connexion refusés : ' + API.bloques);
+    if (API.dernier) {
+      console.log('  dernier refus : « ' + API.dernier.ecran + ' »');
+      console.log('     demandé par : ' + API.dernier.origine);
+    } else {
+      console.log('  aucun refus — la session ne s\'est jamais refermée seule');
+    }
+    return API.bloques;
+  };
+
+})();
+
+</script>
+<script>
+/* =============================================================================
+   APP AGV — MODULE 25 : LA LICENCE SUIT LA BOUTIQUE MERE  (v1.0)
+   -----------------------------------------------------------------------------
+   POURQUOI LES BOUTIQUES RATTACHEES S'OUVRAIENT PUIS SE REFERMAIENT
+
+   Ce n'etait pas la connexion. C'est un controle de licence.
+
+   surveillerAcces(shop), ligne 14754, surveille EN CONTINU trois champs :
+
+       ['blocked','licenceStatut','dateExpiration'].forEach(function(champ){
+         var r = d.ref('gdv_shops/' + shop.uid + '/info/' + champ);
+         var h = r.on('value', function(snap){ etat[champ] = snap.val(); evaluer(); });
+
+   et evaluer() appelle revoquerAcces(motif), ligne 14789, qui ferme tout :
+
+       window._currentShop = null;
+       app.classList.remove('visible');
+       ecranBlocage(motif);
+
+   Le motif vient de motifBlocage(), ligne 14508 :
+
+       if(info.blocked === true) return 'bloquee';
+       if(licenceExpiree(info))  return 'expiree';
+
+   Or LA LICENCE EST PAYEE POUR LA BOUTIQUE MERE. Les boutiques rattachees
+   gardent leur propre « info », souvent avec « blocked: true » — elles
+   avaient ete bloquees avant d'etre rattachees — ou une « dateExpiration »
+   depassee, leur abonnement n'etant plus suivi separement.
+
+   La surveillance lisait donc l'etat de la RATTACHEE, y trouvait le blocage,
+   et refermait la boutique une fraction de seconde apres son ouverture.
+
+   LA REGLE CORRIGEE
+
+   Une boutique rattachee n'a plus de licence propre : elle est un bloc de sa
+   mere et vit sous la licence de celle-ci. Avant toute revocation, on lit
+   l'ecriteau « gdv_shops/<uid>/rattachement » ; s'il existe, c'est l'etat de
+   la MERE qui decide.
+
+   RIEN N'EST AFFAIBLI : si la mere est reellement bloquee ou expiree, la
+   revocation a lieu, pour elle comme pour tous ses blocs. Aucun champ n'est
+   modifie dans la base — on change ce qu'on LIT, pas ce qu'on ecrit.
+
+   Verifier : AGV_LICENCE.etat()
+
+   INSTALLATION : charger apres les modules 1 a 24.
+   DESACTIVATION : AGV_LICENCE.actif = false
+   ============================================================================= */
+(function () {
+  'use strict';
+
+  var API = window.AGV_LICENCE = { actif: true, version: '1.0', epargnes: 0, dernier: null };
+
+  function log() {
+    try { console.log.apply(console, ['[AGV-LICENCE]'].concat([].slice.call(arguments))); } catch (e) {}
+  }
+  function ref(p) {
+    if (typeof window._agvRefBrut === 'function') return window._agvRefBrut(p);
+    return (window.db && window.db.ref) ? window.db.ref(p) : null;
+  }
+  function lire(p, cb) {
+    var r = ref(p);
+    if (!r) { cb(null); return; }
+    var fait = false;
+    var t = setTimeout(function () { if (!fait) { fait = true; cb(null); } }, 8000);
+    try {
+      r.once('value').then(function (s) { if (!fait) { fait = true; clearTimeout(t); cb(s.val()); } },
+                           function () { if (!fait) { fait = true; clearTimeout(t); cb(null); } });
+    } catch (e) { if (!fait) { fait = true; clearTimeout(t); cb(null); } }
+  }
+
+  function expiree(info) {
+    if (!info || !info.dateExpiration) return false;
+    var d = new Date(info.dateExpiration);
+    if (isNaN(d.getTime())) return false;
+    return new Date() > d;
+  }
+  function motif(info) {
+    if (!info) return null;
+    if (info.blocked === true) return 'bloquee';
+    if (expiree(info)) return 'expiree';
+    return null;
+  }
+
+  /* =========================================================================
+     LA MERE DECIDE
+     ========================================================================= */
+
+  // cb(true) si la revocation doit avoir lieu, cb(false) si elle est epargnee
+  function doitRevoquer(uid, cb) {
+    if (!uid) { cb(true); return; }
+    lire('gdv_shops/' + uid + '/rattachement', function (r) {
+      if (!r || !r.vers) { cb(true); return; }         // boutique autonome : regle inchangee
+
+      lire('gdv_shops/' + r.vers + '/info', function (mere) {
+        // Lecture impossible : on n'enferme personne dehors sur un doute.
+        if (!mere) {
+          log('état de la boutique mère illisible — accès maintenu par prudence');
+          cb(false);
+          return;
+        }
+        var m = motif(mere);
+        if (m) {
+          log('la boutique mère « ' + (r.versNom || r.vers) + ' » est ' + m +
+              ' — la révocation s\'applique aussi à ses blocs');
+          cb(true);
+          return;
+        }
+        API.epargnes++;
+        API.dernier = { uid: uid, mere: r.vers, nom: r.versNom || '' };
+        log('boutique rattachée à « ' + (r.versNom || r.vers) +
+            ' », dont la licence est valable — fermeture annulée');
+        cb(false);
+      });
+    });
+  }
+
+  /* =========================================================================
+     L'INTERCEPTION
+     ========================================================================= */
+
+  function poser() {
+    if (typeof window.revoquerAcces !== 'function' || window.revoquerAcces.__agvLicence) return false;
+    var origine = window.revoquerAcces;
+
+    var neuf = function (raison) {
+      var self = this, args = arguments;
+      if (!API.actif) return origine.apply(self, args);
+
+      var uid = (window._currentShop || {}).uid;
+      if (!uid) return origine.apply(self, args);
+
+      /* La fermeture est SUSPENDUE le temps de consulter la mere. Sans cela
+         l'application serait deja fermee quand la reponse arrive, et le
+         gerant aurait vu sa boutique disparaitre — ce que l'on corrige. */
+      doitRevoquer(uid, function (oui) {
+        if (oui) origine.apply(self, args);
+      });
+    };
+    neuf.__agvLicence = true;
+    neuf.__agvOrig = origine;
+    window.revoquerAcces = neuf;
+    log('module actif — v' + API.version + ' — la licence suit la boutique mère');
+    return true;
+  }
+
+  var essais = 0;
+  var horloge = setInterval(function () {
+    essais++;
+    if (poser() || essais > 900) clearInterval(horloge);
+  }, 400);
+  poser();
+
+  /* =========================================================================
+     VERIFICATION
+     ========================================================================= */
+
+  API.etat = function () {
+    var s = window._currentShop || {};
+    if (!s.uid) { console.log('Aucune boutique ouverte.'); return; }
+    console.log('--- Licence ---');
+    console.log('  boutique : ' + (s.entreprise || s.uid));
+    lire('gdv_shops/' + s.uid + '/info', function (info) {
+      var m = motif(info);
+      console.log('  son propre état : ' + (m ? m.toUpperCase() : 'valable'));
+      lire('gdv_shops/' + s.uid + '/rattachement', function (r) {
+        if (!r || !r.vers) {
+          console.log('  boutique autonome — c\'est son propre état qui décide.');
+          return;
+        }
+        console.log('  rattachée à : ' + (r.versNom || r.vers));
+        lire('gdv_shops/' + r.vers + '/info', function (mere) {
+          var mm = motif(mere);
+          console.log('  état de la mère : ' + (mm ? mm.toUpperCase() : 'valable'));
+          console.log('  → ' + (mm ? 'accès révoqué, la mère est ' + mm
+                                   : 'accès maintenu : la licence de la mère couvre ce bloc'));
+          if (m && !mm) {
+            console.log('     (sans ce module, la boutique se serait refermée : ' + m + ')');
+          }
+        });
+      });
+    });
+    console.log('  fermetures évitées depuis le chargement : ' + API.epargnes);
+    return API.epargnes;
+  };
+
+})();
+
+</script>
+<script>
+/* =============================================================================
+   APP AGV — MODULE 23 : LA VENTE RETROUVE LE MEME PRODUIT QUE L'ENTREE (v1.0)
+   -----------------------------------------------------------------------------
+   LE STOCK MONTE A L'ENTREE, MAIS LA VENTE DIT « RUPTURE »
+
+   Les deux operations ne cherchent pas le produit de la meme facon.
+
+   La liste proposee est construite ainsi (ligne 8113) :
+
+       p.designation + ' (' + (p.reference || p.ref || '') + ')'
+
+   L'ENTREE retrouve ensuite le produit sur DEUX criteres (ligne 8164) :
+
+       products.find(function(x){
+         return x.designation === nom && (x.reference || x.ref || '') === code;
+       });
+
+   La VENTE, elle, ne regarde QUE le code, et seulement dans « reference »
+   (ligne 5457, getProductFromInput) :
+
+       const m = val.match(/\(([^)]+)\)$/);
+       if(m){ const ref = m[1]; return products.find(p => p.reference === ref); }
+
+   Des que deux articles partagent une reference — un doublon, une variante
+   creee a partir d'une fiche existante, un re-import — les deux fonctions
+   designent DEUX PRODUITS DIFFERENTS :
+
+       « Ciment 50kg (CIM01) », 120 sacs entres
+          l'entree met a jour  -> Ciment 50kg (id 2), stock 120
+          la vente retrouve    -> Ciment      (id 1), stock 0
+          resultat             -> « Stock insuffisant (dispo: 0) »
+
+   Le stock etait donc bien augmente. C'est la vente qui parlait d'un autre
+   article. Et le champ « ref », visible dans la liste, n'etait meme pas
+   consulte a la vente.
+
+   CE MODULE ALIGNE LA VENTE SUR LA REGLE DE L'ENTREE, dans cet ordre :
+     1. designation ET code — la regle de l'entree, la plus sure ;
+     2. le code seul, dans « reference » OU dans « ref » ;
+     3. la designation seule ;
+     4. a defaut, la fonction d'origine, inchangee.
+
+   AUCUNE DONNEE N'EST MODIFIEE, aucun champ n'est ajoute, la structure de la
+   base n'est pas touchee. On ne change que la facon de RETROUVER un produit
+   deja enregistre. Les doublons restent dans le catalogue : c'est a vous de
+   decider s'il faut les fusionner, et le module vous signale lesquels.
+
+   INSTALLATION : charger apres les modules 1 a 22.
+   DESACTIVATION : AGV_STOCK.actif = false
+   ============================================================================= */
+(function () {
+  'use strict';
+
+  var API = window.AGV_STOCK = { actif: true, version: '1.0', reprises: 0 };
+
+  function log() {
+    try { console.log.apply(console, ['[AGV-STOCK]'].concat([].slice.call(arguments))); } catch (e) {}
+  }
+  function liste() {
+    try { if (Array.isArray(window.products)) return window.products; } catch (e) {}
+    try { if (Array.isArray(products)) return products; } catch (e) {}
+    try {
+      var b = window._boutique;
+      if (b && Array.isArray(b.products)) return b.products;
+    } catch (e) {}
+    return [];
+  }
+  function codeDe(p) {
+    return String((p && (p.reference || p.ref)) || '').trim();
+  }
+  function nomDe(p) {
+    return String((p && p.designation) || '').trim();
+  }
+  function nb(v) { var n = Number(v); return isFinite(n) ? n : 0; }
+
+  /* =========================================================================
+     LA RECHERCHE, DANS L'ORDRE DE FIABILITE
+     ========================================================================= */
+
+  function chercher(val) {
+    var l = liste();
+    if (!l.length || typeof val !== 'string') return null;
+    var s = val.trim();
+    if (!s) return null;
+
+    var m = s.match(/^(.+?)\s*\(([^)]*)\)\s*$/);
+    var nom = m ? m[1].trim() : s;
+    var code = m ? m[2].trim() : '';
+
+    // 1. designation ET code — exactement la regle de l'entree
+    if (code) {
+      var exact = l.filter(function (p) {
+        return nomDe(p) === nom && codeDe(p) === code;
+      });
+      if (exact.length) return { p: exact[0], voie: 'désignation et code', tous: exact };
+    }
+
+    // 2. le code seul, dans « reference » OU dans « ref »
+    if (code) {
+      var parCode = l.filter(function (p) { return codeDe(p) === code; });
+      if (parCode.length === 1) return { p: parCode[0], voie: 'code', tous: parCode };
+      if (parCode.length > 1) {
+        // Plusieurs articles portent ce code : on prend celui qui a du stock,
+        // faute de quoi on prendrait au hasard le premier venu — c'est
+        // precisement ce qui produisait la fausse rupture.
+        var avecStock = parCode.filter(function (p) { return nb(p.stock_initial) > 0; });
+        if (avecStock.length === 1) {
+          return { p: avecStock[0], voie: 'code, article en stock', tous: parCode, ambigu: true };
+        }
+        return { p: parCode[0], voie: 'code', tous: parCode, ambigu: true };
+      }
+    }
+
+    // 3. la designation seule
+    var parNom = l.filter(function (p) {
+      return nomDe(p).toLowerCase() === nom.toLowerCase();
+    });
+    if (parNom.length) return { p: parNom[0], voie: 'désignation', tous: parNom };
+
+    return null;
+  }
+
+  /* =========================================================================
+     L'INTERCEPTION
+     ========================================================================= */
+
+  function poser() {
+    if (typeof window.getProductFromInput !== 'function') return false;
+    if (window.getProductFromInput.__agvStock) return true;
+
+    var origine = window.getProductFromInput;
+
+    var neuf = function (val) {
+      if (!API.actif) return origine.apply(this, arguments);
+      try {
+        var r = chercher(val);
+        if (r && r.p) {
+          var vieux = null;
+          try { vieux = origine.call(this, val); } catch (e) {}
+          if (vieux !== r.p) {
+            API.reprises++;
+            log('« ' + val +' » → ' + nomDe(r.p) + ' (stock ' + nb(r.p.stock_initial) + ')' +
+                ' par ' + r.voie +
+                (vieux ? ' — la recherche d\'origine désignait ' + nomDe(vieux) +
+                         ' (stock ' + nb(vieux.stock_initial) + ')'
+                       : ' — la recherche d\'origine ne trouvait rien'));
+          }
+          if (r.ambigu) {
+            log('ATTENTION : ' + r.tous.length + ' articles portent le code « ' +
+                codeDe(r.p) + ' ». Pensez à les distinguer dans le catalogue.');
+          }
+          return r.p;
+        }
+      } catch (e) { log('recherche', e && e.message); }
+      return origine.apply(this, arguments);
+    };
+
+    neuf.__agvStock = true;
+    neuf.__agvOrig = origine;
+    window.getProductFromInput = neuf;
+    log('module actif — v' + API.version + ' — la vente suit la règle de l\'entrée');
+    return true;
+  }
+
+  var essais = 0;
+  if (!poser()) {
+    var horloge = setInterval(function () {
+      essais++;
+      if (poser() || essais > 900) clearInterval(horloge);
+    }, 500);
+  }
+
+  /* =========================================================================
+     LE CONTROLE DU CATALOGUE
+     ========================================================================= */
+
+  API.doublons = function () {
+    var l = liste();
+    if (!l.length) { console.log('Catalogue vide ou non chargé.'); return; }
+
+    var parCode = {}, parNom = {};
+    l.forEach(function (p) {
+      var c = codeDe(p);
+      if (c) (parCode[c] = parCode[c] || []).push(p);
+      var n = nomDe(p).toLowerCase();
+      if (n) (parNom[n] = parNom[n] || []).push(p);
+    });
+
+    var codes = Object.keys(parCode).filter(function (c) { return parCode[c].length > 1; });
+    var noms = Object.keys(parNom).filter(function (n) { return parNom[n].length > 1; });
+
+    console.log('--- Catalogue : ' + l.length + ' article(s) ---');
+    if (!codes.length && !noms.length) {
+      console.log('Aucun doublon. Chaque article se retrouve sans ambiguïté.');
+      return;
+    }
+    if (codes.length) {
+      console.log(codes.length + ' code(s) portés par plusieurs articles :');
+      codes.forEach(function (c) {
+        console.log('  code « ' + c + ' »');
+        parCode[c].forEach(function (p) {
+          console.log('     ' + nomDe(p) + '  —  stock ' + nb(p.stock_initial) + '  (id ' + p.id + ')');
+        });
+      });
+      console.log('  → c\'est ce qui provoquait « Stock insuffisant » sur un article');
+      console.log('    pourtant approvisionné. Le module retrouve désormais le bon.');
+    }
+    if (noms.length) {
+      console.log(noms.length + ' désignation(s) en double :');
+      noms.forEach(function (n) {
+        console.log('  « ' + parNom[n][0].designation + ' » — ' + parNom[n].length + ' articles');
+      });
+    }
+    return { codes: codes.length, noms: noms.length };
+  };
+
+  API.chercher = function (val) {
+    var r = chercher(val);
+    if (!r) { console.log('Aucun article ne correspond à « ' + val + ' ».'); return null; }
+    console.log('« ' + val + ' » → ' + nomDe(r.p) + '  (id ' + r.p.id +
+                ', stock ' + nb(r.p.stock_initial) + ')  par ' + r.voie);
+    if (r.tous.length > 1) console.log('   ' + r.tous.length + ' articles correspondaient');
+    return r.p;
+  };
+
+  API.etat = function () {
+    var g = window.getProductFromInput;
+    console.log('--- Recherche de produit ---');
+    console.log('  module posé : ' + (g && g.__agvStock ? 'oui' : 'NON'));
+    console.log('  reprises    : ' + API.reprises +
+      (API.reprises ? '  ← autant de fois où la recherche d\'origine se trompait' : ''));
+    console.log('  AGV_STOCK.doublons()  liste les articles au code partagé');
+    return API.reprises;
+  };
+
+})();
+
+</script>
+<script>
+/* =============================================================================
+   APP AGV — MODULE 26 : LA FACTURE PREND LES COULEURS DE LA BOUTIQUE  (v1.0)
+   -----------------------------------------------------------------------------
+   DEUX CORRECTIONS SUR LA FACTURE
+
+   1. LA COULEUR EST FIGEE EN DUR (ligne 37489) :
+
+          var vert = '#1f6b3a';
+
+      Toutes les boutiques impriment donc dans le vert de la premiere. La
+      couleur est desormais tiree du LOGO de la boutique : on lit l'image,
+      on releve la teinte dominante en ecartant le blanc, le gris et le noir,
+      et on l'assombrit juste ce qu'il faut pour que le texte blanc des
+      en-tetes reste lisible. Sans logo — ou si l'image ne donne rien — la
+      couleur d'origine est conservee.
+
+   2. LES SOLDES DU BAS NE SE DISTINGUENT PAS (ligne 37568) :
+
+          '<div class="solde">Solde a la date de la facture ...'
+
+      avec « .solde{font-size:10px;margin-top:3px} » : aucune mise en valeur.
+      Sur le modele fourni, le montant du solde apparait en ROUGE des qu'il
+      reste une dette. On applique la meme regle : le libelle en noir, le
+      montant en rouge et en gras s'il y a une dette, en vert de la boutique
+      si le client est a jour.
+
+   AUCUNE DONNEE N'EST TOUCHEE : le module n'intervient que sur la feuille de
+   style et le libelle des deux lignes de solde, au moment de l'impression.
+   La structure de la base n'est pas concernee.
+
+   Verifier : AGV_FACTURE.etat()
+
+   INSTALLATION : charger apres les modules 1 a 25.
+   DESACTIVATION : AGV_FACTURE.actif = false
+   ============================================================================= */
+(function () {
+  'use strict';
+
+  var API = window.AGV_FACTURE = { actif: true, version: '1.0', couleur: null };
+
+  var VERT_ORIGINE = '#1f6b3a';
+  var ROUGE = '#c0141c';   // le client doit a la boutique
+  var VERT  = '#15803d';   // la boutique doit au client
+  var NEUTRE = '#111';     // personne ne doit rien
+
+  /* Lit un montant tel qu'il est ecrit dans la facture — « 2 294 500 »,
+     « -2 294 500 », « (2 294 500) » — et rend son signe :
+       1  le client doit,  -1  la boutique doit,  0  compte solde. */
+  function sens(txt) {
+    var t = String(txt == null ? '' : txt);
+    var negatif = /^[^0-9]*-/.test(t) || /^\s*\(/.test(t);
+    var chiffres = t.replace(/[^0-9]/g, '');
+    if (!chiffres || Number(chiffres) === 0) return 0;
+    return negatif ? -1 : 1;
+  }
+  function classe(txt) {
+    var n = sens(txt);
+    return n > 0 ? 'du' : (n < 0 ? 'cr' : 'nul');
+  }
+
+  function log() {
+    try { console.log.apply(console, ['[AGV-FACTURE]'].concat([].slice.call(arguments))); } catch (e) {}
+  }
+
+  /* =========================================================================
+     1. LA TEINTE DU LOGO
+     ========================================================================= */
+
+  function hex(r, g, b) {
+    function d(x) { return ('0' + Math.max(0, Math.min(255, Math.round(x))).toString(16)).slice(-2); }
+    return '#' + d(r) + d(g) + d(b);
+  }
+
+  // Assombrit une teinte jusqu'a ce que du texte blanc reste lisible dessus.
+  function lisible(r, g, b) {
+    var lum = (0.299 * r + 0.587 * g + 0.114 * b);
+    var k = 1;
+    while (lum > 140 && k > 0.25) { k -= 0.05; lum = 0.299 * r * k + 0.587 * g * k + 0.114 * b * k; }
+    return hex(r * k, g * k, b * k);
+  }
+
+  function teinteDuLogo(src, cb) {
+    if (!src) { cb(null); return; }
+    try {
+      var img = new Image();
+      img.crossOrigin = 'anonymous';
+      var fini = false;
+      var t = setTimeout(function () { if (!fini) { fini = true; cb(null); } }, 4000);
+
+      img.onload = function () {
+        if (fini) return;
+        fini = true; clearTimeout(t);
+        try {
+          var n = 48;
+          var c = document.createElement('canvas');
+          c.width = n; c.height = n;
+          var x = c.getContext('2d');
+          x.drawImage(img, 0, 0, n, n);
+          var px = x.getImageData(0, 0, n, n).data;
+
+          // On regroupe les pixels par teinte grossiere et on garde la plus
+          // representee, en ecartant le fond (blanc, gris, noir, transparent).
+          var seaux = {};
+          for (var i = 0; i < px.length; i += 4) {
+            var r = px[i], g = px[i + 1], b = px[i + 2], a = px[i + 3];
+            if (a < 200) continue;
+            var mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+            if (mx - mn < 28) continue;              // gris, blanc ou noir
+            if (mx > 245 && mn > 200) continue;      // presque blanc
+            var cle = (r >> 5) + ',' + (g >> 5) + ',' + (b >> 5);
+            var s = seaux[cle] || (seaux[cle] = { n: 0, r: 0, g: 0, b: 0 });
+            s.n++; s.r += r; s.g += g; s.b += b;
+          }
+          var best = null;
+          Object.keys(seaux).forEach(function (k) {
+            if (!best || seaux[k].n > best.n) best = seaux[k];
+          });
+          if (!best || best.n < 12) { cb(null); return; }
+          cb(lisible(best.r / best.n, best.g / best.n, best.b / best.n));
+        } catch (e) { cb(null); }
+      };
+      img.onerror = function () { if (!fini) { fini = true; clearTimeout(t); cb(null); } };
+      img.src = src;
+    } catch (e) { cb(null); }
+  }
+
+  function boutique() {
+    try { if (typeof window.boutique === 'function') return window.boutique() || {}; } catch (e) {}
+    return window._currentShop || {};
+  }
+
+  function chargerCouleur(cb) {
+    var s = boutique();
+    // Une couleur choisie explicitement dans la fiche prime sur le logo.
+    var choisie = s.couleur || s.couleurTheme || s.themeColor;
+    if (choisie && /^#[0-9a-f]{6}$/i.test(String(choisie).trim())) {
+      API.couleur = String(choisie).trim();
+      cb(API.couleur);
+      return;
+    }
+    if (API.couleur) { cb(API.couleur); return; }
+    teinteDuLogo(s.logo, function (c) {
+      API.couleur = c || VERT_ORIGINE;
+      if (c) log('teinte retenue depuis le logo : ' + c);
+      else log('logo absent ou sans teinte nette — couleur d\'origine conservée');
+      cb(API.couleur);
+    });
+  }
+
+  /* =========================================================================
+     2. LA RETOUCHE DE LA FACTURE
+     ========================================================================= */
+
+  function retoucher(css, corps, couleur) {
+    var c = couleur || VERT_ORIGINE;
+
+    // a) la couleur du theme
+    if (c !== VERT_ORIGINE) {
+      css = css.split(VERT_ORIGINE).join(c);
+      corps = corps.split(VERT_ORIGINE).join(c);
+    }
+
+    // b) le style des deux lignes de solde
+    css = css.replace('.solde{font-size:10px;margin-top:3px}',
+      '.solde{font-size:10.5px;margin-top:4px;font-weight:600}' +
+      '.m{font-weight:800;font-size:11px}' +
+      '.du{color:' + ROUGE + '}' +      /* le client doit a la boutique */
+      '.cr{color:' + VERT + '}' +       /* la boutique doit au client   */
+      '.nul{color:' + NEUTRE + '}');
+
+    // c) le montant en rouge des qu'il reste une dette
+    corps = corps.replace(
+      /<div class="solde">([^<]*?): GNF: ([^<]*?)<\/div>/g,
+      function (tout, libelle, montant) {
+        return '<div class="solde">' + libelle + ': ' +
+               '<span class="m ' + classe(montant) + '">GNF: ' + montant + '</span></div>';
+      });
+
+    // d) tout le bas de la facture dans UN SEUL TABLEAU BORDE
+    var r = enTableau(corps, c);
+    corps = r.corps;
+    if (r.fait) css += styleRecap(c);
+
+    return { css: css, corps: corps };
+  }
+  API.retoucher = retoucher;
+
+  /* =========================================================================
+     LE BAS DE LA FACTURE EN TABLEAU
+     -------------------------------------------------------------------------
+     L'application empile cinq blocs libres, sans bordure :
+
+         <div class="paye">Montant Paye: ...</div>
+         <div class="regl">Especes: ...   Reste a Payer: ...</div>
+         <div class="colis">Carton(s)/Paquet(s)/Barre(s) : ...</div>
+         <div class="solde">Solde a la date de la facture ...</div>
+         <div class="solde">Solde actuel ...</div>
+
+     Sur le modele fourni, ces memes informations forment un TABLEAU BORDE :
+     le montant paye et le mode de reglement dans une cellule a gauche, le
+     reste a payer dans une cellule a droite, puis le recapitulatif des colis
+     et les deux soldes sur toute la largeur.
+
+     On ne change QUE la mise en forme : chaque valeur est reprise telle
+     quelle, aucune n'est recalculee.
+     ========================================================================= */
+
+  function styleRecap(c) {
+    return ''
+      + 'table.recap{width:100%;border-collapse:collapse;margin-top:11px;'
+        + 'page-break-inside:avoid}'
+      + 'table.recap td{border:1px solid #111;padding:5px 9px;font-size:10.5px;'
+        + 'vertical-align:middle}'
+      + 'table.recap .paye-c{width:56%;padding:0;border:1px solid #111}'
+      + 'table.recap .paye-t{background:' + c + ';color:#fff;font-weight:800;'
+        + 'font-size:11.5px;padding:5px 10px;text-align:center}'
+      + 'table.recap .paye-m{padding:4px 10px;font-size:10px}'
+      + 'table.recap .reste-c{text-align:center;font-weight:700;font-size:11.5px}'
+      + 'table.recap .colis-c{text-align:center;font-size:10px}'
+      + 'table.recap .solde-c{font-size:10.5px;font-weight:600}'
+      + 'table.recap .m{font-weight:800}';
+  }
+
+  function enTableau(corps, c) {
+    var re = new RegExp(
+      '<div class="paye">([\\s\\S]*?)<\\/div>' +
+      '\\s*<div class="regl">([\\s\\S]*?)<\\/div>' +
+      '((?:\\s*<div class="colis">[\\s\\S]*?<\\/div>)?)' +
+      '((?:\\s*<div class="solde">[\\s\\S]*?<\\/div>)*)');
+
+    var m = corps.match(re);
+    if (!m) return { corps: corps, fait: false };
+
+    var paye = m[1];
+    var regl = m[2];
+    var colis = m[3] || '';
+    var soldes = m[4] || '';
+
+    // « Especes: 175 000   Reste a Payer: 0 » — on separe les deux montants
+    var mode = regl, reste = '';
+    var sep = regl.split(/Reste\s+(?:a|à)\s+Payer\s*:/i);
+    if (sep.length > 1) {
+      mode = sep[0].replace(/(&nbsp;|\s)+$/g, '');
+      var mt = sep[1].replace(/^(&nbsp;|\s)+/g, '');
+      /* Le reste a payer suit la meme regle que les soldes : rouge si le
+         client doit, vert si la boutique lui doit, neutre s'il est solde. */
+      reste = 'Reste à Payer : <span class="m ' + classe(mt) + '">' + mt + '</span>';
+    }
+
+    function contenu(bloc, cls) {
+      var out = [], r = new RegExp('<div class="' + cls + '">([\\s\\S]*?)<\\/div>', 'g'), x;
+      while ((x = r.exec(bloc))) out.push(x[1]);
+      return out;
+    }
+
+    var lignes = ''
+      + '<tr><td class="paye-c">'
+        + '<div class="paye-t">' + paye + '</div>'
+        + '<div class="paye-m">' + mode + '</div>'
+      + '</td><td class="reste-c">' + (reste || '&nbsp;') + '</td></tr>';
+
+    contenu(colis, 'colis').forEach(function (t) {
+      lignes += '<tr><td class="colis-c" colspan="2">' + t + '</td></tr>';
+    });
+    contenu(soldes, 'solde').forEach(function (t) {
+      lignes += '<tr><td class="solde-c" colspan="2">' + t + '</td></tr>';
+    });
+
+    return {
+      corps: corps.replace(re, '<table class="recap">' + lignes + '</table>'),
+      fait: true
+    };
+  }
+
+  /* =========================================================================
+     3. L'INTERCEPTION DE L'IMPRESSION
+     -------------------------------------------------------------------------
+     La facture sort par agvBlobPrint(css, corps, titre). C'est le dernier
+     point ou l'on tient encore la feuille de style et le contenu : on y
+     applique les retouches, sans rien changer a la construction du document.
+     ========================================================================= */
+
+  function poser() {
+    if (typeof window.agvBlobPrint !== 'function' || window.agvBlobPrint.__agvFacture) return false;
+    var origine = window.agvBlobPrint;
+
+    var neuf = function (css, corps, titre) {
+      var self = this, args = arguments;
+      if (!API.actif || typeof css !== 'string' || typeof corps !== 'string') {
+        return origine.apply(self, args);
+      }
+      if (String(titre || '').indexOf('Facture') < 0) return origine.apply(self, args);
+
+      chargerCouleur(function (c) {
+        var r = retoucher(css, corps, c);
+        origine.call(self, r.css, r.corps, titre);
+      });
+    };
+    neuf.__agvFacture = true;
+    neuf.__agvOrig = origine;
+    window.agvBlobPrint = neuf;
+    log('module actif — v' + API.version);
+    return true;
+  }
+
+  var essais = 0;
+  var horloge = setInterval(function () {
+    essais++;
+    if (poser() || essais > 900) clearInterval(horloge);
+  }, 500);
+  poser();
+
+  /* =========================================================================
+     VERIFICATION
+     ========================================================================= */
+
+  API.etat = function () {
+    var s = boutique();
+    console.log('--- Facture ---');
+    console.log('  boutique : ' + (s.entreprise || '—'));
+    console.log('  logo     : ' + (s.logo ? 'présent' : 'aucun'));
+    chargerCouleur(function (c) {
+      console.log('  couleur retenue : ' + c +
+        (c === VERT_ORIGINE ? '  (couleur d\'origine)' : '  (tirée du logo)'));
+      console.log('  solde dû        : ' + ROUGE + '  (rouge)');
+      console.log('  solde à jour    : ' + c);
+    });
+    return API.couleur;
+  };
+
+  API.oublierCouleur = function () {
+    API.couleur = null;
+    console.log('Teinte oubliée — elle sera relue au prochain tirage.');
+  };
+
+})();
+
+</script>
+<script>
+/* =============================================================================
+   APP AGV — MODULE 27 : LE SOLDE DU CLIENT SUIT SES FACTURES  (v1.0)
+   -----------------------------------------------------------------------------
+   CE QUI OBLIGEAIT A ROUVRIR LA FICHE DU CLIENT
+
+   saveFacture() (ligne 11083) enregistre la facture et rafraichit la liste
+   des factures. Mais les ecrans qui montrent le SOLDE du client — la liste
+   des clients, le tableau des dettes, le panneau des versements, le tableau
+   de bord — ne sont pas redessines. Le solde affiche restait donc celui
+   d'avant la facture, et il fallait entrer dans la fiche du client pour le
+   voir se recalculer.
+
+   Le solde lui-meme etait juste : c'est son AFFICHAGE qui etait en retard.
+
+   CE MODULE redessine ces ecrans des qu'une facture est enregistree, et de
+   meme apres un versement. Rien n'est recalcule ici, rien n'est ecrit : on
+   demande simplement a l'application de reafficher ce qu'elle sait deja.
+
+   Il vide au passage le cache des soldes tenu par le module 2, sans quoi le
+   montant precedent serait resservi.
+
+   OU TROUVER LA RECHERCHE DES VERSEMENTS
+   Elle existe deja : Versements -> le champ « Nom ou numero de telephone... »
+   (element agv32-vers-q, ligne 30571). Le module la met en avant et y place
+   le curseur a l'ouverture, pour qu'elle ne passe plus inapercue.
+
+   AUCUNE DONNEE N'EST TOUCHEE, aucune structure modifiee.
+
+   Verifier : AGV_SOLDE.etat()
+
+   INSTALLATION : charger apres les modules 1 a 26.
+   DESACTIVATION : AGV_SOLDE.actif = false
+   ============================================================================= */
+(function () {
+  'use strict';
+
+  var API = window.AGV_SOLDE = { actif: true, version: '1.0', rafraichis: 0 };
+
+  function log() {
+    try { console.log.apply(console, ['[AGV-SOLDE]'].concat([].slice.call(arguments))); } catch (e) {}
+  }
+
+  // Les ecrans qui montrent un solde de client, dans l'ordre d'importance.
+  var RENDUS = [
+    'renderClientsListe', 'renderDettes', 'renderDettesClients',
+    'renderFacturesList', 'renderDashboard', 'agvVersChercher', 'agvVersRendre'
+  ];
+
+  function rafraichir(motif) {
+    if (!API.actif) return;
+
+    /* Le module 2 garde les soldes clients en memoire pour eviter de les
+       recalculer a chaque affichage. Ce cache doit tomber, sinon on
+       reafficherait exactement le montant d'avant. */
+    try {
+      if (window.AGV_PERF && typeof window.AGV_PERF.oublierIndex === 'function') {
+        window.AGV_PERF.oublierIndex();
+      }
+    } catch (e) {}
+
+    var faits = [];
+    RENDUS.forEach(function (nom) {
+      try {
+        if (typeof window[nom] === 'function') { window[nom](); faits.push(nom); }
+      } catch (e) {}
+    });
+
+    // La fiche du client ouverte, s'il y en a une
+    try {
+      if (typeof window.agvClientFiche === 'function' && window._agvClientOuvert) {
+        window.agvClientFiche(window._agvClientOuvert);
+      }
+    } catch (e) {}
+
+    API.rafraichis++;
+    log('solde des clients réaffiché après ' + motif + ' (' + faits.length + ' écran(s))');
+  }
+  API.rafraichir = rafraichir;
+
+  /* =========================================================================
+     LES MOMENTS OU LE SOLDE CHANGE
+     ========================================================================= */
+
+  function envelopper(nom, motif) {
+    var f = window[nom];
+    if (typeof f !== 'function' || f.__agvSolde) return false;
+    var neuf = function () {
+      var r = f.apply(this, arguments);
+      // On laisse l'enregistrement se terminer avant de redessiner.
+      setTimeout(function () { rafraichir(motif); }, 260);
+      return r;
+    };
+    neuf.__agvSolde = true;
+    neuf.__agvOrig = f;
+    window[nom] = neuf;
+    return true;
+  }
+
+  var CIBLES = [
+    ['saveFacture', 'une facture'],
+    ['saveVersementClient', 'un versement'],
+    ['agvVersEnregistrer', 'un versement'],
+    ['agvFactureEnregistrer', 'une facture']
+  ];
+
+  var poses = {};
+  setInterval(function () {
+    CIBLES.forEach(function (c) {
+      if (poses[c[0]]) return;
+      if (envelopper(c[0], c[1])) { poses[c[0]] = true; log('branché sur ' + c[0] + '()'); }
+    });
+  }, 700);
+
+  /* =========================================================================
+     LA RECHERCHE DES VERSEMENTS, MISE EN EVIDENCE
+     ========================================================================= */
+
+  setInterval(function () {
+    if (!API.actif) return;
+    try {
+      var q = document.getElementById('agv32-vers-q');
+      if (!q || q.getAttribute('data-agv-solde')) return;
+      q.setAttribute('data-agv-solde', '1');
+      q.placeholder = '🔍 Rechercher le client par son nom ou son téléphone...';
+      q.style.fontSize = '14px';
+      q.style.padding = '11px 13px';
+      q.style.border = '2px solid var(--blue, #2563eb)';
+      q.style.borderRadius = '10px';
+      try { q.focus(); } catch (e) {}
+      log('champ de recherche des versements mis en évidence');
+    } catch (e) {}
+  }, 900);
+
+  /* =========================================================================
+     VERIFICATION
+     ========================================================================= */
+
+  API.etat = function () {
+    console.log('--- Solde des clients ---');
+    console.log('  branché sur : ' + (Object.keys(poses).join(', ') || 'rien pour l\'instant'));
+    console.log('  réaffichages : ' + API.rafraichis);
+    console.log('  Le solde se met à jour seul après une facture ou un versement.');
+    console.log('  Recherche des versements : onglet Versements, champ en haut.');
+    return API.rafraichis;
   };
 
 })();
