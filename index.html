@@ -2506,6 +2506,13 @@ window.addEventListener('DOMContentLoaded',function(){
           <label style="font-size:11px;color:var(--accent);font-weight:600;cursor:pointer" onclick="document.getElementById('fourn-logo-file').click()">📷 Ajouter logo</label>
           <input type="file" id="fourn-logo-file" accept="image/*" style="display:none" onchange="fournPreviewLogo(this)">
         </div>
+        <div class="form-group"><label class="form-label">Type de fournisseur *</label>
+          <select class="form-input" id="fourn-nature">
+            <option value="marchandises">📦 Fournisseur de marchandises</option>
+            <option value="fonds">💵 Fournisseur de fonds (argent)</option>
+          </select>
+          <div style="font-size:11px;color:var(--text3);margin-top:4px">Marchandises : vous lui passez des commandes. Fonds : il vous avance de l'argent, que vous lui remboursez.</div>
+        </div>
         <div class="form-group"><label class="form-label">Nom de l'entreprise *</label><input class="form-input" id="fourn-nom" placeholder="Ex: SOBRAGUI, CFAO..."></div>
         <div class="form-group"><label class="form-label">Adresse</label><input class="form-input" id="fourn-adresse" placeholder="Ex: Kaloum, Conakry"></div>
         <div class="form-group"><label class="form-label">Téléphone</label><input class="form-input" id="fourn-tel" placeholder="+224 620 000 000" type="tel"></div>
@@ -4228,8 +4235,10 @@ function saveFondateurInfo(){
   // plusieurs gerants, on cree une entree dediee au lieu de deviner.
   // Une fois identifie ou cree, le gerant est marque role:'fondateur'
   // de facon permanente pour qu'aucune ambiguite ne revienne.
-  var idxF = gerants.findIndex(function(g){ return g.id===1 || g.role==='fondateur' || g.type==='fondateur'; });
-  if(idxF<0 && gerants.length===1) idxF = 0; // seul gerant existant : ne peut etre que le fondateur
+  var idxF = gerants.findIndex(function(g){ return agvFicheEstFondateur(g); });
+  // [CORRECTIF] le seul gerant existant n'est repris que s'il n'a pas de code
+  // d'acces propre : une fiche avec son code est un employe, jamais le fondateur.
+  if(idxF<0 && gerants.length===1 && !String((gerants[0]&&gerants[0].code)||'').trim()) idxF = 0;
   if(idxF<0){
     // Aucun gerant marque fondateur (et plusieurs gerants existent,
     // ou aucun du tout) : creer une entree dediee plutot que de
@@ -6018,6 +6027,29 @@ function togglePermDel(id){
   showToast(gerants[idx].permDel?'Suppression autorisee':'Suppression retiree');
 }
 
+/* [CORRECTIF GERANTS VISIBLES] Une fiche n'est celle du FONDATEUR que si
+   elle en a reellement les traits. saveFondateurInfo() marquait autrefois
+   role:'fondateur' sur le SEUL gerant existant d'une boutique (« seul gerant
+   existant : ne peut etre que le fondateur ») : ce gerant, qui garde son
+   propre code d'acces, continuait d'entrer mais disparaissait de toutes les
+   listes du fondateur. Une fiche portant un code d'acces propre, different
+   du code fondateur, est une fiche de PERSONNEL. Aucune donnee n'est modifiee. */
+function agvFicheEstFondateur(g){
+  if(!g) return false;
+  if(String(g.id) === '1') return true;
+  if(g.role !== 'fondateur' && g.type !== 'fondateur') return false;
+  var code = String(g.code == null ? '' : g.code).trim();
+  if(!code) return true;
+  var shop = window._currentShop || {};
+  var cf = String(shop.codeFondateur || window.FONDATEUR_CODE || '').trim();
+  return !!(cf && code.toUpperCase() === cf.toUpperCase());
+}
+window.agvFicheEstFondateur = agvFicheEstFondateur;
+function agvFicheMarqueeParErreur(g){
+  return !!(g && (g.role === 'fondateur' || g.type === 'fondateur') && !agvFicheEstFondateur(g));
+}
+window.agvFicheMarqueeParErreur = agvFicheMarqueeParErreur;
+
 function renderGerants(){
   const container=document.getElementById('gerants-list');
   // [CORRECTIF] Cette liste ne doit afficher que les VRAIS gérants
@@ -6028,7 +6060,7 @@ function renderGerants(){
   // et bouton Bloquer/Debloquer — ce qui donnait l'impression que la
   // liste etait deja "prise" et empechait d'ajouter clairement d'autres
   // gerants, et donnait a tort un compte/acces aux associes.
-  const gerantsReels = gerants.filter(g=>g.id!==1 && g.role!=='fondateur' && g.type!=='fondateur' && g.type!=='associe');
+  const gerantsReels = gerants.filter(g=>g && !agvFicheEstFondateur(g) && g.type!=='associe');
   if(!gerantsReels.length){container.innerHTML='<div class="empty"><div class="empty-icon">👥</div><div class="empty-text">Aucun gérant enregistré</div></div>';return}
   container.innerHTML=gerantsReels.map(g=>{
     const typeLabel=agvRemunSalaire(g)?`Salaire fixe: ${fmtGNF(g.salaire)}`:`${g.pct}% des bénéfices`;
@@ -6040,7 +6072,7 @@ function renderGerants(){
     return `<div class="gerant-card">
       ${avatarHTML}
       <div class="gerant-info">
-        <div class="gerant-name">${g.nom} ${statusBadge} ${waIcon}</div>
+        <div class="gerant-name">${g.nom} ${statusBadge} ${waIcon}${agvFicheMarqueeParErreur(g)?' <span class="badge amber" title="Cette fiche avait ete confondue avec celle du fondateur : verifiez son nom">⚠ nom a verifier</span>':''}</div>
         <div class="gerant-meta">Code: <span class="access-code">${g.code}</span> · ${typeLabel}${g.whatsapp?' · 📱 +'+g.whatsapp:''}</div>
         <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">
           <span class="badge ${g.permVentes?'blue':'zero'}">🛒 Saisie ventes: ${g.permVentes?'Oui':'Non'}</span>
@@ -7790,7 +7822,9 @@ function saveDetteFournisseur(){
   if(!nom||!montant){showToast('Nom et montant requis');return;}
   if(!echeance){showToast('Date limite requise');return;}
   if(!dettes) dettes=[];
-  var ex=dettes.find(function(d){return d.type==='fournisseur'&&d.nom===nom&&(d.montant-(d.paiements||[]).reduce(function(s,p){return s+p.montant;},0))>0;});
+  // [CORRECTIF] ne jamais fondre une dette saisie dans le reflet d'une commande (commandeId) :
+  // la prochaine mise a jour de la commande effacerait le montant ajoute
+  var ex=dettes.find(function(d){return d.type==='fournisseur'&&!d.commandeId&&d.nom===nom&&(d.montant-(d.paiements||[]).reduce(function(s,p){return s+(parseFloat(p.montant)||0);},0))>0;});
   if(ex){
     if(!ex.historique) ex.historique=[];
     ex.historique.push({id:Date.now(),montant:montant,date:date,echeance:echeance,desc:desc});
@@ -8555,15 +8589,19 @@ function openFournisseurModal(id){
   _fournLogoData=null;
   var ov=document.getElementById('fourn-overlay'); if(!ov) return;
   ov.style.display='flex';
-  document.getElementById('fourn-edit-id').value=id||'';
-  document.getElementById('fourn-modal-title').textContent=id?'✏️ Modifier fournisseur':'🏭 Nouveau fournisseur';
+  // [CORRECTIF] comparaison souple : l'identifiant revient de Firebase tantot en nombre, tantot en texte
+  var f=(id!==undefined&&id!==null&&id!=='')?fournisseurs.find(function(x){return String(x.id)===String(id);}):null;
+  document.getElementById('fourn-edit-id').value=f?String(f.id):'';
+  document.getElementById('fourn-modal-title').textContent=f?'✏️ Modifier fournisseur':'🏭 Nouveau fournisseur';
   var prev=document.getElementById('fourn-logo-preview');
-  var f=id?fournisseurs.find(function(x){return x.id===id;}):null;
-  document.getElementById('fourn-nom').value=f?f.nom:'';
-  document.getElementById('fourn-adresse').value=f?f.adresse:'';
-  document.getElementById('fourn-tel').value=f?f.tel:'';
-  document.getElementById('fourn-whatsapp').value=f?f.whatsapp:'';
-  document.getElementById('fourn-email').value=f?f.email:'';
+  document.getElementById('fourn-nom').value=f?(f.nom||''):'';
+  document.getElementById('fourn-adresse').value=f?(f.adresse||''):'';
+  document.getElementById('fourn-tel').value=f?(f.tel||''):'';
+  document.getElementById('fourn-whatsapp').value=f?(f.whatsapp||''):'';
+  document.getElementById('fourn-email').value=f?(f.email||''):'';
+  var _n=document.getElementById('fourn-notes'); if(_n) _n.value=f?(f.notes||''):'';
+  var _t=document.getElementById('fourn-nature');
+  if(_t) _t.value=(f&&f.nature==='fonds')?'fonds':(f?'marchandises':(window._fournNatureNouveau||'marchandises'));
   if(prev){
     if(f&&f.logo){prev.innerHTML='<img src="'+f.logo+'" style="width:100%;height:100%;object-fit:contain">';_fournLogoData=f.logo;}
     else prev.innerHTML='🏭';
@@ -8576,55 +8614,130 @@ function fournPreviewLogo(input){
   r.onload=function(e){_fournLogoData=e.target.result;var p=document.getElementById('fourn-logo-preview');if(p)p.innerHTML='<img src="'+e.target.result+'" style="width:100%;height:100%;object-fit:contain">';};
   r.readAsDataURL(file);
 }
+function _fournNorm(t){
+  var x=String(t||'').toLowerCase().trim();
+  try{ x=x.normalize('NFD').replace(/[̀-ͯ]/g,''); }catch(e){}
+  return x.replace(/[^a-z0-9]/g,'');
+}
+function _fournTel(t){ var x=String(t||'').replace(/[^0-9]/g,''); return x.length>9?x.slice(-9):x; }
 function saveFournisseur(){
   var nom=(document.getElementById('fourn-nom').value||'').trim();
   if(!nom){showToast('Nom requis');return;}
   var id=document.getElementById('fourn-edit-id').value;
+  var _t=document.getElementById('fourn-nature');
+  var _n=document.getElementById('fourn-notes');
+  var tel=(document.getElementById('fourn-tel').value||'').trim();
+  var existant=id?fournisseurs.find(function(f){return String(f.id)===String(id);}):null;
+  // [CORRECTIF DOUBLON] creer deux fois le meme fournisseur faisait apparaitre sa dette
+  // sur deux fiches : on refuse la creation d'une fiche qui existe deja (nom ou telephone)
+  var doublon=fournisseurs.find(function(f){
+    if(!f||(existant&&f===existant)) return false;
+    if(_fournNorm(f.nom)===_fournNorm(nom)) return true;
+    var a=_fournTel(tel), b=_fournTel(f.tel);
+    return a.length>=8&&a===b;
+  });
+  if(doublon){
+    showToast('« '+doublon.nom+' » existe deja — modifiez sa fiche au lieu d\'en creer une seconde');
+    return;
+  }
   var obj={
-    id:id||Date.now(),nom:nom,
+    nom:nom,
+    nature:(_t&&_t.value==='fonds')?'fonds':'marchandises',
     adresse:(document.getElementById('fourn-adresse').value||'').trim(),
-    tel:(document.getElementById('fourn-tel').value||'').trim(),
+    tel:tel,
     whatsapp:(document.getElementById('fourn-whatsapp').value||'').trim(),
     email:(document.getElementById('fourn-email').value||'').trim(),
-    logo:_fournLogoData||'',
-    createdAt:new Date().toISOString()
+    notes:_n?(_n.value||'').trim():'',
+    logo:_fournLogoData||''
   };
-  if(id){var idx=fournisseurs.findIndex(function(f){return String(f.id)===String(id);}); if(idx>=0)fournisseurs[idx]=obj; else fournisseurs.push(obj);}
-  else fournisseurs.unshift(obj);
+  if(existant){
+    // [CORRECTIF] on complete la fiche au lieu de la remplacer : son identifiant,
+    // sa date de creation et tout champ ajoute par ailleurs sont conserves
+    var ancienNom=existant.nom;
+    for(var k in obj) existant[k]=obj[k];
+    // ses dettes et commandes le suivent s'il change de nom
+    if(ancienNom&&ancienNom!==nom){
+      (dettes||[]).forEach(function(d){ if(d&&d.type==='fournisseur'&&d.nom===ancienNom) d.nom=nom; });
+      (commandes||[]).forEach(function(c){ if(c&&String(c.fournisseurId)===String(existant.id)) c.fournisseurNom=nom; });
+    }
+  } else {
+    obj.id=Date.now();
+    obj.createdAt=new Date().toISOString();
+    fournisseurs.unshift(obj);
+  }
   saveAll();closeFournisseurModal();renderFournisseurs();
   showToast('✅ Fournisseur enregistré');
 }
 function deleteFournisseur(id){
-  if(!confirm('Supprimer ce fournisseur ?')) return;
-  fournisseurs=fournisseurs.filter(function(f){return String(f.id)!==String(id);});
+  var f=fournisseurs.find(function(x){return String(x.id)===String(id);});
+  if(!f) return;
+  if(currentRole!=='fondateur'&&!(typeof window.agvActionPermise==='function'&&window.agvActionPermise('permDel'))){
+    showToast('Vous n\'avez pas le droit de supprimer'); return;
+  }
+  var s=(typeof window.agvSituationFournisseur==='function')?window.agvSituationFournisseur(f.id,f.nom):{total:0};
+  var nbCmd=(commandes||[]).filter(function(c){return String(c.fournisseurId)===String(f.id);}).length;
+  var msg='Supprimer le fournisseur « '+f.nom+' » ?';
+  if(s.total>0) msg+='\n\nATTENTION : il reste '+fmtGNF(s.total)+' a lui regler.';
+  if(nbCmd||s.total>0) msg+='\nSes commandes ('+nbCmd+') et ses dettes restent dans l\'historique et pourront toujours etre reglees depuis Versements.';
+  if(!confirm(msg)) return;
+  fournisseurs=fournisseurs.filter(function(x){return String(x.id)!==String(id);});
+  try{ if(typeof window.agvJournaliser==='function') window.agvJournaliser('Fournisseur supprime', f.nom); }catch(e){}
   saveAll();renderFournisseurs();
+  showToast('Fournisseur « '+f.nom+' » supprime');
 }
 
+var _fournFiltreNature='tous';
+function agvFiltreFournisseurs(n){ _fournFiltreNature=n||'tous'; renderFournisseurs(); }
 function renderFournisseurs(){
   var el=document.getElementById('fourn-list'); if(!el) return;
-  if(!fournisseurs.length){el.innerHTML='<div class="empty"><div class="empty-icon">🏭</div><div class="empty-text">Aucun fournisseur. Ajoutez-en un !</div></div>';return;}
-  el.innerHTML='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px">'+
-    fournisseurs.map(function(f){
-      var dettesSolde=getDettesSolde().filter(function(d){return d.type==='fournisseur'&&d.nom===f.nom&&d.solde>0;});
-      var totalDette=dettesSolde.reduce(function(s,d){return s+d.solde;},0);
-      var nbCmds=commandes.filter(function(c){return c.fournisseurId===f.id;}).length;
+  function q(v){ return String(v).replace(/\\/g,'\\\\').replace(/'/g,"\\'"); }
+  var nbF=fournisseurs.filter(function(f){return f&&f.nature==='fonds';}).length;
+  var nbM=fournisseurs.length-nbF;
+  var filtres='<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">'
+    +[['tous','Tous ('+fournisseurs.length+')'],['marchandises','📦 Marchandises ('+nbM+')'],['fonds','💵 Fonds ('+nbF+')']].map(function(x){
+      var on=_fournFiltreNature===x[0];
+      return '<button onclick="agvFiltreFournisseurs(\''+x[0]+'\')" style="padding:6px 12px;border-radius:20px;border:1px solid '+(on?'var(--accent)':'var(--border)')+';background:'+(on?'var(--accent)':'var(--surface2)')+';color:'+(on?'#fff':'var(--text)')+';font-family:inherit;font-size:12px;font-weight:700;cursor:pointer">'+x[1]+'</button>';
+    }).join('')
+    +'<button onclick="window._fournNatureNouveau=\'fonds\';openFournisseurModal();window._fournNatureNouveau=null" style="margin-left:auto;padding:6px 12px;border-radius:20px;border:1px dashed var(--green);background:transparent;color:var(--green);font-family:inherit;font-size:12px;font-weight:700;cursor:pointer">+ Fournisseur de fonds</button>'
+    +'</div>';
+  if(!fournisseurs.length){el.innerHTML=filtres+'<div class="empty"><div class="empty-icon">🏭</div><div class="empty-text">Aucun fournisseur. Ajoutez-en un !</div></div>';return;}
+  var liste=fournisseurs.filter(function(f){
+    if(!f) return false;
+    if(_fournFiltreNature==='fonds') return f.nature==='fonds';
+    if(_fournFiltreNature==='marchandises') return f.nature!=='fonds';
+    return true;
+  });
+  if(!liste.length){el.innerHTML=filtres+'<div class="empty"><div class="empty-text">Aucun fournisseur dans cette categorie.</div></div>';return;}
+  el.innerHTML=filtres+'<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px">'+
+    liste.map(function(f){
+      var fonds=f.nature==='fonds';
+      // [CORRECTIF DOUBLE COMPTE] commandes non soldees + dettes saisies hors commande, chacune une seule fois
+      var totalDette;
+      if(typeof window.agvSituationFournisseur==='function') totalDette=window.agvSituationFournisseur(f.id,f.nom).total;
+      else totalDette=getDettesSolde().filter(function(d){return d.type==='fournisseur'&&d.nom===f.nom&&d.solde>0;}).reduce(function(s,d){return s+d.solde;},0);
+      var nbCmds=commandes.filter(function(c){return String(c.fournisseurId)===String(f.id);}).length;
+      var fid=q(f.id);
       return '<div class="card" style="padding:14px">'
         +'<div style="display:flex;gap:12px;align-items:flex-start;margin-bottom:10px">'
-        +'<div style="width:48px;height:48px;border-radius:8px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;overflow:hidden">'
-        +(f.logo?'<img src="'+f.logo+'" style="width:100%;height:100%;object-fit:contain">':'🏭')+'</div>'
+        +'<div style="width:48px;height:48px;border-radius:8px;background:'+(fonds?'var(--green)':'var(--accent)')+';color:#fff;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;overflow:hidden">'
+        +(f.logo?'<img src="'+f.logo+'" style="width:100%;height:100%;object-fit:contain">':(fonds?'💵':'🏭'))+'</div>'
         +'<div style="flex:1"><div style="font-weight:700;font-size:14px">'+f.nom+'</div>'
+        +'<div style="margin:3px 0"><span style="padding:2px 9px;border-radius:20px;font-size:10.5px;font-weight:700;background:'+(fonds?'rgba(22,163,74,0.15);color:var(--green)':'rgba(37,99,235,0.15);color:var(--accent)')+'">'+(fonds?'💵 Fournisseur de fonds':'📦 Fournisseur de marchandises')+'</span></div>'
         +(f.adresse?'<div style="font-size:11px;color:var(--text3)">📍 '+f.adresse+'</div>':'')
         +(f.tel?'<div style="font-size:11px;color:var(--text3)">📞 '+f.tel+'</div>':'')
         +'</div></div>'
-        +'<div style="display:flex;gap:6px;margin-bottom:10px">'
-        +(f.whatsapp?'<a href="https://wa.me/'+f.whatsapp.replace(/\D/g,'')+'" target="_blank" style="padding:4px 10px;border-radius:20px;background:#25d366;color:#fff;font-size:11px;font-weight:700;text-decoration:none">📱 WhatsApp</a>':'')
-        +'<span style="padding:4px 10px;border-radius:20px;background:var(--surface2);font-size:11px">'+nbCmds+' commande(s)</span>'
-        +(totalDette>0?'<span style="padding:4px 10px;border-radius:20px;background:rgba(239,68,68,0.1);color:var(--red);font-size:11px;font-weight:700">💳 '+fmtGNF(totalDette)+'</span>':'')
+        +'<div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap">'
+        +(f.whatsapp?'<a href="https://wa.me/'+String(f.whatsapp).replace(/\D/g,'')+'" target="_blank" style="padding:4px 10px;border-radius:20px;background:#25d366;color:#fff;font-size:11px;font-weight:700;text-decoration:none">📱 WhatsApp</a>':'')
+        +(fonds?'':'<span style="padding:4px 10px;border-radius:20px;background:var(--surface2);font-size:11px">'+nbCmds+' commande(s)</span>')
+        +(totalDette>0?'<span style="padding:4px 10px;border-radius:20px;background:rgba(239,68,68,0.1);color:var(--red);font-size:11px;font-weight:700">💳 Du : '+fmtGNF(totalDette)+'</span>':'<span style="padding:4px 10px;border-radius:20px;background:rgba(22,163,74,0.1);color:var(--green);font-size:11px;font-weight:700">✓ Rien a regler</span>')
         +'</div>'
-        +'<div style="display:flex;gap:6px">'
-        +'<button onclick="openFournisseurModal('+f.id+')" style="flex:1;padding:5px;border:1px solid var(--accent);border-radius:6px;background:var(--accent-light);color:var(--accent);font-family:inherit;font-size:11px;cursor:pointer">✏️ Modifier</button>'
-        +'<button onclick="openCommandeModal('+f.id+')" style="flex:1;padding:5px;border:none;border-radius:6px;background:var(--accent);color:#fff;font-family:inherit;font-size:11px;cursor:pointer;font-weight:700">+ Commande</button>'
-        +'<button onclick="deleteFournisseur('+f.id+')" style="padding:5px 8px;border:none;border-radius:6px;background:var(--red-bg);color:var(--red);font-family:inherit;font-size:11px;cursor:pointer">🗑</button>'
+        +'<div style="display:flex;gap:6px;flex-wrap:wrap">'
+        +'<button onclick="openFournisseurModal(\''+fid+'\')" style="flex:1;padding:5px;border:1px solid var(--accent);border-radius:6px;background:var(--accent-light);color:var(--accent);font-family:inherit;font-size:11px;cursor:pointer">✏️ Modifier</button>'
+        +(fonds
+          ?'<button onclick="agvFondsRecus(\''+fid+'\')" style="flex:1;padding:5px;border:none;border-radius:6px;background:var(--green);color:#fff;font-family:inherit;font-size:11px;cursor:pointer;font-weight:700">+ Fonds recus</button>'
+          :'<button onclick="openCommandeModal(\''+fid+'\')" style="flex:1;padding:5px;border:none;border-radius:6px;background:var(--accent);color:#fff;font-family:inherit;font-size:11px;cursor:pointer;font-weight:700">+ Commande</button>')
+        +(totalDette>0?'<button onclick="agvVersementFournisseur(\''+fid+'\')" style="flex:1;padding:5px;border:none;border-radius:6px;background:var(--red);color:#fff;font-family:inherit;font-size:11px;cursor:pointer;font-weight:700">💰 Regler</button>':'')
+        +'<button onclick="deleteFournisseur(\''+fid+'\')" title="Supprimer ce fournisseur" style="padding:5px 8px;border:none;border-radius:6px;background:var(--red-bg);color:var(--red);font-family:inherit;font-size:11px;cursor:pointer">🗑 Supprimer</button>'
         +'</div></div>';
     }).join('')
   +'</div>';
@@ -8639,7 +8752,8 @@ function openCommandeModal(fournisseurId){
   ov.style.display='flex';
   // Peupler fournisseurs
   var sel=document.getElementById('cmd-fourn-sel');
-  sel.innerHTML='<option value="">-- Choisir --</option>'+fournisseurs.map(function(f){return '<option value="'+f.id+'"'+(String(f.id)===String(fournisseurId)?' selected':'')+'>'+f.nom+'</option>';}).join('');
+  // un fournisseur de fonds ne recoit pas de commande de marchandises
+  sel.innerHTML='<option value="">-- Choisir --</option>'+fournisseurs.filter(function(f){return f&&(f.nature!=='fonds'||String(f.id)===String(fournisseurId));}).map(function(f){return '<option value="'+f.id+'"'+(String(f.id)===String(fournisseurId)?' selected':'')+'>'+f.nom+'</option>';}).join('');
   document.getElementById('cmd-date').value=new Date().toISOString().slice(0,10);
   document.getElementById('cmd-note').value='';
   document.getElementById('cmd-lignes').innerHTML='';
@@ -8663,8 +8777,10 @@ function onCmdFournChange(){
       +'<div style="clear:both"></div>';
 
     // ── Dettes de l'onglet "Gestion des dettes" (array dettes) ──
+    // [CORRECTIF DOUBLE COMPTE] une dette portant commandeId est le reflet
+    // d'une commande deja comptee ci-dessous par son soldeRestant
     var dettesGestion=getDettesSolde().filter(function(d){
-      return d.type==='fournisseur' && d.nom===fourn.nom && d.solde>0;
+      return d.type==='fournisseur' && d.nom===fourn.nom && d.solde>0 && !d.commandeId;
     });
     var totalDettesGestion=dettesGestion.reduce(function(s,d){return s+d.solde;},0);
 
@@ -10280,8 +10396,9 @@ function renderCommandesList(){
         var soldeTotCmd=toutesCmd.reduce(function(s,c2){return s+(c2.soldeRestant||0);},0);
         // Dettes de l'onglet gestion dettes
         var fournNom=(fourn?fourn.nom:cmd.fournisseurNom||'');
+        // [CORRECTIF DOUBLE COMPTE] les dettes nees d'une commande sont deja dans soldeTotCmd
         var dettesGestion=getDettesSolde().filter(function(d){
-          return d.type==='fournisseur'&&d.nom===fournNom&&d.solde>0;
+          return d.type==='fournisseur'&&d.nom===fournNom&&d.solde>0&&!d.commandeId;
         });
         var soldeTotGestion=dettesGestion.reduce(function(s,d){return s+d.solde;},0);
         var soldeGlobal=soldeTotCmd+soldeTotGestion;
@@ -12025,8 +12142,9 @@ function openReglerDetteModal(){
     });
     var detteCmd=cmdsImpayees.reduce(function(s,cm){return s+(cm.soldeRestant||0);},0);
     // Dettes de l'onglet gestion
+    // [CORRECTIF DOUBLE COMPTE] seules les dettes saisies hors commande s'ajoutent
     var dettesG=getDettesSolde().filter(function(d){
-      return d.type==='fournisseur'&&d.nom===f.nom&&d.solde>0;
+      return d.type==='fournisseur'&&d.nom===f.nom&&d.solde>0&&!d.commandeId;
     });
     var detteG=dettesG.reduce(function(s,d){return s+d.solde;},0);
     var total=detteCmd+detteG;
@@ -27711,7 +27829,13 @@ function estLeFondateur(g){
 function personneConnectee(){
   var id = window.currentGerantId;
   if(id === null || id === undefined || id === '') return null;
-  return parId(id);
+  var t = parId(id);
+  /* [CORRECTIF MES BOUTIQUES] gerant en visite : sa fiche est chez lui,
+     getCurrentGerant() la fournit (module 9) */
+  if(!t && typeof window.getCurrentGerant === 'function'){
+    try{ var v = window.getCurrentGerant(); if(v && v.visiteur && memeId(v.id, id)) t = v; }catch(e){}
+  }
+  return t;
 }
 /* le co-fondateur connecte est un proprietaire : il n'est pas soumis
    aux verrous « reserve au Fondateur », mais a SA liste d'onglets */
@@ -29832,6 +29956,11 @@ function personneConnectee(){
   if(id === null || id === undefined || id === '') return null;
   var t = null;
   lesGerants().forEach(function(x){ if(!t && memeId(x.id, id)) t = x; });
+  /* [CORRECTIF MES BOUTIQUES] gerant en visite dans une autre boutique :
+     sa fiche n'est pas dans ce personnel, getCurrentGerant() la fournit */
+  if(!t && typeof window.getCurrentGerant === 'function'){
+    try{ var v = window.getCurrentGerant(); if(v && v.visiteur && memeId(v.id, id)) t = v; }catch(e){}
+  }
   return t;
 }
 window.agvPersonneConnectee = personneConnectee;
@@ -30061,7 +30190,10 @@ function poserOnglets(){
    4. ONGLET PERSONNEL
    ============================================================ */
 function estCofondateur(g){ return !!(g && (g.type === 'associe' || g.role === 'associe')); }
-function estLeFondateur(g){ return !!(g && (g.id === 1 || g.role === 'fondateur' || g.type === 'fondateur')); }
+function estLeFondateur(g){
+  if(typeof window.agvFicheEstFondateur === 'function') return window.agvFicheEstFondateur(g);
+  return !!(g && (g.id === 1 || g.role === 'fondateur' || g.type === 'fondateur'));
+}
 
 function cases(g, prefixe, liste, champ){
   var id = esc(String(g.id));
@@ -30102,7 +30234,12 @@ function carte(g){
   return '<div class="agv32-c' + (complet ? ' on' : '') + '">'
     + '<div class="agv32-h"><div><div class="agv32-n">' + esc(g.nom || 'Sans nom')
       + ' <span class="agv32-tag" style="background:' + (cof ? 'rgba(168,85,247,.18);color:#c084fc' : 'rgba(37,99,235,.18);color:#60a5fa') + '">'
-      + (cof ? 'co-fondateur' : 'gerant') + '</span></div>'
+      + (cof ? 'co-fondateur' : 'gerant') + '</span>'
+      + ((typeof window.agvFicheMarqueeParErreur === 'function' && window.agvFicheMarqueeParErreur(g))
+          ? ' <span class="agv32-tag" style="background:rgba(245,158,11,.18);color:#fbbf24" '
+            + 'title="Cette fiche avait ete confondue avec celle du fondateur : verifiez le nom puis Enregistrer">'
+            + 'nom a verifier</span>' : '')
+      + '</div>'
       + '<div class="agv32-e">' + (salaire ? 'Salaire fixe ' + esc(argent(g.salaire))
                                            : nb(g.pct) + ' % des benefices')
       + (g.email ? ' &middot; ' + esc(g.email) : ' &middot; <span style="color:var(--amber,#f59e0b)">e-mail manquant</span>')
@@ -30235,6 +30372,9 @@ window.agvPersEnregistrer = function(id){
   var g = null;
   lesGerants().forEach(function(x){ if(!g && memeId(x.id, id)) g = x; });
   if(!g) return toast('Fiche introuvable');
+  /* fiche de personnel confondue autrefois avec celle du fondateur : en
+     l'enregistrant ici, le fondateur confirme que c'est un membre du personnel */
+  var etaitMarquee = (typeof window.agvFicheMarqueeParErreur === 'function') && window.agvFicheMarqueeParErreur(g);
   var lire = function(p){ return (document.getElementById('agv32-' + p + '-' + id) || {}).value; };
   var nom = String(lire('nom') || '').trim();
   if(!nom) return toast('Le nom est obligatoire');
@@ -30270,6 +30410,7 @@ window.agvPersEnregistrer = function(id){
   g.permVues = lireCases(id, 'pv');
   var actions = lireCases(id, 'pa');
   ACTIONS.forEach(function(a){ g[a.cle] = actions.indexOf(a.cle) >= 0; });
+  if(etaitMarquee && g.role === 'fondateur') delete g.role;
   enregistrer();
   toast(nom + ' enregistre');
   rendrePersonnel();
@@ -30337,41 +30478,165 @@ window.agvRendrePersonnel = rendrePersonnel;
    ============================================================ */
 var MODES = ['Especes', 'Orange Money', 'Mobile Money', 'Virement bancaire', 'Cheque', 'Autre'];
 
-function du(d){
-  var paye = enTableau(d.paiements).reduce(function(s, p){ return s + nb(p.montant); }, 0);
-  return nb(d.montant) - paye;
+/* ------------------------------------------------------------
+   [CORRECTIF VERSEMENTS] CE QUI EST REELLEMENT DU
+   ------------------------------------------------------------
+   La premiere version ne regardait QUE le tableau « dettes ».
+   Or :
+     - ce qu'un CLIENT doit vit dans ses FACTURES (soldeRestant
+       des ventes a credit) : il n'apparaissait jamais, d'ou
+       « Aucune dette ouverte » pour un client qui doit ;
+     - ce qu'on doit a un FOURNISSEUR vit dans ses COMMANDES
+       (soldeRestant). Le reflet de chaque commande dans
+       « dettes » (commandeId) est reecrit a chaque mise a jour
+       de la commande : un versement pose sur ce reflet etait
+       efface, et la commande ne le voyait jamais.
+   Desormais chaque somme due est lue a sa source et le
+   versement est inscrit LA OU la somme est due :
+     facture  -> paiements de la facture (comme le fait l'onglet
+                 Clients & Factures)
+     commande -> paiements de la commande, puis le reflet est
+                 resynchronise
+     dette    -> paiements de la dette (dettes saisies a la main)
+   Chaque somme n'est comptee qu'une fois : le reflet d'une
+   commande existante et la dette client qui double une facture
+   sont ecartes du total.
+   ------------------------------------------------------------ */
+function lesFacturesV(){ var f; try{ f = factureVentes; }catch(e){ f = window.factureVentes; } return enTableau(f); }
+function lesCommandesV(){ var c; try{ c = commandes; }catch(e){ c = window.commandes; } return enTableau(c); }
+function normV(t){
+  var s = String(t || '').toLowerCase().trim();
+  try{ s = s.normalize('NFD').replace(/[̀-ͯ]/g, ''); }catch(e){}
+  return s.replace(/\s+/g, ' ');
+}
+function sommePaiements(l){ return enTableau(l).reduce(function(s, p){ return s + nb(p && p.montant); }, 0); }
+function du(d){ return nb(d.montant) - sommePaiements(d.paiements); }
+function jourV(t){
+  var d = new Date(t || Date.now());
+  return isNaN(d.getTime()) ? '—' : d.toLocaleDateString('fr-FR');
+}
+function resteFacture(f){
+  if(f.reportee) return 0;
+  if(f.soldeRestant !== undefined && f.soldeRestant !== null && f.soldeRestant !== '') return Math.max(nb(f.soldeRestant), 0);
+  return Math.max(nb(f.montantTotal) - nb(f.montantPaye), 0);
+}
+function resteCommande(c){
+  if(c.soldeRestant !== undefined && c.soldeRestant !== null && c.soldeRestant !== '') return Math.max(nb(c.soldeRestant), 0);
+  return Math.max(nb(c.montantTotal) - sommePaiements(c.paiements), 0);
+}
+/* une facture « a credit » : elle n'a pas ete reglee en entier le jour meme */
+function factureACredit(f){
+  if(resteFacture(f) > 0.5) return true;
+  var p = enTableau(f.paiements);
+  if(p.length > 1) return true;
+  if(p.length === 1) return nb(p[0].montant) < nb(f.montantTotal) - 0.5;
+  return false;
+}
+
+/* chaque somme due, avec sa source */
+function elements(){
+  var out = [];
+  var clientsParId = {};
+  lesClients().forEach(function(c){ if(c && c.id !== undefined) clientsParId[String(c.id)] = c; });
+  var fournParId = {};
+  lesFournisseurs().forEach(function(f){ if(f && f.id !== undefined) fournParId[String(f.id)] = f; });
+  var facturesConnues = {};
+  lesFacturesV().forEach(function(f){
+    if(!f) return;
+    facturesConnues[String(f.id)] = true;
+    if(f.numero) facturesConnues[String(f.numero)] = true;
+  });
+  var commandesConnues = {};
+  lesCommandesV().forEach(function(c){ if(c) commandesConnues[String(c.id)] = true; });
+
+  lesFacturesV().forEach(function(f){
+    if(!f || f.reportee || !factureACredit(f)) return;
+    var c = (f.clientId !== undefined && f.clientId !== '') ? clientsParId[String(f.clientId)] : null;
+    var nom = c ? c.nom : (f.clientNom || '');
+    if(!String(nom).trim()) return;
+    out.push({ cle: 'F:' + f.id, sorte: 'facture', obj: f, type: 'client', nom: nom,
+               tel: c ? (c.tel || '') : '', date: f.date || f.createdAt,
+               libelle: 'Facture ' + (f.numero || '') , montant: nb(f.montantTotal),
+               reste: resteFacture(f) });
+  });
+  lesCommandesV().forEach(function(c){
+    if(!c || nb(c.montantTotal) <= 0) return;
+    var f = fournParId[String(c.fournisseurId)] || null;
+    var nom = f ? f.nom : (c.fournisseurNom || '');
+    if(!String(nom).trim()) return;
+    out.push({ cle: 'C:' + c.id, sorte: 'commande', obj: c, type: 'fournisseur', nom: nom,
+               tel: f ? (f.tel || '') : '', date: c.date || c.createdAt,
+               libelle: 'Commande du ' + jourV(c.date), montant: nb(c.montantTotal),
+               reste: resteCommande(c) });
+  });
+  lesDettes().forEach(function(d){
+    if(!d) return;
+    var type = (d.type === 'fournisseur') ? 'fournisseur' : 'client';
+    /* reflet d'une commande existante : deja compte par la commande */
+    if(type === 'fournisseur' && d.commandeId !== undefined && d.commandeId !== null
+       && commandesConnues[String(d.commandeId)]) return;
+    /* dette client qui double une facture existante */
+    if(type === 'client'){
+      var ref = (d.factureId !== undefined && d.factureId !== null) ? String(d.factureId)
+              : ((d.factureNo !== undefined && d.factureNo !== null) ? String(d.factureNo) : null);
+      if(ref !== null && facturesConnues[ref]) return;
+    }
+    out.push({ cle: 'D:' + d.id, sorte: 'dette', obj: d, type: type, nom: d.nom || '',
+               tel: d.tel || '', date: d.date,
+               libelle: (d.desc ? d.desc : 'Dette du ' + jourV(d.date)), montant: nb(d.montant),
+               reste: Math.max(du(d), 0) });
+  });
+  return out;
 }
 
 function partenaires(){
   var m = {};
   function ajoute(nom, type, tel, id){
     var n = String(nom || '').trim();
-    if(!n) return;
-    var cle = type + '|' + n.toLowerCase();
-    if(!m[cle]) m[cle] = { nom: n, type: type, tel: tel || '', id: id, dettes: [], du: 0 };
+    if(!n) return null;
+    var cle = type + '|' + normV(n);
+    if(!m[cle]) m[cle] = { cle: cle, nom: n, type: type, tel: tel || '', id: id, items: [], du: 0, nature: '' };
     if(tel && !m[cle].tel) m[cle].tel = tel;
+    if(id !== undefined && id !== null && (m[cle].id === undefined || m[cle].id === null)) m[cle].id = id;
+    return m[cle];
   }
-  lesClients().forEach(function(c){ ajoute(c.nom, 'client', c.tel, c.id); });
-  lesFournisseurs().forEach(function(f){ ajoute(f.nom, 'fournisseur', f.tel, f.id); });
-  lesDettes().forEach(function(d){
-    var type = (d.type === 'fournisseur') ? 'fournisseur' : 'client';
-    ajoute(d.nom, type, d.tel, null);
-    var cle = type + '|' + String(d.nom || '').trim().toLowerCase();
-    if(m[cle]){ m[cle].dettes.push(d); m[cle].du += Math.max(du(d), 0); }
+  lesClients().forEach(function(c){ if(c) ajoute(c.nom, 'client', c.tel, c.id); });
+  lesFournisseurs().forEach(function(f){
+    if(!f) return;
+    var p = ajoute(f.nom, 'fournisseur', f.tel, f.id);
+    if(p && f.nature) p.nature = f.nature;
+  });
+  elements().forEach(function(x){
+    var p = ajoute(x.nom, x.type, x.tel, null);
+    if(!p) return;
+    p.items.push(x);
+    p.du += Math.max(x.reste, 0);
   });
   return Object.keys(m).map(function(k){ return m[k]; })
     .sort(function(a, b){ return b.du - a.du; });
 }
+window.agvPartenairesVersement = partenaires;
 
-var choisi = null;
+var choisi = null;     // { type, cle }
+function partenaireChoisi(){
+  if(!choisi) return null;
+  var t = null;
+  partenaires().forEach(function(p){ if(!t && p.cle === choisi.cle) t = p; });
+  return t;
+}
+function attrJs(v){
+  /* passe une chaine dans un onclick sans casser l'attribut (apostrophes, guillemets) */
+  return encodeURIComponent(String(v)).replace(/'/g, '%27');
+}
 
 window.agvVersChercher = function(){
   var q = String((document.getElementById('agv32-vers-q') || {}).value || '').trim().toLowerCase();
   var zone = document.getElementById('agv32-vers-res');
   if(!zone) return;
   var l = partenaires();
+  var qn = normV(q);
   if(q) l = l.filter(function(p){
-    return p.nom.toLowerCase().indexOf(q) >= 0 || String(p.tel || '').indexOf(q) >= 0;
+    return normV(p.nom).indexOf(qn) >= 0 || String(p.tel || '').replace(/\s/g, '').indexOf(q.replace(/\s/g, '')) >= 0;
   });
   l = l.slice(0, 30);
   if(!l.length){
@@ -30381,16 +30646,18 @@ window.agvVersChercher = function(){
     return;
   }
   zone.innerHTML = l.map(function(p){
-    var actif = choisi && choisi.type === p.type && choisi.nom === p.nom;
+    var actif = choisi && choisi.cle === p.cle;
+    var etiquette = p.type === 'client' ? 'client'
+                  : (p.nature === 'fonds' ? 'fournisseur de fonds' : 'fournisseur');
     return '<div class="agv32-res' + (actif ? ' on' : '') + '" '
-      + 'onclick="agvVersChoisir(\'' + esc(p.type) + '\',\'' + esc(p.nom).replace(/'/g, "\\'") + '\')">'
+      + 'onclick="agvVersChoisir(\'' + p.type + '\',decodeURIComponent(\'' + attrJs(p.nom) + '\'))">'
       + '<div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap">'
       + '<div><b style="font-size:13px">' + esc(p.nom) + '</b> '
         + '<span class="agv32-tag" style="background:' + (p.type === 'client' ? 'rgba(37,99,235,.18);color:#60a5fa' : 'rgba(245,158,11,.18);color:#fbbf24') + '">'
-        + esc(p.type) + '</span>'
+        + esc(etiquette) + '</span>'
         + (p.tel ? '<div style="font-size:11px;color:var(--text3)">' + esc(p.tel) + '</div>' : '') + '</div>'
       + '<div style="text-align:right;font-size:12px">'
-        + (p.du > 0 ? '<span style="color:var(--red);font-weight:800">' + esc(argent(p.du)) + '</span>'
+        + (p.du > 0.5 ? '<span style="color:var(--red);font-weight:800">' + esc(argent(p.du)) + '</span>'
                       + '<div style="font-size:10px;color:var(--text3)">'
                       + (p.type === 'client' ? 'reste a payer' : 'reste a regler') + '</div>'
                     : '<span style="color:var(--green)">a jour</span>')
@@ -30399,99 +30666,121 @@ window.agvVersChercher = function(){
 };
 
 window.agvVersChoisir = function(type, nom){
-  var l = partenaires();
-  choisi = null;
-  l.forEach(function(p){ if(!choisi && p.type === type && p.nom === nom) choisi = p; });
+  choisi = { type: type, cle: type + '|' + normV(nom) };
   window.agvVersChercher();
   rendreFiche();
 };
 
+/* ouvre directement la fiche de versement d'un fournisseur (bouton « Regler ») */
+window.agvVersementFournisseur = function(id){
+  var f = null;
+  lesFournisseurs().forEach(function(x){ if(!f && x && String(x.id) === String(id)) f = x; });
+  if(!f) return;
+  try{ window.showView('versements'); }catch(e){}
+  setTimeout(function(){ window.agvVersChoisir('fournisseur', f.nom); }, 300);
+};
+
+function optionsMoyens(sel){
+  if(typeof window.agvMoyensCaisse === 'function'){
+    return window.agvMoyensCaisse().map(function(m){
+      return '<option value="' + esc(m.id) + '"' + (sel !== undefined && String(sel) === String(m.id) ? ' selected' : '')
+        + '>' + esc(m.nom) + '</option>';
+    }).join('');
+  }
+  return MODES.map(function(m){
+    return '<option value="' + esc(m) + '"' + (sel !== undefined && String(sel) === m ? ' selected' : '') + '>' + esc(m) + '</option>';
+  }).join('');
+}
+
 function rendreFiche(){
   var zone = document.getElementById('agv32-vers-fiche');
   if(!zone) return;
-  if(!choisi){
+  var p = partenaireChoisi();
+  if(!p){
     zone.innerHTML = '<div class="card"><div style="font-size:12.5px;color:var(--text3)">'
       + 'Choisissez un client ou un fournisseur dans la liste pour enregistrer un versement.</div></div>';
     return;
   }
-  var ouvertes = choisi.dettes.filter(function(d){ return du(d) > 0.5; });
-  var opts = ouvertes.map(function(d){
-    return '<option value="' + esc(String(d.id)) + '">'
-      + esc(new Date(d.date || Date.now()).toLocaleDateString('fr-FR')) + ' — reste '
-      + esc(argent(du(d))) + (d.desc ? ' (' + esc(d.desc) + ')' : '') + '</option>';
-  }).join('');
+  var ouverts = p.items.filter(function(x){ return x.reste > 0.5; })
+    .sort(function(a, b){ return new Date(a.date || 0) - new Date(b.date || 0); });
+  var client = (p.type === 'client');
+  var opts = (ouverts.length > 1
+      ? '<option value="AUTO">Toutes ses dettes — du plus ancien au plus recent ('
+        + esc(argent(p.du)) + ')</option>' : '')
+    + ouverts.map(function(x){
+        return '<option value="' + esc(x.cle) + '">' + esc(x.libelle) + ' — ' + esc(jourV(x.date))
+          + ' — reste ' + esc(argent(x.reste)) + '</option>';
+      }).join('');
 
   var versements = [];
-  choisi.dettes.forEach(function(d){
-    enTableau(d.paiements).forEach(function(p, i){
-      versements.push({ dette: d, i: i, p: p });
+  p.items.forEach(function(x){
+    enTableau(x.obj.paiements).forEach(function(pm, i){
+      versements.push({ item: x, i: i, p: pm });
     });
   });
   versements.sort(function(a, b){ return new Date(b.p.date || 0) - new Date(a.p.date || 0); });
 
+  /* detail de ce qui est du, source par source */
+  var detail = ouverts.length
+    ? '<div style="margin:2px 0 12px;font-size:12px">' + ouverts.map(function(x){
+        return '<div style="display:flex;justify-content:space-between;gap:10px;padding:5px 0;'
+          + 'border-bottom:1px solid var(--border)"><span>' + esc(x.libelle) + ' <span style="color:var(--text3)">— '
+          + esc(jourV(x.date)) + '</span></span><b style="color:var(--red)">' + esc(argent(x.reste)) + '</b></div>';
+      }).join('')
+      + '<div style="display:flex;justify-content:space-between;padding:7px 0 0;font-weight:800">'
+      + '<span>' + (client ? 'Total que le client doit' : 'Total a lui regler') + '</span>'
+      + '<span style="color:var(--red)">' + esc(argent(p.du)) + '</span></div></div>'
+    : '';
+
   zone.innerHTML = '<div class="card" style="margin-bottom:14px">'
-    + '<div class="card-title">' + esc(choisi.nom) + ' — ' + esc(choisi.type) + '</div>'
-    + (ouvertes.length
-      ? '<div class="agv32-g agv32-f" style="margin-top:4px">'
-        + '<div style="grid-column:1/-1"><label>Dette concernee</label>'
-          + '<select id="agv32-vers-dette">' + opts + '</select></div>'
+    + '<div class="card-title">' + esc(p.nom) + ' — ' + esc(client ? 'client' : (p.nature === 'fonds' ? 'fournisseur de fonds' : 'fournisseur')) + '</div>'
+    + (ouverts.length
+      ? detail
+        + '<div class="agv32-g agv32-f" style="margin-top:4px">'
+        + '<div style="grid-column:1/-1"><label>Imputer le versement sur</label>'
+          + '<select id="agv32-vers-dette" onchange="agvVersApercu()">' + opts + '</select></div>'
         + '<div><label>Montant du versement (GNF)</label>'
-          + '<input type="number" min="0" id="agv32-vers-mt" placeholder="0"></div>'
-        + '<div><label>' + (choisi.type === 'client'
-              ? 'Mode de paiement du client' : 'Caisse d\'ou sort l\'argent')
-          + '</label><select id="agv32-vers-mode">'
-          + (typeof window.agvMoyensCaisse === 'function'
-              ? window.agvMoyensCaisse().map(function(m){
-                  return '<option value="' + esc(m.id) + '">' + esc(m.nom) + '</option>';
-                }).join('')
-              : MODES.map(function(m){ return '<option value="' + esc(m) + '">' + esc(m) + '</option>'; }).join(''))
-          + '</select></div>'
-        + (choisi.type === 'client'
+          + '<input type="number" min="0" id="agv32-vers-mt" placeholder="0" oninput="agvVersApercu()"></div>'
+        + '<div><label>' + (client ? 'Mode de paiement du client' : 'Caisse d\'ou sort l\'argent')
+          + '</label><select id="agv32-vers-mode">' + optionsMoyens() + '</select></div>'
+        + (client
             ? '<div><label>Caisse vers laquelle diriger le montant</label>'
-              + '<select id="agv32-vers-dest">'
-              + (typeof window.agvMoyensCaisse === 'function'
-                  ? window.agvMoyensCaisse().map(function(m){
-                      return '<option value="' + esc(m.id) + '">' + esc(m.nom) + '</option>';
-                    }).join('') : '')
-              + '</select></div>'
+              + '<select id="agv32-vers-dest">' + optionsMoyens() + '</select></div>'
             : '')
         + '<div><label>Date</label><input type="date" id="agv32-vers-date" value="' + aujourdHui() + '"></div>'
         + '<div><label>Note (facultatif)</label><input id="agv32-vers-note" placeholder="reference, precision..."></div>'
         + '</div>'
-        + '<div style="margin-top:12px"><button class="btn btn-primary btn-sm" '
-          + 'onclick="agvVersEnregistrer()">Enregistrer le versement</button></div>'
+        + '<div id="agv32-vers-apercu" style="font-size:12px;margin-top:9px;min-height:16px"></div>'
+        + '<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">'
+          + '<button class="btn btn-primary btn-sm" onclick="agvVersEnregistrer()">Enregistrer le versement</button>'
+          + '<button class="btn btn-ghost btn-sm" onclick="var e=document.getElementById(\'agv32-vers-mt\');'
+            + 'if(e){e.value=' + Math.round(p.du) + ';agvVersApercu();}">Tout regler (' + esc(argent(p.du)) + ')</button>'
+        + '</div>'
       : '<div style="font-size:12.5px;color:var(--green);padding:6px 0">'
-        + 'Aucune dette ouverte : rien a verser pour le moment.</div>')
+        + (client ? 'Ce client ne doit rien pour le moment.' : 'Rien a regler a ce fournisseur pour le moment.')
+        + '</div>')
     + '</div>'
     + '<div class="card"><div class="card-title">Versements deja enregistres</div>'
     + (versements.length
-      ? '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;min-width:520px">'
+      ? '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;min-width:600px">'
         + '<thead><tr style="color:var(--text3);font-size:10px;text-transform:uppercase">'
         + '<th style="text-align:left;padding:7px">Date</th>'
+        + '<th style="text-align:left;padding:7px">Sur</th>'
         + '<th style="text-align:right;padding:7px">Montant</th>'
         + '<th style="text-align:left;padding:7px">Mode</th>'
         + '<th style="text-align:left;padding:7px">Caisse</th>'
         + '<th style="text-align:left;padding:7px">Note</th></tr></thead><tbody>'
         + versements.map(function(x){
             return '<tr style="border-top:1px solid var(--border)">'
-              + '<td style="padding:7px;font-size:12px">'
-                + esc(new Date(x.p.date || Date.now()).toLocaleDateString('fr-FR')) + '</td>'
+              + '<td style="padding:7px;font-size:12px">' + esc(jourV(x.p.date)) + '</td>'
+              + '<td style="padding:7px;font-size:11.5px;color:var(--text3)">' + esc(x.item.libelle) + '</td>'
               + '<td style="padding:7px;text-align:right;font-weight:700;font-size:12px">'
                 + esc(argent(x.p.montant)) + '</td>'
-              + '<td style="padding:7px"><select onchange="agvVersMode(\'' + esc(String(x.dette.id))
+              + '<td style="padding:7px"><select onchange="agvVersMode(\'' + esc(x.item.cle)
                 + '\',' + x.i + ',this.value)" style="padding:4px 7px;background:var(--surface,#0a1628);'
                 + 'border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:11.5px;'
                 + 'font-family:inherit">'
-                + (typeof window.agvMoyensCaisse === 'function'
-                    ? window.agvMoyensCaisse().map(function(m){
-                        return '<option value="' + esc(m.id) + '"'
-                          + (String(x.p.mode || '') === String(m.id) ? ' selected' : '')
-                          + '>' + esc(m.nom) + '</option>';
-                      }).join('')
-                    : MODES.map(function(m){
-                        return '<option value="' + esc(m) + '"'
-                          + (String(x.p.mode || '') === m ? ' selected' : '') + '>' + esc(m) + '</option>';
-                      }).join(''))
+                + optionsMoyens(x.p.mode || '')
                 + (x.p.mode ? '' : '<option value="" selected>— non precise —</option>')
                 + '</select></td>'
               + '<td style="padding:7px;font-size:11.5px">'
@@ -30509,49 +30798,150 @@ function rendreFiche(){
         + 'Le mode d\'un versement deja enregistre se change directement dans la liste.</div>'
       : '<div style="font-size:12.5px;color:var(--text3)">Aucun versement pour l\'instant.</div>')
     + '</div>';
+  window.agvVersApercu();
+}
+
+/* repartition d'un montant sur les sommes dues */
+function repartir(p, choix, mt){
+  var ouverts = p.items.filter(function(x){ return x.reste > 0.5; })
+    .sort(function(a, b){ return new Date(a.date || 0) - new Date(b.date || 0); });
+  var cibles = (choix === 'AUTO') ? ouverts : ouverts.filter(function(x){ return x.cle === choix; });
+  var reste = mt, parts = [];
+  cibles.forEach(function(x){
+    if(reste <= 0.5) return;
+    var part = Math.min(reste, x.reste);
+    parts.push({ item: x, montant: part });
+    reste -= part;
+  });
+  return { parts: parts, excedent: Math.max(reste, 0), cibles: cibles };
+}
+
+window.agvVersApercu = function(){
+  var z = document.getElementById('agv32-vers-apercu');
+  if(!z) return;
+  var p = partenaireChoisi();
+  var mt = nb((document.getElementById('agv32-vers-mt') || {}).value);
+  var choix = (document.getElementById('agv32-vers-dette') || {}).value;
+  if(!p || !mt || !choix){ z.innerHTML = ''; return; }
+  var r = repartir(p, choix, mt);
+  var totalCible = r.cibles.reduce(function(s, x){ return s + x.reste; }, 0);
+  var apres = Math.max(p.du - (mt - r.excedent), 0);
+  z.innerHTML = 'Reste du apres ce versement : <b style="color:' + (apres > 0.5 ? 'var(--red)' : 'var(--green)') + '">'
+    + esc(argent(apres)) + '</b>'
+    + (r.parts.length > 1 ? ' &middot; reparti sur ' + r.parts.length + ' dettes' : '')
+    + (r.excedent > 0.5 ? ' &middot; <span style="color:var(--amber,#f59e0b)">depasse de ' + esc(argent(r.excedent))
+        + ' ce qui est du' + (choix === 'AUTO' ? '' : ' sur cette dette (' + esc(argent(totalCible)) + ')') + '</span>' : '');
+};
+
+function inscrire(item, montant, pm){
+  var o = item.obj;
+  var ligne = {};
+  for(var k in pm) ligne[k] = pm[k];
+  ligne.montant = montant;
+  if(!Array.isArray(o.paiements)) o.paiements = enTableau(o.paiements);
+  o.paiements.push(ligne);
+  if(item.sorte === 'facture'){
+    o.montantPaye = nb(o.montantPaye) + montant;
+    o.soldeRestant = Math.max(0, nb(o.montantTotal) - o.montantPaye);
+    o.statut = o.soldeRestant <= 0 ? 'paye' : (o.montantPaye > 0 ? 'partiel' : 'impaye');
+  }else if(item.sorte === 'commande'){
+    o.montantPaye = sommePaiements(o.paiements);
+    o.soldeRestant = Math.max(0, nb(o.montantTotal) - o.montantPaye);
+  }
 }
 
 window.agvVersEnregistrer = function(){
   if(!actionPermise('permVers') && role() !== 'fondateur') return toast('Vous n\'enregistrez pas les versements');
-  if(!choisi) return toast('Choisissez d\'abord un client ou un fournisseur');
-  var idD = (document.getElementById('agv32-vers-dette') || {}).value;
+  var p = partenaireChoisi();
+  if(!p) return toast('Choisissez d\'abord un client ou un fournisseur');
+  var choix = (document.getElementById('agv32-vers-dette') || {}).value;
   var mt = nb((document.getElementById('agv32-vers-mt') || {}).value);
   var mode = (document.getElementById('agv32-vers-mode') || {}).value || '';
   var date = (document.getElementById('agv32-vers-date') || {}).value || aujourdHui();
   var note = String((document.getElementById('agv32-vers-note') || {}).value || '').trim();
   if(!mt || mt <= 0) return toast('Entrez le montant du versement');
-  var d = null;
-  lesDettes().forEach(function(x){ if(!d && memeId(x.id, idD)) d = x; });
-  if(!d) return toast('Dette introuvable');
-  var reste = du(d);
-  if(mt > reste + 0.5){
-    if(!confirm('Le versement (' + argent(mt) + ') depasse le reste du ('
-      + argent(reste) + '). Enregistrer quand meme ?')) return;
+  if(!choix) return toast('Choisissez la dette concernee');
+  var r = repartir(p, choix, mt);
+  if(!r.cibles.length) return toast('Dette introuvable — actualisez la page');
+  var blocage = null;
+  r.parts.forEach(function(x){ if(!blocage && x.item.sorte === 'facture' && x.item.obj.reportee) blocage = x.item; });
+  if(blocage) return toast('Cette facture a ete reportee sur une facture plus recente');
+  if(r.excedent > 0.5){
+    if(!confirm('Le versement (' + argent(mt) + ') depasse ce qui est du ('
+      + argent(mt - r.excedent) + ').\nL\'excedent de ' + argent(r.excedent)
+      + ' sera inscrit comme avance sur la derniere dette. Continuer ?')) return;
+    var der = r.parts.length ? r.parts[r.parts.length - 1] : { item: r.cibles[r.cibles.length - 1], montant: 0 };
+    if(!r.parts.length) r.parts.push(der);
+    der.montant += r.excedent;
   }
-  if(!Array.isArray(d.paiements)) d.paiements = enTableau(d.paiements);
-  var client = (choisi.type === 'client');
+  var client = (p.type === 'client');
   var dest = client ? ((document.getElementById('agv32-vers-dest') || {}).value || mode) : mode;
   var libelle = (typeof window.agvNomMoyen === 'function') ? window.agvNomMoyen(mode) : mode;
   var libDest = (typeof window.agvNomMoyen === 'function') ? window.agvNomMoyen(dest) : dest;
-  d.paiements.push({ id: Date.now(), montant: mt, date: date,
-                     mode: mode, modeNom: libelle,
-                     caisse: dest, caisseNom: libDest,
-                     sens: client ? 'entree' : 'sortie',
-                     note: note, auto: false, par: auteur() });
-  enregistrer();
+  var base = Date.now();
+  var commandesTouchees = false;
+  r.parts.forEach(function(x, k){
+    inscrire(x.item, x.montant, {
+      id: base + k, date: date, note: note || 'Versement',
+      mode: mode, modeNom: libelle, caisse: dest, caisseNom: libDest,
+      sens: client ? 'entree' : 'sortie', auto: false, par: auteur(), origine: 'versements'
+    });
+    if(x.item.sorte === 'commande') commandesTouchees = true;
+  });
+  /* le reflet des commandes dans « dettes » suit leurs nouveaux paiements */
+  if(commandesTouchees && typeof window.agvRecalculerFournisseurs === 'function'){
+    try{ window.agvRecalculerFournisseurs(); }catch(e){ enregistrer(); }
+  }else{
+    enregistrer();
+  }
+  try{ if(window.AGV_PERF && typeof window.AGV_PERF.oublierIndex === 'function') window.AGV_PERF.oublierIndex(); }catch(e){}
+  try{ journal33('Versement', p.nom + ' — ' + argent(mt)); }catch(e){}
   toast('Versement de ' + argent(mt) + ' — '
     + (client ? 'paye en ' + libelle + ', dirige vers ' + libDest
-              : 'sorti de la caisse ' + libelle));
-  try{ if(typeof window.renderDettes === 'function') window.renderDettes(); }catch(e){}
-  try{ if(typeof window.renderDashboard === 'function') window.renderDashboard(); }catch(e){}
-  window.agvVersChoisir(choisi.type, choisi.nom);
+              : 'sorti de la caisse ' + libelle)
+    + (r.parts.length > 1 ? ' — reparti sur ' + r.parts.length + ' dettes' : ''));
+  ['renderDettes', 'renderDashboard', 'renderFacturesList', 'renderClientsListe', 'renderCommandesList',
+   'renderFournisseurs', 'agvSituationsDettes'].forEach(function(f){
+    try{ if(typeof window[f] === 'function') window[f](); }catch(e){}
+  });
+  window.agvVersChoisir(p.type, p.nom);
+};
+function journal33(a, d){
+  try{ if(typeof window.agvJournaliser === 'function') window.agvJournaliser(a, d); }catch(e){}
+}
+
+/* retrouve la somme due designee par sa cle (D:, F:, C:) ; sans prefixe = dette */
+function objetParCle(cle){
+  var s = String(cle || ''), sorte = 'dette', id = s;
+  if(/^[DFC]:/.test(s)){ sorte = { D: 'dette', F: 'facture', C: 'commande' }[s.charAt(0)]; id = s.slice(2); }
+  var liste = sorte === 'facture' ? lesFacturesV() : (sorte === 'commande' ? lesCommandesV() : lesDettes());
+  var o = null;
+  liste.forEach(function(x){ if(!o && x && memeId(x.id, id)) o = x; });
+  return o ? { sorte: sorte, obj: o } : null;
+}
+/* vue « dette » d'une facture ou d'une commande, pour le recu de versement */
+window.agvObjetVersement = function(cle){
+  var t = objetParCle(cle);
+  if(!t) return null;
+  if(t.sorte === 'dette') return t.obj;
+  var o = t.obj;
+  if(t.sorte === 'facture'){
+    var c = null;
+    lesClients().forEach(function(x){ if(!c && x && memeId(x.id, o.clientId)) c = x; });
+    return { id: cle, type: 'client', nom: c ? c.nom : (o.clientNom || '—'), tel: c ? (c.tel || '') : '',
+             montant: nb(o.montantTotal), paiements: enTableau(o.paiements) };
+  }
+  var f = null;
+  lesFournisseurs().forEach(function(x){ if(!f && x && memeId(x.id, o.fournisseurId)) f = x; });
+  return { id: cle, type: 'fournisseur', nom: f ? f.nom : (o.fournisseurNom || '—'), tel: f ? (f.tel || '') : '',
+           montant: nb(o.montantTotal), paiements: enTableau(o.paiements) };
 };
 
-window.agvVersMode = function(idD, i, mode){
+window.agvVersMode = function(cle, i, mode){
   if(!actionPermise('permVers') && role() !== 'fondateur') return toast('Vous ne modifiez pas les versements');
-  var d = null;
-  lesDettes().forEach(function(x){ if(!d && memeId(x.id, idD)) d = x; });
-  if(!d) return;
+  var t = objetParCle(cle);
+  if(!t) return;
+  var d = t.obj;
   var l = enTableau(d.paiements);
   if(!l[i]) return;
   l[i].mode = mode;
@@ -33765,7 +34155,12 @@ function nomMoyen(id){
 
 window.agvRecuVersement = function(idDette, i){
   var d = null;
-  lesDettes().forEach(function(x){ if(!d && String(x.id) === String(idDette)) d = x; });
+  /* [CORRECTIF VERSEMENTS] le versement peut aussi porter sur une facture (F:)
+     ou une commande (C:) : on en obtient la vue « dette » */
+  if(/^[DFC]:/.test(String(idDette)) && typeof window.agvObjetVersement === 'function'){
+    d = window.agvObjetVersement(idDette);
+  }
+  if(!d) lesDettes().forEach(function(x){ if(!d && String(x.id) === String(idDette)) d = x; });
   if(!d) return toast('Dette introuvable');
   var l = enTableau(d.paiements);
   var p = l[nb(i)];
@@ -43984,6 +44379,7 @@ window.agvStocks = function(){
 
   var NOMS = {};
   var SOURCES = {};      // lettre de bloc -> uid de la boutique reelle
+  var ACCUEIL = null;    // uid de la boutique d'accueil (celle qui porte les blocs)
 
   // Les noms des blocs sont eux aussi ranges chez la boutique d'accueil :
   // les lire dans la boutique ouverte donnait « BLOC B », « BLOC C ».
@@ -44000,6 +44396,7 @@ window.agvStocks = function(){
           SOURCES[b] = (m[b] && m[b].source) ? String(m[b].source) : String(u);
         });
         SOURCES.A = String(u);
+        ACCUEIL = String(u);
         if (!NOMS.A) {
           lire('gdv_shops/' + u + '/info', function (i) {
             NOMS.A = (i && (i.entreprise || i.nom)) || 'Boutique principale';
@@ -44037,7 +44434,8 @@ window.agvStocks = function(){
           l.map(function (b) {
             // « ouverte » se juge sur la boutique reelle, pas sur la lettre :
             // chez un gerant d'une boutique rattachee, blocActif() vaut 'A'.
-            var ouvert = (String(SOURCES[b] || u) === String(u));
+            var ouvert = (String(SOURCES[b] || u) === String(u)) &&
+              (String(u) !== String(ACCUEIL) || b === blocActif());
             return '<button class="agv-ger-b" data-b="' + esc(b) + '" style="display:block;width:100%;' +
               'text-align:left;padding:12px 14px;margin-bottom:8px;border-radius:11px;cursor:pointer;' +
               'font-family:inherit;border:1px solid ' + (ouvert ? '#1d4ed8' : '#dbe3ec') + ';' +
@@ -44289,8 +44687,13 @@ window.agvStocks = function(){
 
     try { sessionStorage.removeItem(CLE_BOUTIQUE); } catch (e) {}
     log('reprise après rechargement — ouverture de ' + (r.nom || r.uid));
+    /* [CORRECTIF MES BOUTIQUES] « direct: true » est indispensable : sans lui,
+       ouvrirBoutique() compare la boutique visee a celle de l'ecran de
+       connexion, les trouve differentes, repose la consigne et RECHARGE la
+       page... qui relit la consigne et recharge encore. Le gerant restait
+       bloque dans une boucle de rechargements sans jamais entrer. */
     window.AGV_CONNEXION.ouvrirBoutique(
-      { uid: r.uid, nom: r.nom || '' },
+      { uid: r.uid, nom: r.nom || '', direct: true },
       { role: 'gerant', gerantId: r.gid });
     return true;
   }
@@ -44311,25 +44714,119 @@ window.agvStocks = function(){
 
     if (role() === 'gerant' && g) {
       memoriserFiche();
-      lireAutorises(u, g, function (permis, attache) {
-        var l = Object.keys(permis).filter(function (b) { return permis[b]; });
-        log('gérant ' + g + ' — blocs autorisés : ' + l.join(', ') + ' (attache : ' + attache + ')');
-
-        // L'affectation a pu changer : le cache local ne doit plus faire loi.
-        var courant = blocActif();
-        if (!permis[courant]) {
-          log('bloc ' + courant + ' non autorisé — retour au bloc ' + attache);
-          try { localStorage.setItem('agv_bloc_g_' + u + '_' + g, attache); } catch (e) {}
-          dire('Votre affectation a changé — retour à votre boutique');
-          setTimeout(function () { location.reload(); }, 1200);
-          return;
-        }
-        try { localStorage.setItem('agv_bloc_g_' + u + '_' + g, courant); } catch (e) {}
-        if (l.length > 1) poserPastille(l.length);
-      });
+      demarrerGerant(u, g);
     }
     log('module actif — v' + API.version);
   }, 400);
+
+  /* =========================================================================
+     [CORRECTIF MES BOUTIQUES] LE GERANT EN VISITE
+     -------------------------------------------------------------------------
+     Trois defauts bloquaient le gerant qui passait dans une autre boutique :
+
+     1. Sa fiche n'etait cherchee que sous la cle locale de la boutique
+        VISITEE (agv_fiche_g_<boutique visitee>_<id>) alors qu'elle avait ete
+        retenue sous celle de SA boutique : introuvable, donc aucun droit —
+        ni vente, ni depense, rien. On va desormais la chercher dans la base,
+        chez lui (boutique d'accueil, blocs internes, boutiques rattachees).
+
+     2. Le controle « ce bloc vous est-il autorise ? » comparait la lettre
+        blocActif() — qui vaut toujours « A » dans une boutique rattachee — aux
+        lettres de la boutique d'accueil. Un gerant autorise sur « B » etait
+        donc renvoye chez lui des son arrivee. On compare maintenant la lettre
+        sous laquelle CETTE boutique figure chez l'accueil.
+
+     3. Un gerant qui est CHEZ LUI (sa fiche est dans le personnel ouvert)
+        n'est jamais renvoye ailleurs : le controle ne vise que les visites.
+     ========================================================================= */
+  function tabG(v) {
+    if (!v) return [];
+    if (Array.isArray(v)) return v.filter(Boolean);
+    try { return Object.keys(v).map(function (k) { return v[k]; }).filter(Boolean); } catch (e) { return []; }
+  }
+  function cheminGerantsOuvert(u) {
+    var b = blocActif();
+    if (b === 'A') return 'gdv_shops/' + u + '/data/gerants';
+    var src = window._agvBlocSource && window._agvBlocSource[b];
+    if (src) return 'gdv_shops/' + src + '/data/gerants';
+    return 'gdv_shops/' + u + '/blocs/' + b + '/data/gerants';
+  }
+  function chercherFicheChezLui(accueil, g, cb) {
+    lire('gdv_shops/' + accueil + '/blocs/_meta', function (meta) {
+      meta = meta || {};
+      var chemins = ['gdv_shops/' + accueil + '/data/gerants'];
+      Object.keys(meta).forEach(function (b) {
+        if (b === 'A' || b.indexOf('_') === 0) return;
+        var m = meta[b] || {};
+        chemins.push(m.source ? 'gdv_shops/' + m.source + '/data/gerants'
+                              : 'gdv_shops/' + accueil + '/blocs/' + b + '/data/gerants');
+      });
+      var i = 0;
+      (function suivant() {
+        if (i >= chemins.length) { cb(null); return; }
+        lire(chemins[i++], function (v) {
+          var f = tabG(v).filter(function (x) { return String(x.id) === String(g); })[0];
+          if (f) { cb(f); return; }
+          suivant();
+        });
+      })();
+    });
+  }
+  function redessinerDroits() {
+    ['applyRoleUI', 'renderDashboard', 'refreshVentesHistory', 'renderTable'].forEach(function (f) {
+      try { if (typeof window[f] === 'function') window[f](); } catch (e) {}
+    });
+  }
+  function demarrerGerant(u, g) {
+    lireAutorises(u, g, function (permis, attache, accueil) {
+      var l = Object.keys(permis).filter(function (b) { return permis[b]; });
+      log('gérant ' + g + ' — blocs autorisés : ' + l.join(', ') + ' (attache : ' + attache + ')');
+
+      var enMemoire = lesGerants().some(function (x) { return x && String(x.id) === String(g); });
+      lire(cheminGerantsOuvert(u), function (liste) {
+        var chezLui = enMemoire || tabG(liste).some(function (x) { return String(x.id) === String(g); });
+        if (chezLui) {
+          memoriserFiche();
+          if (String(accueil) === String(u)) {
+            try { localStorage.setItem('agv_bloc_g_' + u + '_' + g, blocActif()); } catch (e) {}
+          }
+          if (l.length > 1) poserPastille(l.length);
+          return;
+        }
+
+        // En visite : quelle lettre cette boutique porte-t-elle chez l'accueil ?
+        chargerNoms(u, function () {
+          var lettre = blocActif();
+          if (String(accueil) !== String(u)) {
+            Object.keys(SOURCES).forEach(function (b) {
+              if (b !== 'A' && String(SOURCES[b]) === String(u)) lettre = b;
+            });
+          }
+          if (!permis[lettre]) {
+            var dernier = 0;
+            try { dernier = Number(sessionStorage.getItem('agv_ger_retour') || 0); } catch (e) {}
+            if (Date.now() - dernier > 30000) {
+              try { sessionStorage.setItem('agv_ger_retour', String(Date.now())); } catch (e) {}
+              log('boutique ' + lettre + ' non autorisée — retour à ' + attache);
+              dire('Cette boutique ne vous est plus ouverte — retour à votre boutique');
+              setTimeout(function () { API.ouvrir(attache); }, 1200);
+            }
+            return;
+          }
+          chercherFicheChezLui(accueil, g, function (f) {
+            if (f) {
+              try { localStorage.setItem(cleFiche(u, g), JSON.stringify(f)); } catch (e) {}
+              log('fiche de ' + (f.nom || g) + ' rapatriée — ses droits s\'appliquent ici');
+              redessinerDroits();
+            } else {
+              log('fiche du gérant ' + g + ' introuvable chez lui');
+            }
+            if (l.length > 1) poserPastille(l.length);
+          });
+        });
+      });
+    });
+  }
 
 })();
 
@@ -46727,9 +47224,15 @@ window.agvStocks = function(){
       var blocs = [{ bloc: 'A', uid: mere, nom: (window._currentShop || {}).entreprise || 'Boutique principale' }];
       Object.keys(meta).sort().forEach(function (b) {
         if (b === 'A' || b.indexOf('_') === 0) return;
-        var m = meta[b];
-        blocs.push({ bloc: b, uid: m.source || mere, nom: m.nom || ('Bloc ' + b), rattachee: !!m.source });
+        var m = meta[b] || {};
+        /* [CORRECTIF] un bloc interne garde son personnel sous blocs/<lettre>/data :
+           le lire dans data de la mere affichait le personnel du bloc A une
+           seconde fois et faisait disparaitre celui du bloc. */
+        blocs.push({ bloc: b, uid: m.source || mere, nom: m.nom || ('Bloc ' + b), rattachee: !!m.source,
+                     chemin: m.source ? 'gdv_shops/' + m.source + '/data/gerants'
+                                      : 'gdv_shops/' + mere + '/blocs/' + b + '/data/gerants' });
       });
+      blocs[0].chemin = 'gdv_shops/' + mere + '/data/gerants';
 
       var reste = blocs.length + 2, gens = [], acces = null, comptes = null;
       function fin() {
@@ -46753,11 +47256,18 @@ window.agvStocks = function(){
         cb(ETAT);
       }
 
+      var vus = {};
       blocs.forEach(function (b) {
-        lire('gdv_shops/' + b.uid + '/data/gerants', function (v) {
+        lire(b.chemin, function (v) {
           tab(v).forEach(function (g) {
             if (!g || g.id == null) return;
+            // la fiche du fondateur n'est pas un gerant : pas de mot de passe de gerant
+            if (typeof window.agvFicheEstFondateur === 'function' && window.agvFicheEstFondateur(g)) return;
+            if (vus[String(g.id)]) return;
+            vus[String(g.id)] = true;
             gens.push({ id: g.id, nom: g.nom || 'Gérant', poste: g.poste || '',
+                        code: (g.code == null ? '' : String(g.code)),
+                        aVerifier: (typeof window.agvFicheMarqueeParErreur === 'function') && window.agvFicheMarqueeParErreur(g),
                         bloc: b.bloc, boutique: b.nom, bloque: !!g.bloque });
           });
           fin();
@@ -46911,6 +47421,8 @@ window.agvStocks = function(){
         '<div><b style="font-size:14px;color:#0f172a">' + esc(g.nom) + '</b>' +
         (g.poste ? ' <span style="font-size:11.5px;color:#94a3b8">· ' + esc(g.poste) + '</span>' : '') +
         '<div style="font-size:11.5px;color:#64748b">' + esc(g.boutique) +
+        (g.code ? ' · code d\'accès <b style="letter-spacing:.04em">' + esc(g.code) + '</b>' : '') +
+        (g.aVerifier ? ' · <span style="color:#b45309">nom à vérifier</span>' : '') +
         (g.aCompte ? ' · identifiant <b>' + esc(g.identifiant) + '</b>'
                    : ' · <span style="color:#b45309">aucun compte</span>') +
         (g.bloque ? ' · <span style="color:#b91c1c">fiche bloquée</span>' : '') + '</div></div></div>' +
@@ -47113,19 +47625,39 @@ window.agvStocks = function(){
     el.style.display = '';
   }
 
+  /* [CORRECTIF GERANTS VISIBLES] Tant que les codes des fiches ouvrent encore
+     une session (codesFiches !== false), le fondateur DOIT voir ses gerants et
+     leurs codes : masquer « Gerants & Acces » et la tuile « Personnel » le
+     privait de toute vue sur des personnes qui, elles, entraient toujours.
+     On ne masque donc ces deux entrees qu'apres neutralisation des codes ;
+     la tuile « Personnel » (postes, droits, salaires) reste toujours visible. */
   function menus() {
     if (!API.actif) return;
     try {
-      // L'onglet « Gerants & Acces » de la boutique (ligne 2087)
-      cacher(document.getElementById('nav-gerants'), 'onglet « Gérants & Accès »');
+      var navG = document.getElementById('nav-gerants');
+      var codesActifs = (API.codesFiches !== false);
+      var fondateur = (role() === 'fondateur');
+      if (codesActifs) {
+        if (navG && navG.getAttribute('data-agv-simple')) {
+          navG.removeAttribute('data-agv-simple');
+          navG.style.display = fondateur ? 'flex' : 'none';
+        }
+      } else {
+        // L'onglet « Gerants & Acces » de la boutique (ligne 2087)
+        cacher(navG, 'onglet « Gérants & Accès »');
+      }
 
       // Les tuiles du portail du fondateur (lignes 35636 et 35640)
       var tuiles = document.querySelectorAll('.tuile, .grid > div, [onclick]');
       Array.prototype.forEach.call(tuiles, function (t) {
-        if (!t || t.getAttribute('data-agv-simple')) return;
+        if (!t) return;
         var on = String(t.getAttribute('onclick') || '');
-        if (on.indexOf("agv40Onglet('personnel')") >= 0) cacher(t, 'tuile « Personnel »');
-        else if (on.indexOf('agvComptesOuvrir()') >= 0) cacher(t, 'tuile « Accès de connexion »');
+        if (on.indexOf("agv40Onglet('personnel')") >= 0) {
+          if (t.getAttribute('data-agv-simple')) rendre(t);
+          return;
+        }
+        if (t.getAttribute('data-agv-simple')) return;
+        if (on.indexOf('agvComptesOuvrir()') >= 0) cacher(t, 'tuile « Accès de connexion »');
       });
     } catch (e) {}
   }
@@ -47154,11 +47686,18 @@ window.agvStocks = function(){
 
     lire('gdv_shops/' + mere + '/blocs/_meta', function (meta) {
       meta = meta || {};
-      var boutiques = [{ uid: mere, nom: (window._currentShop || {}).entreprise || 'Boutique principale' }];
+      var boutiques = [{ uid: mere, nom: (window._currentShop || {}).entreprise || 'Boutique principale',
+                         chemin: 'gdv_shops/' + mere + '/data/gerants' }];
       Object.keys(meta).forEach(function (b) {
         var m = meta[b];
-        if (m && m.source && String(m.source) !== String(mere)) {
-          boutiques.push({ uid: m.source, nom: m.nom || ('Bloc ' + b) });
+        if (!m || b === 'A' || b.indexOf('_') === 0) return;
+        if (m.source && String(m.source) !== String(mere)) {
+          boutiques.push({ uid: m.source, nom: m.nom || ('Bloc ' + b),
+                           chemin: 'gdv_shops/' + m.source + '/data/gerants' });
+        } else if (!m.source) {
+          // [CORRECTIF] les blocs internes ont leur propre personnel
+          boutiques.push({ uid: mere, nom: m.nom || ('Bloc ' + b),
+                           chemin: 'gdv_shops/' + mere + '/blocs/' + b + '/data/gerants' });
         }
       });
 
@@ -47174,8 +47713,9 @@ window.agvStocks = function(){
         cb({ total: gens.length, sans: sans });
       }
       boutiques.forEach(function (b) {
-        lire('gdv_shops/' + b.uid + '/data/gerants', function (v) {
+        lire(b.chemin, function (v) {
           tab(v).forEach(function (g) {
+            if (g && typeof window.agvFicheEstFondateur === 'function' && window.agvFicheEstFondateur(g)) return;
             if (g && g.id != null) gens.push({ id: g.id, nom: g.nom || 'Gérant', boutique: b.nom, bloque: !!g.bloque });
           });
           fin();
@@ -49252,5 +49792,139 @@ window.agvStocks = function(){
 
 })();
 
+</script>
+<script>
+/* =============================================================================
+   APP AGV — MODULE 28 : FOURNISSEURS DE FONDS ET REGLEMENTS JUSTES  (v1.0)
+   -----------------------------------------------------------------------------
+   1. FOURNISSEUR DE FONDS
+      Un fournisseur porte desormais une nature (champ optionnel « nature ») :
+      « marchandises » (on lui passe des commandes) ou « fonds » (il avance de
+      l'argent a la boutique). Pour un fournisseur de fonds, le bouton
+      « + Fonds recus » inscrit l'avance comme une dette fournisseur, de la
+      meme forme que celles saisies dans Gestion des dettes : elle se regle
+      ensuite depuis Versements comme n'importe quelle dette.
+
+   2. LE REGLEMENT D'UNE DETTE FOURNISSEUR RESTE COHERENT
+      « Regler une dette » credite les commandes puis les dettes saisies.
+      Le reflet de chaque commande dans « dettes » est resynchronise juste
+      apres, pour que la Direction et les listes affichent le meme reste.
+
+   Aucune structure de base modifiee : « nature » est un champ ajoute a la
+   fiche du fournisseur, l'avance de fonds est une dette fournisseur ordinaire.
+   ============================================================================= */
+(function () {
+  'use strict';
+
+  function nb(v) { var n = parseFloat(v); return isNaN(n) ? 0 : n; }
+  function esc(v) {
+    return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+  function toast(t) { try { if (typeof window.showToast === 'function') window.showToast(t); } catch (e) {} }
+  function argent(n) {
+    try { if (typeof window.fmtGNF === 'function') return window.fmtGNF(nb(n)); } catch (e) {}
+    return Number(nb(n)).toLocaleString('fr-FR') + ' GNF';
+  }
+  function lesFournisseurs() { try { return fournisseurs || []; } catch (e) { return window.fournisseurs || []; } }
+  function lesDettes() { try { return dettes; } catch (e) { return window.dettes; } }
+  function aujourdHui() { return new Date().toISOString().slice(0, 10); }
+  function rafraichir() {
+    ['renderFournisseurs', 'renderDettes', 'renderDettesFournisseurs', 'renderDashboard',
+     'agvSituationsDettes'].forEach(function (f) {
+      try { if (typeof window[f] === 'function') window[f](); } catch (e) {}
+    });
+  }
+
+  /* =========================================================================
+     1. FONDS RECUS D'UN FOURNISSEUR DE FONDS
+     ========================================================================= */
+  window.agvFondsRecus = function (id) {
+    var f = null;
+    lesFournisseurs().forEach(function (x) { if (!f && x && String(x.id) === String(id)) f = x; });
+    if (!f) return toast('Fournisseur introuvable');
+    var vieux = document.getElementById('agv-fonds-ov');
+    if (vieux) vieux.remove();
+    var ech = new Date(); ech.setMonth(ech.getMonth() + 1);
+    var ov = document.createElement('div');
+    ov.id = 'agv-fonds-ov';
+    ov.style.cssText = 'position:fixed;inset:0;z-index:99990;background:rgba(15,23,42,.6);display:flex;' +
+      'align-items:center;justify-content:center;padding:14px;font-family:inherit';
+    var champ = 'width:100%;padding:9px 11px;border:1px solid #cbd5e1;border-radius:9px;font-size:14px;' +
+      'font-family:inherit;background:#fff;color:#0f172a;box-sizing:border-box';
+    var lab = 'display:block;font-size:11.5px;font-weight:600;color:#475569;margin:10px 0 4px';
+    ov.innerHTML = '<div style="background:#fff;border-radius:15px;max-width:440px;width:100%;padding:20px 22px;' +
+      'color:#0f172a;box-shadow:0 16px 44px rgba(0,0,0,.35)">' +
+      '<div style="font-size:16px;font-weight:800">💵 Fonds recus de ' + esc(f.nom) + '</div>' +
+      '<div style="font-size:12px;color:#64748b;margin-top:3px">L\'avance est inscrite comme une somme a lui rembourser.</div>' +
+      '<label style="' + lab + '">Montant recu (GNF) *</label>' +
+      '<input id="agv-fonds-mt" type="number" min="0" placeholder="0" style="' + champ + '">' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">' +
+        '<div><label style="' + lab + '">Date de reception</label>' +
+        '<input id="agv-fonds-date" type="date" value="' + aujourdHui() + '" style="' + champ + '"></div>' +
+        '<div><label style="' + lab + '">A rembourser avant</label>' +
+        '<input id="agv-fonds-ech" type="date" value="' + ech.toISOString().slice(0, 10) + '" style="' + champ + '"></div>' +
+      '</div>' +
+      '<label style="' + lab + '">Objet (facultatif)</label>' +
+      '<input id="agv-fonds-desc" placeholder="Pret, avance sur marchandises..." style="' + champ + '">' +
+      '<div style="display:flex;gap:8px;margin-top:16px">' +
+        '<button id="agv-fonds-x" style="flex:1;padding:11px;border:1px solid #cbd5e1;border-radius:10px;' +
+        'background:#f8fafc;font-family:inherit;font-size:13.5px;cursor:pointer">Annuler</button>' +
+        '<button id="agv-fonds-ok" style="flex:1;padding:11px;border:none;border-radius:10px;background:#15803d;' +
+        'color:#fff;font-family:inherit;font-size:13.5px;font-weight:700;cursor:pointer">Enregistrer</button>' +
+      '</div></div>';
+    document.body.appendChild(ov);
+    ov.onclick = function (e) { if (e.target === ov) ov.remove(); };
+    ov.querySelector('#agv-fonds-x').onclick = function () { ov.remove(); };
+    ov.querySelector('#agv-fonds-ok').onclick = function () {
+      var mt = nb(document.getElementById('agv-fonds-mt').value);
+      if (mt <= 0) return toast('Entrez le montant recu');
+      var date = document.getElementById('agv-fonds-date').value || aujourdHui();
+      var echeance = document.getElementById('agv-fonds-ech').value || '';
+      var desc = String(document.getElementById('agv-fonds-desc').value || '').trim();
+      var l = lesDettes();
+      if (!l) return toast('Donnees non chargees — reessayez');
+      var t = Date.now();
+      var libelle = 'Fonds recus' + (desc ? ' — ' + desc : '');
+      l.unshift({
+        id: t, type: 'fournisseur', nom: f.nom, fournisseurId: f.id, nature: 'fonds',
+        desc: libelle, montant: mt, date: date, echeance: echeance,
+        paiements: [], historique: [{ id: t, montant: mt, date: date, echeance: echeance, desc: libelle }]
+      });
+      try { if (typeof window.saveAll === 'function') window.saveAll(); } catch (e) {}
+      try { if (typeof window.agvJournaliser === 'function') window.agvJournaliser('Fonds recus', f.nom + ' — ' + argent(mt)); } catch (e) {}
+      ov.remove();
+      rafraichir();
+      toast('✅ ' + argent(mt) + ' recus de ' + f.nom + ' — a lui rembourser');
+    };
+    setTimeout(function () { var c = document.getElementById('agv-fonds-mt'); if (c) c.focus(); }, 50);
+  };
+
+  /* =========================================================================
+     2. APRES « REGLER UNE DETTE » ET APRES UNE DETTE FOURNISSEUR SAISIE
+     ========================================================================= */
+  function envelopper(nom, apres) {
+    var f = window[nom];
+    if (typeof f !== 'function' || f.__agv28) return false;
+    var neuf = function () {
+      var r = f.apply(this, arguments);
+      setTimeout(function () { try { apres(); } catch (e) {} }, 150);
+      return r;
+    };
+    neuf.__agv28 = true;
+    neuf.__agvOrig = f;
+    window[nom] = neuf;
+    return true;
+  }
+  var poses = {};
+  var horloge = setInterval(function () {
+    if (!poses.r && envelopper('saveReglerDette', function () {
+      if (typeof window.agvRecalculerFournisseurs === 'function') window.agvRecalculerFournisseurs();
+      rafraichir();
+    })) poses.r = true;
+    if (!poses.d && envelopper('saveDetteFournisseur', rafraichir)) poses.d = true;
+    if (poses.r && poses.d) clearInterval(horloge);
+  }, 700);
+})();
 </script>
 </body></html>
