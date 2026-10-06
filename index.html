@@ -29916,6 +29916,11 @@ var VUES = [
   { cle:'fournisseurs', nom:'Fournisseurs' },
   { cle:'cmds',        nom:'Commandes' },
   { cle:'clients-mgr', nom:'Clients & Factures' },
+  /* [ONGLETS AUTORISES] ces trois onglets existaient dans le menu sans case a
+     cocher : impossible de les accorder ou de les retirer a un gerant */
+  { cle:'facturation', nom:'Facturation' },
+  { cle:'factures',    nom:'Ventes avec facture' },
+  { cle:'caisse',      nom:'Caisse' },
   { cle:'dettes',      nom:'Gestion des dettes' },
   { cle:'versements',  nom:'Versements' },
   { cle:'repartition', nom:'Repartition des fonds' },
@@ -30006,6 +30011,9 @@ function elever(){
    ouverture d'un onglet reserve se croyait deja fondateur, rendait le
    role, et l'onglet se refermait */
 function roleReel(){ return (vraiRole !== null) ? vraiRole : role(); }
+/* [ONGLETS AUTORISES] lu par le module 22 : une elevation volontaire, le temps
+   d'afficher un onglet accorde, ne doit pas etre « corrigee » par lui */
+window.agvElevationActive = function(){ return vraiRole !== null && !!vueElevee; };
 function rendreRole(){
   if(vraiRole === null) return;
   try{ currentRole = vraiRole; }catch(e){}
@@ -48281,6 +48289,14 @@ window.agvStocks = function(){
     // c'est un vrai fondateur, on ne touche a rien.
     if (!ancre) return;
 
+    /* [ONGLETS AUTORISES] Le module v32 eleve le role a « fondateur » le temps
+       d'afficher un onglet que le gerant a le droit d'ouvrir (Tableau de bord,
+       Inventaire...). Le retablir ici renvoyait aussitot le gerant sur Ventes :
+       l'onglet accorde etait inutilisable. Le gerant reste identifie par sa
+       fiche, et ses actions restent controlees par ses droits. */
+    if (role === 'fondateur' && typeof window.agvElevationActive === 'function' &&
+        window.agvElevationActive() && gid != null && String(gid) === String(ancre.gid)) return;
+
     // Le fondateur a pris la main volontairement (nouvelle connexion) :
     // l'ancre n'a plus lieu d'etre.
     if (role === 'fondateur' && String(ancre.uid || '') !== String(uid || '')) {
@@ -50075,6 +50091,227 @@ window.agvStocks = function(){
     if (!poses.d && envelopper('saveDetteFournisseur', rafraichir)) poses.d = true;
     if (poses.r && poses.d) clearInterval(horloge);
   }, 700);
+})();
+</script>
+<script>
+/* =============================================================================
+   APP AGV — MODULE 29 : LE GERANT NE VOIT QUE LES ONGLETS AUTORISES  (v1.0)
+   -----------------------------------------------------------------------------
+   Regle : un onglet est visible pour un gerant SI ET SEULEMENT SI il lui a ete
+   accorde (cases « Onglets accessibles » de sa fiche, champ permVues).
+
+   CE QUI NE LA RESPECTAIT PAS
+     1. Plusieurs onglets n'avaient aucune case : Caisse, Facturation, Ventes
+        avec facture. Ils restaient visibles pour TOUS les gerants.
+     2. Les noms ne concordaient plus : la grille parle de « commandes », le
+        menu a ete scinde en « Fournisseurs » et « Commandes » (cmds). Un
+        onglet accorde restait donc cache, ou l'inverse.
+     3. Le menu etait corrige par a-coups (toutes les 1,6 s), pendant que
+        d'autres fonctions (applyRoleUI...) remettaient leurs propres regles :
+        un onglet AUTORISE mais « reserve au fondateur » a l'origine (Tableau
+        de bord, Inventaire...) pouvait rester cache, un onglet refuse
+        reapparaitre un instant.
+     4. Un onglet refuse s'ouvrait encore par un lien interne (showView).
+
+   CE QUE FAIT CE MODULE
+     · une feuille de style a priorite absolue (!important) : chaque onglet
+       recoit « permis » ou « interdit » d'apres la fiche, plus rien ne peut
+       le remettre autrement ;
+     · ouvrir un onglet non autorise est refuse, et l'ecran va sur le premier
+       onglet autorise ;
+     · le fondateur n'est jamais concerne ; un gerant dont la fiche n'a
+       encore AUCUNE case enregistree garde les regles d'origine (sans quoi il
+       se retrouverait sans aucun onglet) ;
+     · une fiche ou toute l'ancienne grille etait cochee garde l'acces complet,
+       nouveaux onglets compris.
+
+   Aucune donnee ecrite, aucune structure modifiee : lecture seule de la fiche.
+   Verifier : AGV_MENU.etat()
+   ============================================================================= */
+(function () {
+  'use strict';
+
+  var API = window.AGV_MENU = { actif: true, version: '1.0' };
+
+  /* la grille telle qu'elle etait avant l'ajout de Caisse / Facturation /
+     Ventes avec facture : tout cocher valait « acces complet » */
+  var ANCIENNE_GRILLE = ['dashboard','produits','inventaire','depots','ventes','depenses','journalier',
+    'entrees','sorties','appro','fournisseurs','cmds','clients-mgr','dettes','versements','repartition',
+    'salaires','rapport','recap','alertes','personnel','audit','reinitialisation','gerants','parametres'];
+
+  /* noms equivalents (anciennes cles des modules v28 / postes) */
+  var ALIAS = {
+    commandes: ['cmds', 'fournisseurs'],
+    cmds: ['cmds'],
+    fournisseurs: ['fournisseurs'],
+    factures: ['factures'],
+    facturation: ['facturation']
+  };
+
+  function tab(v) {
+    if (!v) return [];
+    if (Array.isArray(v)) return v.filter(function (x) { return x != null && x !== ''; });
+    try { return Object.keys(v).map(function (k) { return v[k]; }).filter(function (x) { return x != null && x !== ''; }); }
+    catch (e) { return []; }
+  }
+  function role() {
+    try { if (window.currentRole) return window.currentRole; } catch (e) {}
+    try { return currentRole; } catch (e) {}
+    return null;
+  }
+  function personne() {
+    try { if (typeof window.agvPersonneConnectee === 'function') return window.agvPersonneConnectee(); } catch (e) {}
+    try { if (typeof window.getCurrentGerant === 'function') return window.getCurrentGerant(); } catch (e) {}
+    return null;
+  }
+  function estCofondateur(g) { return !!(g && (g.type === 'associe' || g.role === 'associe')); }
+
+  /* null = pas de restriction ; sinon l'ensemble des onglets autorises */
+  function autorises() {
+    if (!API.actif) return null;
+    var gid = window.currentGerantId;
+    if (gid === null || gid === undefined || gid === '') return null;     // vrai fondateur
+    var p = personne();
+    if (!p) return null;
+    /* pas de test sur le role : pour ouvrir un onglet autorise mais « reserve
+       au fondateur », le module v32 eleve brievement le role a « fondateur ».
+       C'est la fiche connectee (currentGerantId) qui designe la personne. */
+    var l = tab(p.permVues).map(String);
+    if (!l.length) return null;                       // jamais parametre : regles d'origine
+    var complet = ANCIENNE_GRILLE.every(function (k) { return l.indexOf(k) >= 0; });
+    if (complet) return 'tout';
+    var ens = {};
+    l.forEach(function (k) {
+      ens[k] = true;
+      (ALIAS[k] || []).forEach(function (a) { ens[a] = true; });
+    });
+    return ens;
+  }
+  API.autorises = autorises;
+
+  function cleDe(el) {
+    var oc = String(el.getAttribute('onclick') || '');
+    var m = /showView\(\s*['"]([^'"]+)['"]\s*\)/.exec(oc);
+    if (m) return m[1];
+    if (/agvOuvrirCaisse/.test(oc)) return 'caisse';
+    if (/agvOuvrirFacturation/.test(oc)) return 'facturation';
+    return null;
+  }
+
+  function style() {
+    if (document.getElementById('agv-menu-style')) return;
+    var st = document.createElement('style');
+    st.id = 'agv-menu-style';
+    st.textContent = '.agv-nav-interdit{display:none !important}' +
+                     '.agv-nav-permis{display:flex !important}';
+    (document.head || document.documentElement).appendChild(st);
+  }
+
+  function elementsMenu() {
+    var l = [];
+    Array.prototype.forEach.call(document.querySelectorAll('.nav-item, [id^="nav-"]'), function (el) {
+      if (!el || el.tagName === 'SCRIPT') return;
+      var k = cleDe(el);
+      if (k) l.push({ el: el, cle: k });
+    });
+    return l;
+  }
+
+  function nettoyer() {
+    Array.prototype.forEach.call(document.querySelectorAll('.agv-nav-interdit, .agv-nav-permis'), function (el) {
+      el.classList.remove('agv-nav-interdit');
+      el.classList.remove('agv-nav-permis');
+    });
+  }
+
+  var dernier = '';
+  function appliquer() {
+    var a = autorises();
+    if (a === null || a === 'tout') {
+      if (dernier !== 'libre') { nettoyer(); dernier = 'libre'; }
+      return;
+    }
+    style();
+    dernier = 'restreint';
+    elementsMenu().forEach(function (x) {
+      // l'ancien onglet combine reste retire : il est remplace par Fournisseurs + Commandes
+      var ancienCombine = (x.el.id === 'nav-commandes' && document.getElementById('nav-cmds'));
+      var ok = !ancienCombine && !!a[x.cle];
+      x.el.classList.toggle('agv-nav-permis', ok);
+      x.el.classList.toggle('agv-nav-interdit', !ok);
+    });
+    // la vue affichee doit etre autorisee
+    var v = window.currentView;
+    try { if (!v) v = currentView; } catch (e) {}
+    if (v && !a[v] && v !== 'accueil') allerAuPremier(a);
+  }
+  API.appliquer = appliquer;
+
+  function premier(a) {
+    var l = elementsMenu();
+    for (var i = 0; i < l.length; i++) {
+      if (a[l[i].cle] && !(l[i].el.id === 'nav-commandes' && document.getElementById('nav-cmds'))) return l[i].cle;
+    }
+    return null;
+  }
+  var redirection = false;
+  function allerAuPremier(a) {
+    if (redirection) return;
+    var k = premier(a);
+    if (!k) return;
+    redirection = true;
+    try {
+      if (k === 'caisse' && typeof window.agvOuvrirCaisse === 'function') window.agvOuvrirCaisse();
+      else if (k === 'facturation' && typeof window.agvOuvrirFacturation === 'function') window.agvOuvrirFacturation();
+      else if (typeof window.showView === 'function') window.showView(k);
+    } catch (e) {}
+    setTimeout(function () { redirection = false; }, 300);
+  }
+
+  function refus() {
+    try { if (typeof window.showToast === 'function') window.showToast('Onglet non autorisé — demandez l\'accès au fondateur'); } catch (e) {}
+  }
+
+  /* Les portes d'entree des onglets : refus si non autorise */
+  function garder(nom, cleFixe) {
+    var f = window[nom];
+    if (typeof f !== 'function' || f.__agvMenu) return;
+    var neuf = function (v) {
+      var a = autorises();
+      var k = cleFixe || v;
+      if (a && a !== 'tout' && k && !a[k]) {
+        refus();
+        if (!redirection) allerAuPremier(a);
+        return;
+      }
+      return f.apply(this, arguments);
+    };
+    neuf.__agvMenu = true;
+    neuf.__agvOrig = f;
+    window[nom] = neuf;
+  }
+
+  setInterval(function () {
+    try {
+      garder('showView');
+      garder('agvOuvrirCaisse', 'caisse');
+      garder('agvOuvrirFacturation', 'facturation');
+      appliquer();
+    } catch (e) {}
+  }, 300);
+
+  API.etat = function () {
+    var a = autorises();
+    var p = personne();
+    console.log('--- Onglets du compte connecté ---');
+    console.log('  personne : ' + (p ? (p.nom || p.id) : 'fondateur') + '  ·  rôle : ' + (role() || '—'));
+    if (a === null) { console.log('  aucune restriction (fondateur, ou fiche sans cases enregistrées)'); return null; }
+    if (a === 'tout') { console.log('  accès complet'); return 'tout'; }
+    elementsMenu().forEach(function (x) {
+      console.log('  ' + (a[x.cle] ? '✔ ' : '✖ ') + x.cle);
+    });
+    return a;
+  };
 })();
 </script>
 </body></html>
