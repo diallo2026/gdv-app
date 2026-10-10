@@ -30244,13 +30244,89 @@ window.agvPersTout = function(id, valeur){
   window.agvPersToutes(id, 'pa', valeur);
 };
 
+/* [CORRECTIF PERSONNEL] qui peut gerer le personnel : le fondateur en titre,
+   ou une personne a qui la case « Gerer le personnel » a ete accordee. Le role
+   REEL est lu (roleReel) : une elevation passagere pour afficher un onglet
+   reserve ne donne aucun droit sur le personnel. */
+function peutGererPersonnel(){
+  if(roleReel() === 'fondateur') return true;
+  return actionPermise('permPers');
+}
+function estMoi(g){
+  var p = personneConnectee();
+  return !!(p && g && memeId(p.id, g.id));
+}
+function trouverFiche(id){
+  var g = null;
+  lesGerants().forEach(function(x){ if(!g && memeId(x.id, id)) g = x; });
+  return g;
+}
+/* [CORRECTIF PERSONNEL] retour VISIBLE sous le bouton de la carte : le toast
+   de l'application (z-index 999) etait masque par la page Administration
+   (z-index 99994) — chaque refus d'enregistrement passait inapercu. */
+function signaler(id, msg, ok, silencieux){
+  var el = document.getElementById('agv32-etat-' + id);
+  if(el){
+    el.textContent = msg;
+    el.style.color = (ok === true) ? 'var(--green,#16a34a)'
+                   : (ok === false) ? 'var(--red,#dc2626)' : 'var(--text3,#64748b)';
+  }
+  if(ok !== null && !silencieux) toast(msg);
+  return false;
+}
+
+/* comptes de connexion (lecture seule, commun a toutes les boutiques) */
+var comptesLus = null;
+function refBrut32(chemin){
+  try{ if(typeof window._agvRefBrut === 'function') return window._agvRefBrut(chemin); }catch(e){}
+  return (window.db && typeof window.db.ref === 'function') ? window.db.ref(chemin) : null;
+}
+function uidBoutique(){ return (window._currentShop || {}).uid || null; }
+function comptesDe(g){
+  if(!comptesLus || !g) return [];
+  var out = [];
+  Object.keys(comptesLus).forEach(function(k){
+    var c = comptesLus[k];
+    if(c && c.gerantId != null && memeId(c.gerantId, g.id)) out.push(c);
+  });
+  return out;
+}
+function texteCompte(g){
+  if(comptesLus === null) return 'Lecture du compte de connexion...';
+  var l = comptesDe(g).filter(function(c){ return c.actif !== false; });
+  if(!l.length) return 'Pas encore d\'acces par nom d\'utilisateur : renseignez son e-mail et un mot de passe, '
+    + 'puis « Creer / mettre a jour l\'acces ».';
+  return 'Acces de connexion actif — identifiant : ' + l.map(function(c){ return c.identifiant || '—'; }).join(', ');
+}
+function afficherComptes(){
+  lesGerants().forEach(function(g){
+    var el = document.getElementById('agv32-compte-' + g.id);
+    if(el) el.textContent = texteCompte(g);
+  });
+  var f = document.getElementById('agv32-fond-connexion');
+  if(f) f.textContent = texteConnexionFondateur();
+}
+function lireComptes(){
+  var u = uidBoutique();
+  var r = u ? refBrut32('gdv_shops/' + u + '/comptes') : null;
+  if(!r){ comptesLus = comptesLus || {}; afficherComptes(); return; }
+  try{
+    r.once('value').then(function(s){ comptesLus = s.val() || {}; afficherComptes(); },
+                         function(){ comptesLus = comptesLus || {}; afficherComptes(); });
+  }catch(e){ comptesLus = comptesLus || {}; afficherComptes(); }
+}
+
 function carte(g){
   var id = esc(String(g.id));
   var salaire = (String(g.remun || g.type || '') === 'salaire');
   var cof = estCofondateur(g);
   var l = vuesDe(g);
   var complet = l && l.length >= VUES.length;
-  return '<div class="agv32-c' + (complet ? ' on' : '') + '">'
+  /* le bouton de retrait n'existe que pour qui peut gerer le personnel,
+     jamais sur sa propre fiche (le fondateur n'a pas de carte ici : il a
+     la sienne, en tete, sans bouton de retrait) */
+  var retirable = peutGererPersonnel() && !estMoi(g);
+  return '<div class="agv32-c' + (complet ? ' on' : '') + '" id="agv32-carte-' + id + '">'
     + '<div class="agv32-h"><div><div class="agv32-n">' + esc(g.nom || 'Sans nom')
       + ' <span class="agv32-tag" style="background:' + (cof ? 'rgba(168,85,247,.18);color:#c084fc' : 'rgba(37,99,235,.18);color:#60a5fa') + '">'
       + (cof ? 'co-fondateur' : 'gerant') + '</span>'
@@ -30265,8 +30341,11 @@ function carte(g){
       + (g.bloque ? ' &middot; <span style="color:var(--red)">bloque</span>' : '')
       + (complet ? ' &middot; <span style="color:var(--green)">acces complet</span>' : '')
       + '</div></div>'
-      + '<button onclick="agvPersSupprimer(\'' + id + '\')" style="background:none;border:none;'
-        + 'color:var(--red);cursor:pointer;font-size:17px">&#10005;</button></div>'
+      + (retirable
+          ? '<button onclick="agvPersSupprimer(\'' + id + '\')" title="Retirer du personnel" style="background:none;border:none;'
+            + 'color:var(--red);cursor:pointer;font-size:17px">&#10005;</button>'
+          : '')
+      + '</div>'
     + '<div class="agv32-g agv32-f">'
       + '<div><label>Nom complet</label><input id="agv32-nom-' + id + '" value="' + esc(g.nom || '') + '"></div>'
       + '<div><label>Code d\'acces</label><input id="agv32-code-' + id + '" value="' + esc(g.code || '') + '"></div>'
@@ -30277,7 +30356,7 @@ function carte(g){
               + (String(g.poste || 'autre') === x.cle ? ' selected' : '') + '>' + esc(x.nom) + '</option>';
           }).join('') + '</select></div>'
       + '<div><label>Telephone</label><input id="agv32-tel-' + id + '" value="' + esc(g.tel || '') + '"></div>'
-      + '<div style="grid-column:1/-1"><label>Adresse e-mail (sert d\'identifiant de connexion) *</label>'
+      + '<div style="grid-column:1/-1"><label>Adresse e-mail (identifiant de connexion)</label>'
         + '<input type="email" id="agv32-mail-' + id + '" value="' + esc(g.email || '') + '" '
         + 'placeholder="prenom.nom@exemple.com"></div>'
       + '<div><label>Mode de remuneration</label><select id="agv32-remun-' + id + '">'
@@ -30310,16 +30389,20 @@ function carte(g){
     + '<div class="agv32-t"><div class="agv32-lbl"><span>Acces a l\'application</span></div>'
       + '<div class="agv32-g agv32-f">'
         + '<div><label>Mot de passe</label><input type="password" id="agv32-mdp-' + id + '" '
-          + 'placeholder="' + (g.aCompte ? 'nouveau mot de passe' : 'a choisir') + '"></div>'
+          + 'placeholder="' + (comptesDe(g).length ? 'nouveau mot de passe' : 'a choisir') + '"></div>'
         + '<div style="display:flex;align-items:flex-end"><button class="btn btn-success btn-sm" '
           + 'style="font-size:12px;width:100%" onclick="agvPersAcces(\'' + id + '\')">'
           + 'Creer / mettre a jour l\'acces</button></div>'
       + '</div>'
-      + '<div style="font-size:10.5px;color:var(--text3);margin-top:7px;line-height:1.5">'
-      + 'L\'adresse e-mail devient son identifiant. Sans e-mail ET sans mot de passe, '
-      + 'la connexion est refusee.</div></div>'
-    + '<div style="margin-top:12px"><button class="btn btn-primary btn-sm" style="font-size:12px" '
-      + 'onclick="agvPersEnregistrer(\'' + id + '\')">Enregistrer</button></div>'
+      + '<div id="agv32-compte-' + id + '" style="font-size:11.5px;color:var(--text2,#94a3b8);margin-top:8px;'
+        + 'line-height:1.5;font-weight:600">' + esc(texteCompte(g)) + '</div>'
+      + '<div style="font-size:10.5px;color:var(--text3);margin-top:5px;line-height:1.5">'
+      + 'L\'adresse e-mail devient son identifiant de connexion. La fiche (onglets, actions, remuneration) '
+      + 's\'enregistre meme sans e-mail ; seul l\'acces de connexion en a besoin.</div></div>'
+    + '<div style="margin-top:12px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">'
+      + '<button class="btn btn-primary btn-sm" style="font-size:12px" '
+      + 'onclick="agvPersEnregistrer(\'' + id + '\')">Enregistrer</button>'
+      + '<span id="agv32-etat-' + id + '" style="font-size:12px;font-weight:600;line-height:1.45"></span></div>'
     + '</div>';
 }
 
@@ -30358,16 +30441,20 @@ window.agvPersPhoto = function(id, input){
 };
 
 window.agvPersAcces = function(id){
-  var g = null;
-  lesGerants().forEach(function(x){ if(!g && memeId(x.id, id)) g = x; });
-  if(!g) return toast('Fiche introuvable');
+  if(!peutGererPersonnel()) return signaler(id, 'Vous ne gerez pas le personnel', false);
+  var g = trouverFiche(id);
+  if(!g) return signaler(id, 'Fiche introuvable — rouvrez l\'onglet Personnel', false);
+  if(estLeFondateur(g)) return signaler(id, 'L\'acces du fondateur se gere dans les Parametres', false);
   var mail = String((document.getElementById('agv32-mail-' + id) || {}).value || '').trim();
   var mdp  = String((document.getElementById('agv32-mdp-' + id) || {}).value || '').trim();
-  if(!mail || mail.indexOf('@') < 0) return toast('Renseignez d\'abord une adresse e-mail valide');
-  if(mdp.length < 4) return toast('Choisissez un mot de passe d\'au moins 4 caracteres');
-  if(typeof window.agvCompteEnregistrer !== 'function') return toast('Gestionnaire de comptes indisponible');
-  g.email = mail;
-  enregistrer();
+  if(!mail || mail.indexOf('@') < 1)
+    return signaler(id, 'Renseignez d\'abord une adresse e-mail valide : elle sert d\'identifiant de connexion', false);
+  if(mdp.length < 4) return signaler(id, 'Choisissez un mot de passe d\'au moins 4 caracteres', false);
+  if(typeof window.agvCompteEnregistrer !== 'function') return signaler(id, 'Gestionnaire de comptes indisponible', false);
+  if(String(g.email || '') !== mail){
+    g.email = mail;
+    enregistrer();
+  }
   /* on reutilise la fonction d'origine, avec ses propres champs */
   var cle = 'g' + g.id;
   ['id', 'mdp'].forEach(function(suffixe){
@@ -30380,44 +30467,119 @@ window.agvPersAcces = function(id){
     }
     e.value = (suffixe === 'id') ? mail : mdp;
   });
+  signaler(id, 'Creation de l\'acces en cours...', null);
+  var t = document.getElementById('toast');
+  var avant = t ? t.textContent : '';
   window.agvCompteEnregistrer(cle, 'gerant', g.id);
   var champ = document.getElementById('agv32-mdp-' + id);
   if(champ) champ.value = '';
-  toast('Acces enregistre : ' + mail);
+  /* le gestionnaire de comptes repond de facon asynchrone (empreinte du mot
+     de passe, controle des doublons) : on relit les comptes pour afficher le
+     resultat reel sur la carte */
+  setTimeout(function(){
+    var dit = t ? t.textContent : '';
+    var u = uidBoutique();
+    var r = u ? refBrut32('gdv_shops/' + u + '/comptes/' + cle) : null;
+    if(!r){ signaler(id, dit !== avant ? dit : 'Acces envoye', null); return; }
+    r.once('value').then(function(s){
+      var c = s.val();
+      lireComptes();
+      if(c && c.actif !== false && Date.now() - Number(c.majLe || 0) < 15000){
+        signaler(id, '✓ Acces enregistre — identifiant : ' + (c.identifiant || mail), true);
+      }else{
+        signaler(id, (dit && dit !== avant) ? dit : 'L\'acces n\'a pas pu etre enregistre', false);
+      }
+    }, function(){ signaler(id, dit !== avant ? dit : 'Acces envoye', null); });
+  }, 1800);
 };
 
+/* verification apres enregistrement : la fiche relue dans la base porte-t-elle
+   bien les onglets et les actions qui viennent d'etre coches ? */
+function empreinteDroits(g){
+  if(!g) return '';
+  var v = enTableau(g.permVues).map(String).sort().join(',');
+  return v + '|' + ACTIONS.map(function(a){ return a.cle + '=' + (g[a.cle] === true); }).join(',')
+    + '|' + (g.bloque ? 1 : 0);
+}
+function verifierEnBase(id, essai, attendu){
+  var u = uidBoutique();
+  if(!u || !window.db || typeof window.db.ref !== 'function') return;
+  var r;
+  /* window.db.ref suit le bloc ouvert (A, B, boutique rattachee) */
+  try{ r = window.db.ref('gdv_shops/' + u + '/data/gerants'); }catch(e){ return; }
+  r.once('value').then(function(s){
+    var l = enTableau(s.val());
+    var f = null;
+    l.forEach(function(x){ if(!f && x && memeId(x.id, id)) f = x; });
+    var el = document.getElementById('agv32-etat-' + id);
+    if(f && empreinteDroits(f) === attendu){
+      if(el && /enregistr/i.test(el.textContent)) signaler(id, el.textContent.replace(/ — confirme.*$/, '')
+        + ' — confirme dans la base', true, true);
+      return;
+    }
+    if(!essai){
+      try{ if(window.AGV_PERF && typeof window.AGV_PERF.viderFileAttente === 'function') window.AGV_PERF.viderFileAttente(); }catch(e){}
+      setTimeout(function(){ verifierEnBase(id, 1, attendu); }, 2500);
+      return;
+    }
+    signaler(id, '⚠ Enregistre sur cet appareil, pas encore dans la base : verifiez la connexion internet', false);
+  }, function(){});
+}
+
+/* une seule carte est redessinee : les cases en cours de modification sur
+   les AUTRES cartes ne sont pas perdues */
+function redessinerCarte(id){
+  var g = trouverFiche(id);
+  var el = document.getElementById('agv32-carte-' + id);
+  if(!g || !el){ rendrePersonnel(); return; }
+  var tmp = document.createElement('div');
+  tmp.innerHTML = carte(g);
+  if(tmp.firstChild) el.parentNode.replaceChild(tmp.firstChild, el);
+}
+
 window.agvPersEnregistrer = function(id){
-  if(!actionPermise('permPers') && role() !== 'fondateur') return toast('Vous ne gerez pas le personnel');
-  var g = null;
-  lesGerants().forEach(function(x){ if(!g && memeId(x.id, id)) g = x; });
-  if(!g) return toast('Fiche introuvable');
+  if(!peutGererPersonnel()) return signaler(id, 'Vous ne gerez pas le personnel', false);
+  var g = trouverFiche(id);
+  if(!g) return signaler(id, 'Fiche introuvable — rouvrez l\'onglet Personnel', false);
+  if(estLeFondateur(g)) return signaler(id, 'La fiche du fondateur se modifie dans les Parametres', false);
   /* fiche de personnel confondue autrefois avec celle du fondateur : en
      l'enregistrant ici, le fondateur confirme que c'est un membre du personnel */
   var etaitMarquee = (typeof window.agvFicheMarqueeParErreur === 'function') && window.agvFicheMarqueeParErreur(g);
   var lire = function(p){ return (document.getElementById('agv32-' + p + '-' + id) || {}).value; };
   var nom = String(lire('nom') || '').trim();
-  if(!nom) return toast('Le nom est obligatoire');
+  if(!nom) return signaler(id, 'Le nom est obligatoire', false);
   var code = String(lire('code') || '').trim();
   if(code){
     var doublon = null;
     lesGerants().forEach(function(x){
       if(!doublon && !memeId(x.id, id) && x.code && String(x.code) === code) doublon = x;
     });
-    if(doublon) return toast('Ce code est deja utilise par ' + (doublon.nom || 'quelqu\'un'));
+    if(doublon) return signaler(id, 'Ce code d\'acces est deja utilise par ' + (doublon.nom || 'quelqu\'un')
+      + ' : choisissez-en un autre', false);
   }
+  /* [CORRECTIF PERSONNEL] l'e-mail n'est plus exige pour ENREGISTRER la fiche.
+     L'exiger bloquait en silence l'enregistrement des onglets et des actions
+     de tout gerant cree sans e-mail : c'etait la cause du bouton « sans
+     effet ». Il reste exige pour creer l'acces de connexion. */
   var mail = String(lire('mail') || '').trim();
-  if(!mail || mail.indexOf('@') < 0)
-    return toast('L\'adresse e-mail est obligatoire : c\'est l\'identifiant de connexion');
-  var doublonMail = null;
-  lesGerants().forEach(function(x){
-    if(!doublonMail && !memeId(x.id, id) && x.email
-       && String(x.email).toLowerCase() === mail.toLowerCase()) doublonMail = x;
-  });
-  if(doublonMail) return toast('Cette adresse est deja celle de ' + (doublonMail.nom || 'quelqu\'un'));
+  if(mail){
+    if(mail.indexOf('@') < 1) return signaler(id, 'Adresse e-mail invalide', false);
+    var doublonMail = null;
+    lesGerants().forEach(function(x){
+      if(!doublonMail && !memeId(x.id, id) && x.email
+         && String(x.email).toLowerCase() === mail.toLowerCase()) doublonMail = x;
+    });
+    if(doublonMail) return signaler(id, 'Cette adresse est deja celle de ' + (doublonMail.nom || 'quelqu\'un'), false);
+  }
+  var vues = lireCases(id, 'pv');
+  /* une liste vide ne peut pas etre conservee par la base : la personne
+     retomberait sur les regles d'origine et verrait des onglets non coches */
+  if(!vues.length) return signaler(id, 'Cochez au moins un onglet. Pour retirer tout acces a cette personne, '
+    + 'passez son compte sur « Bloque ».', false);
   var mode = lire('remun') || 'pourcentage';
   var mt = nb(lire('mt'));
   g.nom = nom;
-  g.email = mail;
+  if(mail || g.email) g.email = mail;
   g.code = code;
   g.poste = String(lire('poste') || '').trim();
   g.tel = String(lire('tel') || '').trim();
@@ -30426,30 +30588,64 @@ window.agvPersEnregistrer = function(id){
   else { g.pct = Math.min(100, Math.max(0, mt)); g.salaire = 0; }
   if(!estCofondateur(g)) g.type = (mode === 'salaire') ? 'salaire' : 'pourcentage';
   g.bloque = (lire('bloq') === '1');
-  g.permVues = lireCases(id, 'pv');
+  g.permVues = vues;
   var actions = lireCases(id, 'pa');
   ACTIONS.forEach(function(a){ g[a.cle] = actions.indexOf(a.cle) >= 0; });
   if(etaitMarquee && g.role === 'fondateur') delete g.role;
+  var attendu = empreinteDroits(g);
   enregistrer();
-  toast(nom + ' enregistre');
-  rendrePersonnel();
+  redessinerCarte(id);
+  signaler(id, '✓ ' + nom + ' enregistre — ' + vues.length + ' onglet(s) et ' + actions.length
+    + ' action(s) accordes' + (g.bloque ? ' (compte bloque)' : ''), true);
+  setTimeout(function(){ verifierEnBase(id, 0, attendu); }, 2200);
 };
 
 window.agvPersSupprimer = function(id){
-  if(role() !== 'fondateur') return toast('Reserve au Fondateur');
-  var g = null;
-  lesGerants().forEach(function(x){ if(!g && memeId(x.id, id)) g = x; });
-  if(!g) return;
-  if(!confirm('Retirer « ' + (g.nom || 'cette personne') + ' » du personnel ?')) return;
+  var g = trouverFiche(id);
+  if(!g) return toast('Fiche introuvable');
+  /* [CORRECTIF PERSONNEL] le fondateur ne peut jamais etre retire */
+  if(estLeFondateur(g)) return signaler(id, 'Le fondateur ne peut pas etre supprime', false);
+  if(!peutGererPersonnel()) return signaler(id, 'Vous ne gerez pas le personnel', false);
+  if(estMoi(g)) return signaler(id, 'Vous ne pouvez pas retirer votre propre fiche', false);
+  var genre = estCofondateur(g) ? 'le co-fondateur' : 'le gerant';
+  var nom = g.nom || 'cette personne';
+  if(!confirm('Retirer ' + genre + ' « ' + nom + ' » du personnel de cette boutique ?\n\n'
+    + 'Sa fiche, ses onglets et ses actions seront supprimes, et son acces de connexion desactive.')) return;
   var l = lesGerants().filter(function(x){ return !memeId(x.id, id); });
   try{ gerants = l; }catch(e){ window.gerants = l; }
   enregistrer();
   rendrePersonnel();
-  toast('Retire du personnel');
+  desactiverComptes(id);
+  toast(nom + ' retire du personnel');
 };
 
+/* [CORRECTIF PERSONNEL] une personne retiree ne doit plus pouvoir entrer :
+   sans fiche, la connexion par son compte ouvrait une session de gerant SANS
+   AUCUNE restriction (aucune fiche = regles d'origine). Ses comptes lies a
+   cette fiche passent a actif:false — champ existant, deja refuse a la
+   connexion (« Ce compte est desactive ») ; rien n'est efface. */
+function desactiverComptes(id){
+  var u = uidBoutique();
+  var r = u ? refBrut32('gdv_shops/' + u + '/comptes') : null;
+  if(!r) return;
+  try{
+    r.once('value').then(function(s){
+      var c = s.val() || {};
+      var maj = {};
+      Object.keys(c).forEach(function(k){
+        var x = c[k];
+        if(x && x.gerantId !== undefined && x.gerantId !== null && memeId(x.gerantId, id) && x.actif !== false)
+          maj[k + '/actif'] = false;
+      });
+      if(!Object.keys(maj).length) return;
+      return r.update(maj).then(function(){ lireComptes(); });
+    }).catch(function(){});
+  }catch(e){}
+}
+
 window.agvPersAjouter = function(type){
-  if(role() !== 'fondateur') return toast('Reserve au Fondateur');
+  if(!peutGererPersonnel()) return toast('Vous ne gerez pas le personnel');
+  if(type === 'associe' && roleReel() !== 'fondateur') return toast('Seul le fondateur ajoute un co-fondateur');
   var l = lesGerants();
   var fiche = { id: Date.now(), nom: '', code: '', poste: 'vendeur', tel: '', email: '',
                 remun: 'pourcentage', pct: 0, salaire: 0, bloque: false,
@@ -30461,6 +30657,126 @@ window.agvPersAjouter = function(type){
   l.push(fiche);
   try{ gerants = l; }catch(e){ window.gerants = l; }
   rendrePersonnel();
+  /* la nouvelle carte est en bas : on y va, curseur sur le nom */
+  setTimeout(function(){
+    var c = document.getElementById('agv32-carte-' + fiche.id);
+    var n = document.getElementById('agv32-nom-' + fiche.id);
+    try{ if(c) c.scrollIntoView({ behavior: 'smooth', block: 'start' }); }catch(e){}
+    try{ if(n) n.focus(); }catch(e){}
+    signaler(fiche.id, 'Nouvelle fiche : renseignez le nom, cochez ses onglets et ses actions, puis Enregistrer', null);
+  }, 60);
+};
+
+/* [CORRECTIF PERSONNEL] LE FONDATEUR EN TETE, NON SUPPRIMABLE
+   Chaque boutique (bloc A, B, boutique rattachee) affiche d'abord la fiche du
+   fondateur, puis son personnel. Ses renseignements viennent de la fiche
+   boutique (info, commune a tous les blocs) et de sa fiche fondateur ; dans
+   un bloc qui n'a pas cette fiche, elle est LUE dans le bloc A, sans rien
+   ecrire. Aucun bouton de retrait n'existe sur cette carte. */
+var fondateurMere = {};
+function ficheFondateurOuverte(){
+  var f = null;
+  lesGerants().forEach(function(g){ if(!f && estLeFondateur(g)) f = g; });
+  return f;
+}
+function remplacerCarteFondateur(){
+  var el = document.getElementById('agv32-fondateur');
+  if(!el || !el.parentNode) return;
+  var t = document.createElement('div');
+  t.innerHTML = carteFondateur();
+  if(t.firstChild) el.parentNode.replaceChild(t.firstChild, el);
+}
+function chercherFondateurMere(){
+  var u = uidBoutique();
+  var r = u ? refBrut32('gdv_shops/' + u + '/data/gerants') : null;
+  if(!r) return;
+  try{
+    r.once('value').then(function(s){
+      var f = null;
+      enTableau(s.val()).forEach(function(g){ if(!f && estLeFondateur(g)) f = g; });
+      if(f){ fondateurMere[u] = f; remplacerCarteFondateur(); }
+    }, function(){});
+  }catch(e){}
+}
+function texteConnexionFondateur(){
+  if(comptesLus === null) return 'Lecture de son acces de connexion...';
+  var ids = [];
+  Object.keys(comptesLus || {}).forEach(function(k){
+    var c = comptesLus[k];
+    if(c && c.role === 'fondateur' && c.actif !== false && c.identifiant) ids.push(c.identifiant);
+  });
+  return ids.length ? 'Connexion — identifiant : ' + ids.join(', ')
+                    : 'Connexion par le code fondateur (aucun nom d\'utilisateur cree)';
+}
+function carteFondateur(){
+  var s = window._currentShop || {};
+  var locale = ficheFondateurOuverte();
+  var f = locale || fondateurMere[uidBoutique()] || {};
+  var nom = f.nom || s.nom || [s.prenom, s.nomFamille].filter(Boolean).join(' ') || 'Fondateur';
+  var lignes = [];
+  function ligne(libelle, v){
+    if(v === undefined || v === null || String(v).trim() === '') return;
+    lignes.push('<div><label>' + esc(libelle) + '</label><div class="agv32-val">' + esc(v) + '</div></div>');
+  }
+  ligne('Boutique', s.entreprise);
+  ligne('Telephone', s.tel);
+  ligne('WhatsApp', f.whatsapp ? '+' + String(f.whatsapp).replace(/^\+/, '') : '');
+  ligne('Adresse e-mail', s.email);
+  ligne('Ville', s.ville);
+  /* la part des benefices est propre a chaque boutique : on ne l'affiche que
+     si la fiche du fondateur est celle de la boutique ouverte */
+  if(locale) ligne('Part des benefices', (f.pct !== undefined && f.pct !== null && f.pct !== '') ? nb(f.pct) + ' %' : '');
+  var modifiable = (roleReel() === 'fondateur' && !personneConnectee());
+  return '<div class="agv32-c agv32-fond" id="agv32-fondateur">'
+    + '<div class="agv32-h"><div style="display:flex;align-items:center;gap:13px;min-width:0">'
+      + '<div class="agv32-fond-av">'
+        + (f.photo ? '<img src="' + esc(f.photo) + '" alt="" style="width:100%;height:100%;object-fit:cover">'
+                   : esc(String(nom).charAt(0).toUpperCase())) + '</div>'
+      + '<div style="min-width:0"><div class="agv32-n">' + esc(nom)
+        + ' <span class="agv32-tag" style="background:rgba(245,158,11,.2);color:#d97706">fondateur</span></div>'
+        + '<div class="agv32-e">Proprietaire de la boutique &middot; acces complet a tous les onglets '
+        + 'et a toutes les actions</div></div></div>'
+      + '<span class="agv32-tag" style="background:rgba(100,116,139,.16);color:var(--text2,#64748b);padding:4px 10px" '
+        + 'title="Le fondateur ne peut pas etre supprime">&#128274; non supprimable</span>'
+    + '</div>'
+    + (lignes.length ? '<div class="agv32-g agv32-f">' + lignes.join('') + '</div>' : '')
+    + '<div class="agv32-t" style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">'
+      + '<div id="agv32-fond-connexion" style="font-size:11.5px;font-weight:600;color:var(--text2,#94a3b8)">'
+        + esc(texteConnexionFondateur()) + '</div>'
+      + (modifiable ? '<button class="btn btn-ghost btn-sm" style="font-size:12px" '
+          + 'onclick="agvPersFondateurModifier()">Modifier ses informations</button>' : '')
+    + '</div></div>';
+}
+function poserStyleFondateur(){
+  if(document.getElementById('agv32-style-fond')) return;
+  var st = document.createElement('style');
+  st.id = 'agv32-style-fond';
+  st.textContent = [
+    '.agv32-c.agv32-fond{border:1.5px solid #f59e0b;box-shadow:0 0 0 3px rgba(245,158,11,.10)}',
+    '.agv32-fond-av{width:56px;height:56px;border-radius:50%;overflow:hidden;flex-shrink:0;',
+      'background:linear-gradient(135deg,#f59e0b,#d97706);color:#fff;display:flex;align-items:center;',
+      'justify-content:center;font-size:22px;font-weight:800}',
+    '.agv32-val{padding:3px 0 6px;border-bottom:1px dashed var(--border,rgba(37,99,235,.25));',
+      'font-size:13.5px;font-weight:600;color:var(--text,#e2e8f0);min-height:26px;word-break:break-word}',
+    '.agv32-sep{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;',
+      'color:var(--text3,#64748b);margin:16px 2px 9px}',
+    '@media(max-width:560px){.agv32-g{grid-template-columns:1fr}}'
+  ].join('');
+  document.head.appendChild(st);
+}
+window.agvPersFondateurModifier = function(){
+  if(document.getElementById('agv40-page') && typeof window.agv40Onglet === 'function') window.agv40Onglet('parametres');
+  else { try{ window.showView('parametres'); }catch(e){} }
+  /* on amene l'ecran sur l'encadre « Informations du Fondateur » */
+  setTimeout(function(){
+    try{
+      var t = null;
+      Array.prototype.forEach.call(document.querySelectorAll('#view-parametres h3'), function(h){
+        if(!t && /Informations du Fondateur/i.test(h.textContent || '')) t = h;
+      });
+      if(t) t.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }catch(e){}
+  }, 450);
 };
 
 function rendrePersonnel(){
@@ -30468,6 +30784,7 @@ function rendrePersonnel(){
   var actions = document.getElementById('agv32-personnel-actions');
   if(!corps) return;
   poserStyle();
+  poserStyleFondateur();
   if(actions && !actions.innerHTML){
     actions.innerHTML = '<button class="btn btn-primary btn-sm" onclick="agvPersAjouter(\'gerant\')">'
         + '+ Nouveau gerant</button>'
@@ -30477,14 +30794,18 @@ function rendrePersonnel(){
   var l = lesGerants().filter(function(g){ return !estLeFondateur(g); });
   corps.innerHTML = '<div class="card" style="margin-bottom:14px">'
       + '<div style="font-size:12px;color:var(--text3);line-height:1.6">'
-      + 'Cet onglet reunit tout le personnel de la boutique. Ce qui est coche est reellement accorde : '
-      + 'un onglet coche s\'ouvre, meme s\'il etait auparavant reserve au fondateur. '
-      + 'Cocher toute la grille revient a donner un acces complet. '
-      + 'Chaque personne se connecte ensuite avec son nom d\'utilisateur, cree dans '
-      + '&laquo;&nbsp;Comptes de connexion&nbsp;&raquo;.</div></div>'
+      + 'Cet onglet reunit tout le personnel de la boutique. Le fondateur apparait en tete : il a tous '
+      + 'les droits et ne peut pas etre retire. Pour chaque gerant ou co-fondateur, ce qui est coche est '
+      + 'reellement accorde : un onglet coche s\'ouvre, meme s\'il etait auparavant reserve au fondateur, '
+      + 'et une action cochee devient possible. Cliquez sur <b>Enregistrer</b> sous la carte : le resultat '
+      + 's\'affiche juste a cote du bouton.</div></div>'
+    + carteFondateur()
+    + '<div class="agv32-sep">Gerants et co-fondateurs (' + l.length + ')</div>'
     + (l.length ? l.map(carte).join('')
         : '<div class="card"><div style="font-size:12.5px;color:var(--text3)">'
-          + 'Aucun membre du personnel. Utilisez les boutons en haut pour en creer.</div></div>');
+          + 'Aucun gerant ni co-fondateur. Utilisez les boutons en haut pour en creer.</div></div>');
+  if(!ficheFondateurOuverte()) chercherFondateurMere();
+  lireComptes();
 }
 window.agvRendrePersonnel = rendrePersonnel;
 
@@ -39252,7 +39573,8 @@ window.agvStocks = function(){
 
 
 <!-- ==================================================================
-     App AGV — VERSION AGV-37 — fichier du 2026-09-05 22:39 UTC
+     App AGV — VERSION AGV-38 — fichier du 2026-10-10 14:50 UTC
+     (AGV-38 : onglet Personnel — Enregistrer, fondateur protege, droits appliques ; module 30)
 
      LE SENS DE LA DETTE SE LIT A LA COULEUR
 
@@ -39268,7 +39590,7 @@ window.agvStocks = function(){
      modifiee, seule sa couleur change.
 
      VERSION : la console doit afficher
-        AGV AGV-37   fichier du 2026-09-05 22:39 UTC — 27 modules
+        AGV AGV-38   fichier du 2026-10-10 14:50 UTC — 27 modules
 
       1. agv-version           : repere de version
       2. agv-performance       : sauvegarde differentielle ; cache des soldes clients oubliable
@@ -39309,8 +39631,8 @@ window.agvStocks = function(){
 (function () {
   'use strict';
   var V = {
-    version: 'AGV-37',
-    date: '2026-09-05 22:39 UTC',
+    version: 'AGV-38',
+    date: '2026-10-10 14:50 UTC',
     modules: 27,
     corrections: [
       'empreinte : deux sels (agvc$ a l ecriture, agv$ a la verification)',
@@ -39336,7 +39658,11 @@ window.agvStocks = function(){
       'FACTURE : bas en tableau ; ROUGE si le client doit, VERT si la boutique doit',
       'SOLDE CLIENT : mis a jour seul apres facture ou versement',
       'NAVIGATION : les lettres de bloc sont relatives a la boutique mere',
-      'STOCK : l index produits suivait un tableau remplace par Firebase'
+      'STOCK : l index produits suivait un tableau remplace par Firebase',
+      'PERSONNEL : Enregistrer ne bloque plus sans e-mail, resultat affiche sous le bouton',
+      'PERSONNEL : le fondateur en tete de chaque boutique, impossible a supprimer',
+      'DROITS : Modifier/Supprimer coches s appliquent aussi aux produits et depenses',
+      'TOAST : visible au-dessus de la page Administration'
     ]
   };
   window.AGV_VERSION = V;
@@ -39347,7 +39673,7 @@ window.agvStocks = function(){
   V.etat = function () {
     var noms = ['AGV_PERF', 'AGV_FACT', 'AGV_PORTAIL', 'AGV_DETTES', 'AGV_RESET',
                 'AGV_FORFAIT', 'AGV_STABLE', 'AGV_LIER', 'AGV_GERANTS', 'AGV_CONNEXION',
-                'AGV_COMPTES', 'AGV_ACCES', 'AGV_CHOIX', 'AGV_ECRAN', 'AGV_AUDIT', 'AGV_DEST', 'AGV_MDP', 'AGV_SIMPLE', 'AGV_TRACE', 'AGV_BOUTON', 'AGV_ROLE', 'AGV_STOCK', 'AGV_SESSION', 'AGV_LICENCE', 'AGV_FACTURE', 'AGV_SOLDE'];
+                'AGV_COMPTES', 'AGV_ACCES', 'AGV_CHOIX', 'AGV_ECRAN', 'AGV_AUDIT', 'AGV_DEST', 'AGV_MDP', 'AGV_SIMPLE', 'AGV_TRACE', 'AGV_BOUTON', 'AGV_ROLE', 'AGV_STOCK', 'AGV_SESSION', 'AGV_LICENCE', 'AGV_FACTURE', 'AGV_SOLDE', 'AGV_PERSONNEL'];
     var absents = noms.filter(function (n) { return typeof window[n] !== 'object'; });
     console.log('Version ' + V.version + ' — fichier du ' + V.date);
     console.log(absents.length ? 'MODULES ABSENTS : ' + absents.join(', ')
@@ -45772,6 +46098,9 @@ window.agvStocks = function(){
   function rafraichir() {
     // chargerComptes() n'est pas accessible depuis l'exterieur : on redemande
     // le panneau, qui la rappelle lui-meme.
+    // [CORRECTIF PERSONNEL] seulement s'il est deja ouvert : un acces cree depuis
+    // l'onglet Personnel faisait surgir ce panneau par-dessus la page.
+    if (!document.getElementById('agvcu-overlay')) return;
     try { if (typeof window.agvComptesOuvrir === 'function') window.agvComptesOuvrir(); } catch (e) {}
   }
 
@@ -50312,6 +50641,295 @@ window.agvStocks = function(){
     });
     return a;
   };
+})();
+</script>
+<script>
+/* =============================================================================
+   APP AGV — MODULE 30 : PERSONNEL — ENREGISTREMENT, FONDATEUR PROTEGE,
+                         DROITS DES GERANTS REELLEMENT APPLIQUES  (v1.0)
+   -----------------------------------------------------------------------------
+   LE BOUTON « ENREGISTRER » DU PERSONNEL SEMBLAIT SANS EFFET
+
+   Deux defauts se cumulaient (Administration → Personnel) :
+
+     1. agvPersEnregistrer() EXIGEAIT une adresse e-mail. Tout gerant cree
+        sans e-mail — c'est-a-dire tous ceux d'avant l'onglet Personnel —
+        voyait son enregistrement refuse : ni ses onglets ni ses actions
+        n'etaient ecrits.
+     2. Le message de refus partait dans le toast de l'application, dont le
+        z-index (999) le placait SOUS la page Administration (99994). Le
+        fondateur cliquait, rien ne bougeait, aucun message.
+
+   Corrections (module v32, en place) : l'e-mail n'est plus exige pour
+   enregistrer la fiche (il l'est toujours pour creer l'acces de connexion),
+   chaque resultat s'affiche sous le bouton de la carte, la fiche relue dans
+   la base confirme l'enregistrement, et une grille sans aucun onglet coche
+   est refusee avec explication (la base ne conserve pas une liste vide : la
+   personne retomberait sur les regles d'origine).
+
+   CE MODULE AJOUTE
+
+     · le toast passe au-dessus de toutes les pages (Administration comprise) ;
+     · « Modifier un enregistrement » s'applique aussi aux PRODUITS et aux
+       DEPENSES : jusqu'ici ces deux fenetres etaient reservees au fondateur,
+       meme quand la case etait cochee ; « Supprimer un enregistrement »
+       commande la suppression d'un produit ;
+     · le fondateur ne peut etre supprime par AUCUN chemin (ancien onglet
+       « Gerants & Acces », liste des associes, onglet Personnel).
+
+   Aucune donnee ecrite par ce module, aucune structure de base modifiee :
+   il lit la fiche du gerant connecte et ouvre les fenetres existantes.
+   Verifier : AGV_PERSONNEL.etat()      Desactiver : AGV_PERSONNEL.actif = false
+   ============================================================================= */
+(function () {
+  'use strict';
+
+  var API = window.AGV_PERSONNEL = { actif: true, version: '1.0' };
+
+  function log() {
+    try { console.log.apply(console, ['[AGV-PERSONNEL]'].concat([].slice.call(arguments))); } catch (e) {}
+  }
+  function toast(t) { try { if (typeof window.showToast === 'function') window.showToast(t); } catch (e) {} }
+  function tab(v) {
+    if (!v) return [];
+    if (Array.isArray(v)) return v.filter(Boolean);
+    try { return Object.keys(v).map(function (k) { return v[k]; }).filter(Boolean); } catch (e) { return []; }
+  }
+  function lesGerants() { var g; try { g = gerants; } catch (e) { g = window.gerants; } return tab(g); }
+  function role() {
+    try { if (window.currentRole) return window.currentRole; } catch (e) {}
+    try { return currentRole; } catch (e) {}
+    return null;
+  }
+  /* la fiche du gerant connecte (null pour le fondateur en titre) */
+  function personne() {
+    try { if (typeof window.agvPersonneConnectee === 'function') return window.agvPersonneConnectee(); } catch (e) {}
+    return null;
+  }
+  function permis(cle) {
+    try { if (typeof window.agvActionPermise === 'function') return !!window.agvActionPermise(cle); } catch (e) {}
+    return role() === 'fondateur';
+  }
+  function estFondateurFiche(g) {
+    try { if (typeof window.agvFicheEstFondateur === 'function') return window.agvFicheEstFondateur(g); } catch (e) {}
+    return !!(g && (String(g.id) === '1' || g.role === 'fondateur' || g.type === 'fondateur'));
+  }
+  function val(id, v) { var e = document.getElementById(id); if (e) e.value = (v === undefined || v === null) ? '' : v; }
+
+  /* =========================================================================
+     1. LE TOAST AU-DESSUS DE TOUTES LES PAGES
+     ========================================================================= */
+  (function styleToast() {
+    if (document.getElementById('agv-perso-style')) return;
+    var st = document.createElement('style');
+    st.id = 'agv-perso-style';
+    st.textContent = '.toast{z-index:2147483000 !important}';
+    (document.head || document.documentElement).appendChild(st);
+  })();
+
+  /* =========================================================================
+     2. PRODUITS : « MODIFIER » ET « SUPPRIMER » SELON LES CASES COCHEES
+     ------------------------------------------------------------------------
+     openEdit() d'origine : if(currentRole!=='fondateur') → « Reserve au
+     Fondateur ». Pour un gerant, c'est desormais SA case qui decide.
+     ========================================================================= */
+  function ouvrirProduit(idx) {
+    var l; try { l = products; } catch (e) { l = window.products || []; }
+    var p = l[idx];
+    if (!p) { toast('Produit introuvable'); return; }
+    try { editIdx = idx; modalMode = 'edit'; } catch (e) { log('variables du formulaire produit inaccessibles', e); return; }
+    var t = document.getElementById('modal-title');
+    if (t) t.textContent = 'Modifier le produit';
+    var del = document.getElementById('btn-del');
+    if (del) del.style.display = permis('permDel') ? 'inline-flex' : 'none';
+    val('f-ref', p.reference); val('f-des', p.designation); val('f-cat', p.categorie); val('f-uni', p.unite);
+    val('f-stock', p.stock_initial); val('f-seuil', p.seuil_alerte);
+    val('f-achat', p.prix_achat); val('f-vente', p.prix_vente);
+    var ov = document.getElementById('modal-overlay');
+    if (ov) ov.classList.add('open');
+  }
+
+  function brancherProduits() {
+    if (typeof window.openEdit !== 'function' || typeof window.deleteProduct !== 'function') return false;
+    if (window.openEdit.__agvPerso) return true;
+    var precEdit = window.openEdit;
+    var neufEdit = function (idx) {
+      if (API.actif && personne()) {
+        if (!permis('permEdit')) { toast('Vous n\'avez pas le droit de modifier'); return; }
+        return ouvrirProduit(idx);
+      }
+      return precEdit.apply(this, arguments);
+    };
+    neufEdit.__agvPerso = true;
+    window.openEdit = neufEdit;
+
+    var precDel = window.deleteProduct;
+    var neufDel = function () {
+      if (API.actif && personne() && !permis('permDel')) { toast('Vous n\'avez pas le droit de supprimer'); return; }
+      return precDel.apply(this, arguments);
+    };
+    neufDel.__agvPerso = true;
+    window.deleteProduct = neufDel;
+    return true;
+  }
+
+  /* le bouton ✏ dans le tableau des produits, pour le gerant qui a la case */
+  function boutonsProduits() {
+    var tb = document.getElementById('product-tbody');
+    if (!tb || !API.actif || !personne() || !permis('permEdit')) return;
+    Array.prototype.forEach.call(tb.querySelectorAll('tr'), function (tr) {
+      var ra = tr.querySelector('.row-actions');
+      if (!ra || ra.querySelector('[data-agv-perso]') || ra.querySelector('[onclick^="openEdit("]')) return;
+      var m = /openMvt\((\d+)/.exec(ra.innerHTML);
+      if (!m) return;
+      var b = document.createElement('button');
+      b.className = 'row-btn';
+      b.title = 'Modifier';
+      b.textContent = '✏';
+      b.setAttribute('data-agv-perso', '1');
+      b.setAttribute('onclick', 'openEdit(' + m[1] + ')');
+      ra.insertBefore(b, ra.firstChild);
+    });
+  }
+
+  /* =========================================================================
+     3. DEPENSES : « MODIFIER » SELON LA CASE COCHEE
+     ========================================================================= */
+  function ouvrirDepense(id) {
+    var l; try { l = depenses; } catch (e) { l = window.depenses || []; }
+    var d = null;
+    tab(l).forEach(function (x) { if (!d && x && String(x.id) === String(id)) d = x; });
+    if (!d) { toast('Depense introuvable'); return; }
+    val('ed-id', d.id);
+    val('ed-desc', d.desc || d.description || '');
+    val('ed-cat', d.cat || d.categorie || 'Divers');
+    val('ed-montant', d.montant || 0);
+    val('ed-date', d.date || new Date().toISOString().slice(0, 10));
+    var ov = document.getElementById('edit-dep-overlay');
+    if (ov) ov.classList.add('open');
+  }
+
+  function brancherDepenses() {
+    if (typeof window.openEditDep !== 'function') return false;
+    if (window.openEditDep.__agvPerso) return true;
+    var prec = window.openEditDep;
+    var neuf = function (id) {
+      if (API.actif && personne()) {
+        if (!permis('permEdit')) { toast('Vous n\'avez pas le droit de modifier'); return; }
+        return ouvrirDepense(id);
+      }
+      return prec.apply(this, arguments);
+    };
+    neuf.__agvPerso = true;
+    window.openEditDep = neuf;
+    return true;
+  }
+
+  /* la liste affichee suit exactement le filtre de renderDepenses() */
+  function depensesAffichees() {
+    var l; try { l = depenses; } catch (e) { l = window.depenses || []; }
+    l = tab(l);
+    var mkEl = document.getElementById('dep-month-filter');
+    var yrEl = document.getElementById('dep-year-filter');
+    var mk = mkEl ? mkEl.value : '';
+    var yr = parseInt(yrEl ? yrEl.value : '', 10) || 0;
+    try {
+      if (mk) return l.filter(function (d) { return getMonthKey(d.date) === mk; });
+      if (yr) return l.filter(function (d) { return new Date(d.date).getFullYear() === yr; });
+    } catch (e) { return null; }
+    return l;
+  }
+  function boutonsDepenses() {
+    var box = document.getElementById('dep-list');
+    if (!box || !API.actif || !personne() || !permis('permEdit')) return;
+    var items = box.querySelectorAll('.dep-item');
+    if (!items.length) return;
+    var l = depensesAffichees();
+    if (!l || l.length !== items.length) return;          // prudence : on ne devine rien
+    Array.prototype.forEach.call(items, function (it, i) {
+      if (it.querySelector('[data-agv-perso]') || it.querySelector('[onclick^="openEditDep("]')) return;
+      var d = l[i];
+      if (!d || d.id === undefined || d.id === null) return;
+      var desc = it.querySelector('.dep-desc');
+      if (desc && String(desc.textContent) !== String(d.desc)) return;   // ligne et donnee doivent concorder
+      var b = document.createElement('button');
+      b.className = 'row-btn';
+      b.title = 'Modifier';
+      b.style.cssText = 'opacity:1;color:var(--accent)';
+      b.textContent = '✏';
+      b.setAttribute('data-agv-perso', '1');
+      b.setAttribute('onclick', 'openEditDep(' + JSON.stringify(d.id) + ')');
+      var del = it.querySelector('.row-btn.del');
+      if (del) it.insertBefore(b, del); else it.appendChild(b);
+    });
+  }
+
+  /* les tableaux sont redessines par de nombreux modules : on observe le
+     contenu plutot que d'envelopper chaque fonction de rendu */
+  function observer(id, fn) {
+    var el = document.getElementById(id);
+    if (!el || el.__agvPersoObs) return !!el;
+    try {
+      var mo = new MutationObserver(function () { try { fn(); } catch (e) {} });
+      mo.observe(el, { childList: true });
+      el.__agvPersoObs = true;
+    } catch (e) {}
+    return true;
+  }
+
+  /* =========================================================================
+     4. LE FONDATEUR NE PEUT ETRE SUPPRIME PAR AUCUN CHEMIN
+     ========================================================================= */
+  function proteger(nom, idDe) {
+    var f = window[nom];
+    if (typeof f !== 'function' || f.__agvPerso) return;
+    var neuf = function () {
+      var id = idDe.apply(this, arguments);
+      var g = null;
+      lesGerants().forEach(function (x) { if (!g && x && String(x.id) === String(id)) g = x; });
+      if (g && estFondateurFiche(g)) { toast('Le fondateur ne peut pas etre supprime'); return; }
+      return f.apply(this, arguments);
+    };
+    neuf.__agvPerso = true;
+    window[nom] = neuf;
+  }
+
+  /* =========================================================================
+     INSTALLATION
+     ========================================================================= */
+  var essais = 0;
+  var horloge = setInterval(function () {
+    essais++;
+    var a = brancherProduits();
+    var b = brancherDepenses();
+    proteger('deleteGerant', function () { try { return editGerantId; } catch (e) { return null; } });
+    proteger('removeAssocie', function (id) { return id; });
+    var c = observer('product-tbody', boutonsProduits);
+    var d = observer('dep-list', boutonsDepenses);
+    if ((a && b && c && d) || essais > 240) clearInterval(horloge);
+  }, 250);
+  /* les droits peuvent changer en cours de session (fiche mise a jour par
+     le fondateur sur un autre appareil) : on repasse regulierement */
+  setInterval(function () {
+    try { boutonsProduits(); boutonsDepenses(); } catch (e) {}
+  }, 2000);
+
+  API.etat = function () {
+    var p = personne();
+    var f = null;
+    lesGerants().forEach(function (g) { if (!f && estFondateurFiche(g)) f = g; });
+    console.log('--- Personnel ---');
+    console.log('  fiche fondateur dans cette boutique : ' + (f ? (f.nom || 'sans nom') + ' (id ' + f.id + ')' : 'aucune (infos lues dans la fiche boutique)'));
+    console.log('  gerants et co-fondateurs : ' + lesGerants().filter(function (g) { return !estFondateurFiche(g); }).length);
+    console.log('  connecte : ' + (p ? p.nom + ' (id ' + p.id + ')' : 'fondateur en titre') + '  ·  role : ' + (role() || '—'));
+    if (p) {
+      ['permVentes', 'permDep', 'permEdit', 'permDel', 'permVers', 'permPers', 'permAudit', 'permReinit'].forEach(function (k) {
+        console.log('   ' + (permis(k) ? '✔ ' : '✖ ') + k);
+      });
+    }
+    return API.version;
+  };
+  log('module actif — v' + API.version);
 })();
 </script>
 </body></html>
