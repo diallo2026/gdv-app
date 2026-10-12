@@ -397,6 +397,40 @@ body{font-family:'DM Sans',sans-serif;background:#060d24;color:#e2e8f0;min-heigh
 </style>
 </head>
 <body>
+<script>
+/* [AGV-39] OUVERTURE INSTANTANEE — le gerant a clique sur une boutique dans
+   son portail : la page suivante affiche AUSSITOT « Ouverture de ... », au
+   lieu de faire defiler la page d'accueil et l'ecran de connexion pendant
+   que la session reprend. L'ecran s'efface des que la boutique est affichee. */
+(function(){
+  var o = null;
+  try{ o = JSON.parse(sessionStorage.getItem('agv_pg_ouverture') || 'null'); }catch(e){}
+  if(!o || !o.t || Date.now() - o.t > 60000) return;
+  var d = document.createElement('div');
+  d.id = 'agv-splash';
+  d.style.cssText = 'position:fixed;inset:0;z-index:2147483000;background:#0f172a;display:flex;'
+    + 'flex-direction:column;align-items:center;justify-content:center;gap:14px;color:#fff;'
+    + 'font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;font-size:15px;font-weight:700';
+  var r = document.createElement('div');
+  r.style.cssText = 'width:34px;height:34px;border-radius:50%;border:3px solid rgba(255,255,255,.25);'
+    + 'border-top-color:#60a5fa;animation:agvSplashTour .8s linear infinite';
+  var st = document.createElement('style');
+  st.textContent = '@keyframes agvSplashTour{to{transform:rotate(360deg)}}';
+  var t = document.createElement('div');
+  t.textContent = 'Ouverture de ' + (o.nom || 'la boutique') + '\u2026';
+  d.appendChild(st); d.appendChild(r); d.appendChild(t);
+  document.body.appendChild(d);
+  var t0 = Date.now();
+  (function veiller(){
+    var app = document.getElementById('app');
+    var fin = (app && app.classList.contains('visible'))
+      || document.getElementById('agv-ecran-blocage') || document.getElementById('agv-ecran-hors-ligne')
+      || Date.now() - t0 > 15000;
+    if(fin){ try{ d.remove(); }catch(e){} return; }
+    setTimeout(veiller, 30);
+  })();
+})();
+</script>
 <div id="syncIndicator"><span id="syncDot"></span><span id="syncText">En ligne</span></div>
 
 <!-- ==================== AGV SCRIPT ==================== -->
@@ -931,11 +965,10 @@ function agvLaunchApp(shop){
       if(data.ventes) ventes=toA(data.ventes);
       if(data.depenses) depenses=toA(data.depenses);
       if(data.gerants) gerants=toA(data.gerants);
-      // Verifier que le gerant connecte existe toujours
-      if(currentRole==='gerant' && currentGerantId){
-        var _g=gerants.find(function(g){return g.id==currentGerantId;});
-        if(!_g){currentRole='fondateur';currentGerantId=null;}
-      }
+      /* [AGV-39] Un gerant absent de la liste du personnel du bloc ouvert
+         (il visite une autre boutique : sa fiche reste chez lui) RESTE
+         gerant. L'ancienne regle le promouvait fondateur : pendant quelques
+         instants il avait tous les droits, et l'ouverture clignotait. */
       if(data.entrees) entrees=toA(data.entrees);
       if(data.appros) appros=toA(data.appros);
       if(data.repConfig) repConfig=toA(data.repConfig);
@@ -15088,6 +15121,18 @@ window.agvLogin = function(){
   });
 };
 
+/* [AGV-39] ticket d'ouverture pose par le portail du gerant (page precedente) */
+var DEBUT_PAGE_39 = Date.now();
+function ticketPortail(uid){
+  var t = null;
+  try{ t = JSON.parse(sessionStorage.getItem('agv_pg_ouverture') || 'null'); }catch(e){}
+  if(!t || !t.t) return false;
+  try{ sessionStorage.removeItem('agv_pg_ouverture'); }catch(e){}
+  if(t.t >= DEBUT_PAGE_39 || DEBUT_PAGE_39 - t.t > 60000) return false;
+  if(!uid || (window.currentRole !== 'gerant')) return false;
+  return true;
+}
+
 /* ---------- 8.4 Ouverture de l'application : dernier verrou ----------
    Tous les chemins d'entree (fondateur, gerant, code d'acces,
    ouverture directe de l'application installee) passent par
@@ -15105,6 +15150,23 @@ window.agvLogin = function(){
       if(!reseauProbable()){ ecranHorsLigne(); return; }
 
       function demarrer(uid){
+        /* [AGV-39] OUVERTURE INSTANTANEE. Le gerant change de boutique depuis
+           son portail, en pleine session deja controlee : la boutique s'ouvre
+           tout de suite. Le controle de licence part dans le meme temps et
+           ferme l'acces des sa reponse si la boutique est bloquee ou expiree.
+           Le ticket ne sert qu'une fois, et seulement s'il a ete pose par la
+           page precedente il y a moins d'une minute. */
+        if(ticketPortail(uid) && !motifBlocage(shop)){
+          window._agvAccesRevoque = false;
+          shop.uid = shop.uid || uid;
+          window._currentShop = shop;
+          original(shop);
+          surveillerAcces(shop);
+          verifierAcces(uid, code, function(){}, function(motif){
+            if(motif !== 'hors-ligne') revoquerAcces(motif);
+          });
+          return;
+        }
         verifierAcces(uid, code, function(){
           window._agvAccesRevoque = false;
           shop.uid = shop.uid || uid;
@@ -26082,8 +26144,22 @@ function chargerMeta(cb){
   if(!u){ meta = null; cb && cb(null); return; }
   lire('gdv_shops/' + u + '/blocs/_meta', function(v){
     meta = v || {};
+    if(v) metaRetenue(u, v);
     cb && cb(meta);
   });
+}
+/* [AGV-39] OUVERTURE INSTANTANEE : la description des blocs (noms et
+   boutiques rattachees) est gardee sur l'appareil. Ouvrir un bloc n'attend
+   plus sa lecture ; elle est refaite en arriere-plan. Lecture seule. */
+function cleMeta(u){ return 'agv_meta_' + u; }
+function metaRetenue(u, v){
+  if(v !== undefined){ try{ localStorage.setItem(cleMeta(u), JSON.stringify(v || {})); }catch(e){} return v; }
+  try{ var b = localStorage.getItem(cleMeta(u)); return b ? JSON.parse(b) : null; }catch(e){ return null; }
+}
+function sourcesDe(m){
+  var src = {};
+  Object.keys(m || {}).forEach(function(k){ if(m[k] && m[k].source) src[k] = m[k].source; });
+  return src;
 }
 
 /* ============================================================
@@ -26118,14 +26194,43 @@ function chargerMeta(cb){
         /* [v35] un bloc rattache pointe sur une autre boutique : il faut
            le savoir AVANT d'ouvrir, sinon la premiere lecture partirait
            au mauvais endroit */
+        /* [AGV-39] deja connu sur cet appareil : on part tout de suite. La
+           relecture part AVANT les ecoutes des donnees (la base repond dans
+           l'ordre) ; si le rattachement a change entre-temps, rien n'est
+           ecrit et la page se recharge sur la bonne adresse. */
+        var connu = metaRetenue(u);
+        if(connu && connu[cible]){
+          meta = connu;
+          var srcConnu = sourcesDe(connu);
+          window._agvBlocSource = srcConnu;
+          lire('gdv_shops/' + u + '/blocs/_meta', function(v){
+            if(!v) return;
+            metaRetenue(u, v);
+            meta = v;
+            var srcBase = sourcesDe(v);
+            if(String(srcBase[cible] || '') === String(srcConnu[cible] || '') && v[cible]){
+              window._agvBlocSource = srcBase;
+              return;
+            }
+            try{ window._AGV_READY = false; }catch(e){}
+            try{ if(window._agvDbListener) window._agvDbListener.off(); }catch(e){}
+            try{
+              sessionStorage.setItem(CLE_REPRISE, JSON.stringify({
+                uid: u, bloc: v[cible] ? cible : 'A',
+                code: window._lastShopCode || boutique().codeAcces || '',
+                role: role(), gerantId: window.currentGerantId || null, t: Date.now()
+              }));
+            }catch(e){}
+            location.reload();
+          });
+          return lancer(cible);
+        }
         var garde = window._currentShop;
         window._currentShop = null;
         lire('gdv_shops/' + u + '/blocs/_meta', function(v){
           meta = v || {};
-          var src = {};
-          Object.keys(meta).forEach(function(k){
-            if(meta[k] && meta[k].source) src[k] = meta[k].source;
-          });
+          if(v) metaRetenue(u, v);
+          var src = sourcesDe(meta);
           window._agvBlocSource = src;
           window._currentShop = garde;
           lancer(cible);
@@ -31034,6 +31139,13 @@ function jourV(t){
   return isNaN(d.getTime()) ? '—' : d.toLocaleDateString('fr-FR');
 }
 function resteFacture(f){
+  /* [AGV-39] le calcul juste, quand il est disponible */
+  try{
+    if(typeof window.agvResteFacture === 'function'){
+      var juste = window.agvResteFacture(f);
+      if(juste !== null && juste !== undefined) return Math.max(juste, 0);
+    }
+  }catch(e){}
   if(f.reportee) return 0;
   if(f.soldeRestant !== undefined && f.soldeRestant !== null && f.soldeRestant !== '') return Math.max(nb(f.soldeRestant), 0);
   return Math.max(nb(f.montantTotal) - nb(f.montantPaye), 0);
@@ -31068,7 +31180,9 @@ function elements(){
   lesCommandesV().forEach(function(c){ if(c) commandesConnues[String(c.id)] = true; });
 
   lesFacturesV().forEach(function(f){
-    if(!f || f.reportee || !factureACredit(f)) return;
+    /* [AGV-39] « reportee » n'est plus lu seul : le calcul juste sait si la
+       facture qui avait repris cette dette existe encore */
+    if(!f || (f.reportee && typeof window.agvResteFacture !== 'function') || !factureACredit(f)) return;
     var c = (f.clientId !== undefined && f.clientId !== '') ? clientsParId[String(f.clientId)] : null;
     var nom = c ? c.nom : (f.clientNom || '');
     if(!String(nom).trim()) return;
@@ -31091,8 +31205,9 @@ function elements(){
     if(!d) return;
     var type = (d.type === 'fournisseur') ? 'fournisseur' : 'client';
     /* reflet d'une commande existante : deja compte par la commande */
-    if(type === 'fournisseur' && d.commandeId !== undefined && d.commandeId !== null
-       && commandesConnues[String(d.commandeId)]) return;
+    /* [AGV-39] le reflet d'une commande ne compte jamais seul : la commande
+       compte ; celle qui a ete supprimee n'a plus de dette */
+    if(type === 'fournisseur' && d.commandeId !== undefined && d.commandeId !== null && d.commandeId !== '') return;
     /* dette client qui double une facture existante */
     if(type === 'client'){
       var ref = (d.factureId !== undefined && d.factureId !== null) ? String(d.factureId)
@@ -35187,6 +35302,9 @@ function bloc(type, hoteId, titre){
   var zone = document.getElementById(hoteId);
   if(!zone) return;
   var l = lesDettes().filter(function(d){
+    /* [AGV-39] une dette qui double une facture, ou le reflet en double (ou
+       orphelin) d'une commande, n'est pas comptee */
+    if(typeof window.agvDetteComptee === 'function' && !window.agvDetteComptee(d)) return false;
     return (type === 'fournisseur') ? d.type === 'fournisseur' : d.type === 'client';
   });
   var total = l.reduce(function(s, d){ return s + Math.max(situation(d).reste, 0); }, 0);
@@ -35319,6 +35437,14 @@ function styleF(){
 }
 
 function soldeClient(id){
+  /* [AGV-39] la dette anterieure reprise sur une nouvelle facture est celle du
+     calcul juste : chaque facture une fois, les dettes deja reprises exclues */
+  try{
+    if(typeof window.agvDuFacturesClient === 'function'){
+      var juste = window.agvDuFacturesClient(id);
+      if(juste !== null && juste !== undefined) return juste;
+    }
+  }catch(e){}
   return lesFactures().filter(function(f){ return meme(f.clientId, id); })
     .reduce(function(s, f){ return s + nb(f.soldeRestant); }, 0);
 }
@@ -35631,8 +35757,14 @@ window.agvFactureValider = function(){
     paiements: factEnCours ? enTableau(factEnCours.paiements) : [],
     createdAt: factEnCours ? (factEnCours.createdAt || new Date().toISOString()) : new Date().toISOString()
   };
-  if(verse > 0){
-    fact.paiements = fact.paiements.concat([{ date: date, montant: verse,
+  /* [AGV-39] a la modification, « verse » contient le TOTAL deja paye : seul ce
+     qui depasse les versements deja inscrits est un nouveau versement. Avant,
+     tout le montant etait reinscrit et le paiement comptait deux fois. */
+  var nouveauVerse = factEnCours
+    ? verse - enTableau(factEnCours.paiements).reduce(function(s, p){ return s + nb(p && p.montant); }, 0)
+    : verse;
+  if(nouveauVerse > 0.5){
+    fact.paiements = fact.paiements.concat([{ date: date, montant: nouveauVerse,
       note: factEnCours ? 'Versement' : 'Versement initial', par: moi() }]);
   }
 
@@ -36324,12 +36456,21 @@ function chiffresDe(data, caisse){
   var produits = enTableau(data && data.products);
 
   var aPayer = 0, aRecevoir = 0;
+  /* [AGV-39] chaque dette une fois : factures sans double report, commandes
+     sans leur reflet, dettes doublant une facture ecartees */
+  var juste = null;
+  try{ if(typeof window.agvChiffresDettes === 'function') juste = window.agvChiffresDettes(data || {}); }catch(e){ juste = null; }
+  if(juste){
+    aPayer = juste.dettes;
+    aRecevoir = juste.creances;
+  }else{
   dettes.forEach(function(d){
     if(!d) return;
     if(d.type === 'fournisseur') aPayer += resteDette(d);
     else aRecevoir += resteDette(d);
   });
   factures.forEach(function(f){ aRecevoir += nb(f && f.soldeRestant); });
+  }
 
   var espece = 0, banque = 0;
   var conf = (caisse && caisse.config && caisse.config.moyens) || [];
@@ -39751,7 +39892,9 @@ window.agvStocks = function(){
 
 
 <!-- ==================================================================
-     App AGV — VERSION AGV-38 — fichier du 2026-10-10 16:10 UTC
+     App AGV — VERSION AGV-39 — fichier du 2026-10-12 15:40 UTC
+     (AGV-39 : dettes harmonisees, suppression multiple de ventes, reglages du fondateur,
+      pret de marchandises / de fonds, zone de facturation, ouverture instantanee ; module 32)
      (AGV-38 : onglet Personnel — Enregistrer, fondateur protege et modifiable, droits appliques ;
       portail du gerant, Administration et Direction reservees au fondateur ; modules 30 et 31)
 
@@ -39769,7 +39912,7 @@ window.agvStocks = function(){
      modifiee, seule sa couleur change.
 
      VERSION : la console doit afficher
-        AGV AGV-38   fichier du 2026-10-10 16:10 UTC — 27 modules
+        AGV AGV-39   fichier du 2026-10-12 15:40 UTC — 27 modules
 
       1. agv-version           : repere de version
       2. agv-performance       : sauvegarde differentielle ; cache des soldes clients oubliable
@@ -39810,8 +39953,8 @@ window.agvStocks = function(){
 (function () {
   'use strict';
   var V = {
-    version: 'AGV-38',
-    date: '2026-10-10 16:10 UTC',
+    version: 'AGV-39',
+    date: '2026-10-12 15:40 UTC',
     modules: 27,
     corrections: [
       'empreinte : deux sels (agvc$ a l ecriture, agv$ a la verification)',
@@ -39844,7 +39987,15 @@ window.agvStocks = function(){
       'TOAST : visible au-dessus de la page Administration',
       'FONDATEUR : ses informations se modifient directement dans sa carte du Personnel',
       'PORTAIL DU GERANT : bouton Portail, ses boutiques en tuiles (remplace Mes boutiques)',
-      'ADMINISTRATION / DIRECTION : visibles mais refusees a tout autre que le fondateur'
+      'ADMINISTRATION / DIRECTION : visibles mais refusees a tout autre que le fondateur',
+      'VENTES : suppression multiple pour le fondateur et les personnes autorisees',
+      'REGLAGES du fondateur (portail, Administration) : nature de l operation sur les factures',
+      'FACTURE : pret de marchandises ou pret de fonds (si le reglage est active)',
+      'FACTURE : zone de facturation ; les articles sortent de la zone et du stock total',
+      'DETTES : calcul juste partout, bouton Harmoniser (clients, fournisseurs), annulable',
+      'DETTES : nouvelle facture -> les factures reprises ne comptent plus ; suppression -> elles reviennent',
+      'FACTURE MODIFIEE : le total deja paye n est plus reinscrit comme un nouveau versement',
+      'OUVERTURE INSTANTANEE des boutiques du gerant (portail) ; il n est jamais promu fondateur'
     ]
   };
   window.AGV_VERSION = V;
@@ -39855,7 +40006,7 @@ window.agvStocks = function(){
   V.etat = function () {
     var noms = ['AGV_PERF', 'AGV_FACT', 'AGV_PORTAIL', 'AGV_DETTES', 'AGV_RESET',
                 'AGV_FORFAIT', 'AGV_STABLE', 'AGV_LIER', 'AGV_GERANTS', 'AGV_CONNEXION',
-                'AGV_COMPTES', 'AGV_ACCES', 'AGV_CHOIX', 'AGV_ECRAN', 'AGV_AUDIT', 'AGV_DEST', 'AGV_MDP', 'AGV_SIMPLE', 'AGV_TRACE', 'AGV_BOUTON', 'AGV_ROLE', 'AGV_STOCK', 'AGV_SESSION', 'AGV_LICENCE', 'AGV_FACTURE', 'AGV_SOLDE', 'AGV_PERSONNEL', 'AGV_PORTAIL_GERANT'];
+                'AGV_COMPTES', 'AGV_ACCES', 'AGV_CHOIX', 'AGV_ECRAN', 'AGV_AUDIT', 'AGV_DEST', 'AGV_MDP', 'AGV_SIMPLE', 'AGV_TRACE', 'AGV_BOUTON', 'AGV_ROLE', 'AGV_STOCK', 'AGV_SESSION', 'AGV_LICENCE', 'AGV_FACTURE', 'AGV_SOLDE', 'AGV_PERSONNEL', 'AGV_PORTAIL_GERANT', 'AGV_39'];
     var absents = noms.filter(function (n) { return typeof window[n] !== 'object'; });
     console.log('Version ' + V.version + ' — fichier du ' + V.date);
     console.log(absents.length ? 'MODULES ABSENTS : ' + absents.join(', ')
@@ -51405,6 +51556,13 @@ window.agvStocks = function(){
     if (ouverte) { fermer(); toast('Vous etes dans cette boutique'); return; }
     var G = window.AGV_GERANTS;
     if (!G || typeof G.ouvrir !== 'function') { toast('Changement de boutique indisponible'); return; }
+    /* [AGV-39] ticket d'ouverture instantanee pour la page suivante */
+    try {
+      var tuile = document.querySelector('#agv-pg .tuile[data-bloc="' + bloc + '"] .s');
+      sessionStorage.setItem('agv_pg_ouverture', JSON.stringify({ nom: tuile ? tuile.textContent : '', bloc: bloc, t: Date.now() }));
+      /* la page ne s'est pas rechargee (acces refuse...) : le ticket tombe */
+      setTimeout(function () { try { sessionStorage.removeItem('agv_pg_ouverture'); } catch (e) {} }, 12000);
+    } catch (e) {}
     G.ouvrir(bloc);
   };
 
@@ -51537,4 +51695,1954 @@ window.agvStocks = function(){
   log('module actif — v' + API.version);
 })();
 </script>
+<!-- ============================================================
+     MODULE 32 — AGV-39 : DETTES HARMONISEES, SUPPRESSION MULTIPLE
+     DE VENTES, REGLAGES DU FONDATEUR, NATURE DU PRET, ZONE DE
+     FACTURATION
+     ------------------------------------------------------------
+     1. LES DETTES SE DOUBLAIENT OU DISPARAISSAIENT
+        L'ecran de facture (v38) reporte la dette du client dans la
+        nouvelle facture (« dette anterieure ») SANS solder les
+        factures precedentes : chaque solde etait donc compte une
+        fois de plus a chaque facture. A l'inverse, supprimer une
+        facture qui avait repris des dettes laissait les factures
+        absorbees a zero : la dette disparaissait. Modifier une
+        facture reinscrivait aussi le total deja paye comme un
+        nouveau versement.
+        LE CALCUL JUSTE, applique partout (liste des clients,
+        nouvelle facture, Versements, Direction) :
+          dette d'une facture = articles - remise + frais - paye
+          + les dettes qu'elle a reprises, qui ne comptent plus
+            sur les factures d'origine ;
+          une dette saisie a part qui double une facture n'est pas
+          comptee ; une commande fournisseur compte une fois, son
+          reflet dans les dettes n'ajoute rien.
+        Le bouton « Harmoniser les dettes » montre l'affiche, le
+        juste et l'ecart, puis recale les factures (anciennes
+        valeurs gardees dans _harmo, annulation possible).
+     2. SUPPRESSION MULTIPLE DE VENTES (fondateur, ou case
+        « Supprimer un enregistrement »).
+     3. REGLAGES du fondateur (portail et Administration) :
+        « nature de l'operation » sur les factures.
+     4. PRET DE MARCHANDISES / PRET DE FONDS sur la facture.
+     5. ZONE DE FACTURATION : avec plusieurs stocks, la facture
+        choisit sa zone et en sort les articles, comme une vente.
+
+     Champs ajoutes, tous facultatifs : info/reglages,
+     facture.nature, facture.stockSorti, facture.zoneFacturation,
+     facture._harmo, ligne.lieuId / ligne.ref. Rien d'autre.
+     ============================================================ -->
+<style>
+#agv39-lot{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:9px 11px;margin-bottom:10px;
+  border:1px solid var(--border,rgba(37,99,235,.3));border-radius:9px;background:var(--surface2,#060d24);font-size:12.5px}
+#agv39-lot label{display:flex;align-items:center;gap:7px;cursor:pointer;font-weight:600}
+#agv39-lot input{width:18px;height:18px;cursor:pointer}
+.agv39-cv{width:20px;height:20px;flex:0 0 auto;cursor:pointer;accent-color:#dc2626}
+.agv39-cv-on{outline:2px solid rgba(220,38,38,.55);outline-offset:-2px}
+#agv38-fact .agv39-nat{display:flex;flex-direction:column;align-items:flex-start;gap:2px;text-align:left;
+  background:#fff;color:#0f172a;border:2px solid #cbd5e1;padding:11px 13px}
+#agv38-fact .agv39-nat span{font-size:11.5px;font-weight:500;color:#64748b}
+#agv38-fact .agv39-nat.on{border-color:#1d4ed8;background:#eff6ff;color:#1d4ed8}
+#agv38-fact #agv39-dispo{font-size:12px;color:#475569;margin-top:6px;min-height:16px}
+.agv39-badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:10.5px;font-weight:700;margin:2px 4px 0 0}
+.agv39-b-f{background:rgba(234,88,12,.14);color:#c2410c}
+.agv39-b-m{background:rgba(37,99,235,.12);color:#1d4ed8}
+.agv39-b-z{background:rgba(22,163,74,.12);color:#15803d}
+#agv39-harmo{position:fixed;inset:0;z-index:99996;background:rgba(15,23,42,.62);display:flex;align-items:center;
+  justify-content:center;padding:12px;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+#agv39-harmo *{box-sizing:border-box}
+#agv39-harmo .box{background:#fff;color:#0f172a;border-radius:16px;width:100%;max-width:860px;max-height:92vh;
+  display:flex;flex-direction:column;overflow:hidden;box-shadow:0 18px 50px rgba(0,0,0,.35)}
+#agv39-harmo .top{padding:15px 18px;border-bottom:1px solid #e2e8f0;display:flex;justify-content:space-between;gap:12px;align-items:flex-start}
+#agv39-harmo .top h2{margin:0;font-size:17px;font-weight:800}
+#agv39-harmo .body{padding:14px 18px;overflow-y:auto;-webkit-overflow-scrolling:touch;flex:1}
+#agv39-harmo .ong{display:flex;gap:6px;margin-bottom:12px}
+#agv39-harmo .ong button{flex:1;padding:9px;border:1px solid #cbd5e1;border-radius:9px;background:#f8fafc;
+  font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;color:#334155}
+#agv39-harmo .ong button.on{background:#1d4ed8;border-color:#1d4ed8;color:#fff}
+#agv39-harmo .chif{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px}
+#agv39-harmo .chif div{background:#f1f5f9;border-radius:10px;padding:10px;text-align:center}
+#agv39-harmo .chif .l{font-size:10.5px;text-transform:uppercase;color:#64748b;font-weight:700}
+#agv39-harmo .chif .v{font-size:15px;font-weight:800;margin-top:3px}
+#agv39-harmo table{width:100%;border-collapse:collapse;font-size:12.5px}
+#agv39-harmo th{background:#f1f5f9;color:#475569;padding:7px 9px;text-align:left;font-size:11px}
+#agv39-harmo td{padding:7px 9px;border-bottom:1px solid #eef2f7}
+#agv39-harmo .num{text-align:right;white-space:nowrap}
+#agv39-harmo .ano{font-size:12px;line-height:1.55;padding:7px 10px;border-left:3px solid #f59e0b;background:#fffbeb;
+  margin-bottom:6px;border-radius:0 8px 8px 0;color:#78350f}
+#agv39-harmo .ok{padding:18px 6px;text-align:center;color:#15803d;font-weight:700}
+#agv39-harmo .formule{margin-top:14px;padding:11px 13px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;
+  font-size:12px;line-height:1.65;color:#334155}
+#agv39-harmo .foot{padding:12px 18px;border-top:1px solid #e2e8f0;display:flex;gap:9px;flex-wrap:wrap;justify-content:flex-end}
+#agv39-harmo .foot button{padding:10px 15px;border-radius:10px;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;
+  border:1px solid #cbd5e1;background:#fff;color:#334155}
+#agv39-harmo .foot .go{background:#15803d;border-color:#15803d;color:#fff}
+#agv39-harmo .foot .go[disabled]{opacity:.5;cursor:not-allowed}
+#agv39-harmo .msg{font-size:12.5px;font-weight:700;padding:8px 0 0}
+#agv39-dettes-alerte{padding:11px 13px;margin-bottom:12px;background:rgba(245,158,11,.12);border:1px solid #f59e0b;
+  border-radius:10px;font-size:13px;color:#b45309;line-height:1.55}
+#agv39-dettes-alerte button{margin-left:10px;padding:5px 12px;border:none;border-radius:8px;background:#b45309;color:#fff;
+  font-family:inherit;font-size:12px;font-weight:700;cursor:pointer}
+#agv-dettes-alerte{display:none!important}
+#agv39-reg .carte{background:#fff;border:1px solid #dbe3ec;border-radius:13px;padding:16px;margin-bottom:13px}
+#agv39-reg .carte h3{margin:0 0 6px;font-size:14px;font-weight:800}
+#agv39-reg .carte p{margin:0;font-size:12.5px;color:#475569;line-height:1.6}
+#agv39-reg .ligne{display:flex;justify-content:space-between;align-items:center;gap:14px;margin-top:12px;flex-wrap:wrap}
+#agv39-reg .interr{position:relative;width:52px;height:30px;flex:0 0 auto}
+#agv39-reg .interr input{opacity:0;width:0;height:0}
+#agv39-reg .interr span{position:absolute;inset:0;background:#cbd5e1;border-radius:999px;cursor:pointer;transition:.15s}
+#agv39-reg .interr span:before{content:"";position:absolute;width:24px;height:24px;left:3px;top:3px;background:#fff;
+  border-radius:50%;transition:.15s;box-shadow:0 1px 3px rgba(0,0,0,.25)}
+#agv39-reg .interr input:checked+span{background:#16a34a}
+#agv39-reg .interr input:checked+span:before{transform:translateX(22px)}
+#agv39-reg .etat{font-size:12px;font-weight:700;margin-top:8px;min-height:16px}
+#agv39-reg .btn39{padding:9px 14px;border-radius:9px;border:1px solid #cbd5e1;background:#fff;font-family:inherit;
+  font-size:13px;font-weight:700;cursor:pointer;color:#1d4ed8}
+</style>
+<script>
+(function(){
+'use strict';
+
+var API = window.AGV_39 = { actif: true, version: '1.0' };
+
+/* ============================================================
+   OUTILS
+   ============================================================ */
+function nb(v){ var n = parseFloat(v); return isNaN(n) ? 0 : n; }
+function r2(v){ return Math.round(nb(v) * 100) / 100; }
+function esc(v){
+  if(v === null || v === undefined) return '';
+  return String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+                  .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+function argent(n){
+  try{ if(typeof window.fmtGNF === 'function') return window.fmtGNF(Math.round(nb(n))); }catch(e){}
+  return Math.round(nb(n)).toLocaleString('fr-FR') + ' GNF';
+}
+function toast(t){ try{ if(typeof window.showToast === 'function') window.showToast(t); }catch(e){} }
+function tab(v){
+  if(!v) return [];
+  if(Array.isArray(v)) return v.filter(Boolean);
+  try{ return Object.keys(v).map(function(k){ return v[k]; }).filter(Boolean); }catch(e){ return []; }
+}
+function meme(a, b){ return a !== null && a !== undefined && b !== null && b !== undefined && String(a) === String(b); }
+function norm(t){
+  var s = String(t || '').toLowerCase().trim();
+  try{ s = s.normalize('NFD').replace(/[̀-ͯ]/g, ''); }catch(e){}
+  return s.replace(/\s+/g, ' ');
+}
+/* les tableaux vivants de l'application (variables globales « let ») */
+function brut(nom){
+  try{
+    switch(nom){
+      case 'ventes': return ventes;
+      case 'factureVentes': return factureVentes;
+      case 'products': return products;
+      case 'clients': return clients;
+      case 'dettes': return dettes;
+      case 'commandes': return commandes;
+      case 'fournisseurs': return fournisseurs;
+    }
+  }catch(e){}
+  return window[nom];
+}
+function les(nom){ return tab(brut(nom)); }
+
+function role(){
+  try{ if(window.currentRole) return window.currentRole; }catch(e){}
+  try{ return currentRole; }catch(e){}
+  return null;
+}
+function gid(){
+  var g = window.currentGerantId;
+  try{ if(g === undefined) g = currentGerantId; }catch(e){}
+  return (g === undefined || g === null || g === '') ? null : g;
+}
+function uid(){ return (window._currentShop || {}).uid || null; }
+function fondateurEnTitre(){
+  var P = window.AGV_PORTAIL_GERANT;
+  try{ if(P && typeof P.fondateurEnTitre === 'function') return !!P.fondateurEnTitre(); }catch(e){}
+  return role() === 'fondateur' && gid() === null;
+}
+function peut(cle){
+  if(fondateurEnTitre()) return true;
+  try{ if(typeof window.agvActionPermise === 'function') return !!window.agvActionPermise(cle); }catch(e){}
+  return false;
+}
+function moi(){
+  try{
+    var p = (typeof window.agvPersonneConnectee === 'function') ? window.agvPersonneConnectee() : null;
+    if(p && p.nom) return p.nom;
+  }catch(e){}
+  if(fondateurEnTitre()) return 'Fondateur';
+  try{
+    var g = (typeof window.getCurrentGerant === 'function') ? window.getCurrentGerant() : null;
+    if(g && g.nom) return g.nom;
+  }catch(e){}
+  return '—';
+}
+function enregistrer(){
+  try{ if(typeof window.saveAll === 'function') return window.saveAll(); }catch(e){}
+  try{ if(typeof window.sauvegarderFirebase === 'function') window.sauvegarderFirebase(); }catch(e){}
+}
+function journal(a, d){ try{ if(typeof window.agvJournaliser === 'function') window.agvJournaliser(a, d); }catch(e){} }
+function refBrut(p){
+  if(typeof window._agvRefBrut === 'function') return window._agvRefBrut(p);
+  return (window.db && window.db.ref) ? window.db.ref(p) : null;
+}
+function refBloc(p){ return (window.db && typeof window.db.ref === 'function') ? window.db.ref(p) : null; }
+function redessiner(noms){
+  (noms || ['renderFacturesList', 'renderClientsListe', 'renderDashboard']).forEach(function(f){
+    try{ if(typeof window[f] === 'function') window[f](); }catch(e){}
+  });
+  try{ if(typeof window.agvSituationsDettes === 'function') window.agvSituationsDettes(); }catch(e){}
+}
+function numeroDe(f){ return f ? String(f.numero || f.no || f.id || '') : ''; }
+
+/* ============================================================
+   1. LE CALCUL JUSTE DES DETTES
+   ============================================================ */
+function baseF(f){
+  var t = f.totalLignes;
+  if(t === undefined || t === null || t === '') t = tab(f.lignes).reduce(function(s, l){ return s + nb(l && l.total); }, 0);
+  return r2(nb(t) - nb(f.remise) + nb(f.frais));
+}
+function sommeP(l){ return tab(l).reduce(function(s, p){ return s + nb(p && p.montant); }, 0); }
+/* le montant paye : tous les ecrans tiennent montantPaye a jour ; la liste des
+   versements, elle, a recu des doubles lors des modifications de facture */
+function payeF(f){
+  var m = f.montantPaye;
+  if(m !== undefined && m !== null && m !== '' && !isNaN(parseFloat(m))) return r2(m);
+  return r2(sommeP(f.paiements));
+}
+function tempsF(f){
+  var t = f && (f.createdAt || f.dateSaisie || f.dateOp || f.date);
+  var d = t ? new Date(t).getTime() : NaN;
+  if(isNaN(d)){
+    var n = parseFloat(String((f && f.id) || '').replace(/^\D+/, ''));
+    d = isNaN(n) ? 0 : n;
+  }
+  return d;
+}
+function idNum(f){ var n = parseFloat(String((f && f.id) || '').replace(/^\D+/, '')); return isNaN(n) ? 0 : n; }
+/* une facture « reprend » la dette anterieure quand elle en porte une et que son
+   total n'est pas celui de ses seuls articles (sinon la dette n'y est qu'affichee) */
+function reportante(f, b){ return nb(f.dettePrecedente) > 0.5 && Math.abs(nb(f.montantTotal) - b) > 0.5; }
+/* le montant PROPRE d'une facture, tel que l'ecran qui l'a enregistree l'a calcule */
+function propreF(f, b, rep){
+  var mt = f.montantTotal;
+  if(mt === undefined || mt === null || mt === '' || isNaN(parseFloat(mt))) return b;
+  return rep ? r2(nb(mt) - nb(f.dettePrecedente)) : r2(mt);
+}
+function lignesCle(f){
+  return tab(f.lignes).map(function(l){ return [String(l.produit || l.designation || ''), nb(l.qte || l.qty), nb(l.prixU), nb(l.total)]; });
+}
+function resteD(d){ return Math.max(0, r2(nb(d.montant) - sommeP(d.paiements))); }
+function montantRecu(c){
+  return tab(c.lignes).reduce(function(s, l){
+    if(l.statut === 'non-recu') return s;
+    return s + nb(l.qteRecue) * nb(l.prixU);
+  }, 0);
+}
+function totalCommande(c){ return nb(c.montantTotal) > 0 ? nb(c.montantTotal) : montantRecu(c); }
+
+/* le registre : chaque dette comptee une fois, d'ou qu'elle vienne */
+function registre(src){
+  src = src || {};
+  var F = tab(src.factureVentes), D = tab(src.dettes), C = tab(src.commandes);
+  var CL = tab(src.clients), FO = tab(src.fournisseurs);
+  var nomsCli = {}; CL.forEach(function(c){ if(c && c.id !== undefined) nomsCli[String(c.id)] = c.nom || ''; });
+  var cliParNom = {}; CL.forEach(function(c){ if(c && c.nom) cliParNom[norm(c.nom)] = String(c.id); });
+  var nomsFo = {}; FO.forEach(function(f){ if(f && f.id !== undefined) nomsFo[String(f.id)] = f.nom || ''; });
+  var foParNom = {}; FO.forEach(function(f){ if(f && f.nom) foParNom[norm(f.nom)] = String(f.id); });
+
+  var R = {
+    parObjet: new Map(), clients: {}, entrees: [], doublons: [], anomalies: [],
+    facturesAffiche: 0, facturesJuste: 0, passageJuste: 0,
+    dettesClient: 0, dettesClientDoublons: [], autresDettes: 0, exclues: new Set(),
+    fournisseurs: {}, fournAffiche: 0, fournJuste: 0, commandesJuste: 0, fournManuel: 0, miroirsSuspects: []
+  };
+  function fiche(cid, nom){
+    if(!R.clients[cid]) R.clients[cid] = { cid: cid, nom: nom || nomsCli[cid] || ('Client ' + cid),
+      affiche: 0, juste: 0, achats: 0, factures: 0, dettes: 0, anomalies: 0 };
+    return R.clients[cid];
+  }
+  function ano(type, texte, montant, cid){
+    R.anomalies.push({ type: type, texte: texte, montant: montant || 0, cid: cid || null });
+    if(cid && R.clients[cid]) R.clients[cid].anomalies++;
+  }
+
+  /* --- factures : doublons, puis chaine de chaque client --- */
+  var tri = F.filter(function(f){ return f && typeof f === 'object'; })
+             .slice().sort(function(a, b){ return (tempsF(a) - tempsF(b)) || (idNum(a) - idNum(b)); });
+  var vus = {}, parNumero = {}, groupes = {}, ordre = [];
+  tri.forEach(function(f){
+    var cidF = (f.clientId === undefined || f.clientId === null || f.clientId === '') ? null : String(f.clientId);
+    if(cidF) fiche(cidF, f.clientNom).affiche += nb(f.soldeRestant);
+    R.facturesAffiche += nb(f.soldeRestant);
+    if(f.doublonDe !== undefined && f.doublonDe !== null && f.doublonDe !== ''){
+      R.parObjet.set(f, { f: f, doublon: true, reste: 0 });
+      return;
+    }
+    var id = String(f.id);
+    if(vus[id]){ R.doublons.push({ f: f, de: vus[id], raison: 'meme identifiant' }); R.parObjet.set(f, { f: f, doublon: true, reste: 0 }); return; }
+    vus[id] = f;
+    var num = (f.numero || f.no) ? String(f.numero || f.no) : '';
+    if(num){
+      var k = num + '|' + (cidF || '');
+      var g = parNumero[k];
+      if(g && Math.abs(baseF(g) - baseF(f)) < 0.5 && JSON.stringify(lignesCle(g)) === JSON.stringify(lignesCle(f))){
+        R.doublons.push({ f: f, de: g, raison: 'meme numero ' + num });
+        R.parObjet.set(f, { f: f, doublon: true, reste: 0 });
+        return;
+      }
+      if(!g) parNumero[k] = f;
+    }
+    var cle = cidF ? 'c:' + cidF : 'p:' + id;
+    if(!groupes[cle]){ groupes[cle] = []; ordre.push(cle); }
+    groupes[cle].push(f);
+  });
+  R.doublons.forEach(function(x){
+    var cid = (x.f.clientId === undefined || x.f.clientId === null || x.f.clientId === '') ? null : String(x.f.clientId);
+    ano('doublon', 'Facture ' + numeroDe(x.f) + ' (' + (x.f.clientNom || 'client') + ') enregistree deux fois ('
+      + x.raison + ') : comptee une seule fois.', nb(x.f.soldeRestant), cid);
+  });
+
+  ordre.forEach(function(cle){
+    var liste = groupes[cle];
+    var cid = cle.indexOf('c:') === 0 ? cle.slice(2) : null;
+    var ouverts = [];
+    liste.forEach(function(f){
+      var b = baseF(f), p = payeF(f);
+      var rep = !!cid && reportante(f, b);
+      var propre = propreF(f, b, rep);
+      var porte = 0;
+      if(rep){
+        ouverts.forEach(function(o){ porte += o.reste; o.absorbee = true; o.vers = f; });
+        ouverts = [];
+      }
+      porte = r2(porte);
+      var total = r2(propre + (rep ? porte : 0));
+      var reste = r2(total - p), trop = 0;
+      if(reste < 0){ trop = -reste; reste = 0; }
+      var e = { f: f, cid: cid, base: b, propre: propre, paye: p, rep: rep, porte: porte, total: total,
+                reste: reste, trop: trop, absorbee: false, vers: null };
+      R.entrees.push(e);
+      R.parObjet.set(f, e);
+      if(reste > 0.5) ouverts.push(e);
+
+      /* ce qui merite d'etre vu */
+      var pm = tab(f.paiements);
+      if(pm.length && Math.abs(sommeP(pm) - p) > 0.5){
+        var dbl = '';
+        for(var i = 1; i < pm.length; i++){
+          var avant = 0;
+          for(var j = 0; j < i; j++) avant += nb(pm[j] && pm[j].montant);
+          if(pm[i] && pm[i].note === 'Versement' && avant > 0.5 && Math.abs(nb(pm[i].montant) - avant) < 0.5){ dbl = ' — un versement semble inscrit deux fois (modification de la facture)'; break; }
+        }
+        ano('paiements', 'Facture ' + numeroDe(f) + ' (' + (f.clientNom || 'client') + ') : versements inscrits '
+          + argent(sommeP(pm)) + ', montant paye retenu ' + argent(p) + dbl + '.', 0, cid);
+      }
+      if(trop > 0.5){
+        ano('trop', 'Facture ' + numeroDe(f) + ' (' + (f.clientNom || 'client') + ') : ' + argent(trop)
+          + ' paye(s) en plus du du — la facture est soldee, l\'excedent n\'est pas impute ailleurs.', trop, cid);
+      }
+      if(Math.abs(propre - b) > 0.5){
+        ano('total', 'Facture ' + numeroDe(f) + ' (' + (f.clientNom || 'client') + ') : montant enregistre '
+          + argent(propre) + ', articles ' + argent(b) + ' — le montant enregistre est garde, a verifier.', 0, cid);
+      }
+    });
+    liste.forEach(function(f){
+      var e = R.parObjet.get(f);
+      var du = e.absorbee ? 0 : e.reste;
+      if(cid){
+        var c = fiche(cid, f.clientNom);
+        c.juste = r2(c.juste + du);
+        c.factures++;
+        if(f.nature !== 'fonds') c.achats = r2(c.achats + e.propre);
+        R.facturesJuste += du;
+      }else{
+        R.passageJuste += du;
+      }
+    });
+  });
+
+  /* --- dettes saisies a part --- */
+  var factConnues = {};
+  F.forEach(function(f){
+    if(!f) return;
+    factConnues[String(f.id)] = true;
+    if(f.numero) factConnues[String(f.numero)] = true;
+    if(f.no) factConnues[String(f.no)] = true;
+  });
+  var cmdConnues = {};
+  C.forEach(function(c){ if(c) cmdConnues[String(c.id)] = c; });
+  var miroirVu = {};
+
+  function foDe(id, nom){
+    var k = (id !== undefined && id !== null && id !== '' && nomsFo[String(id)] !== undefined) ? String(id)
+          : (foParNom[norm(nom)] || ('n:' + norm(nom)));
+    if(!R.fournisseurs[k]) R.fournisseurs[k] = { cle: k, nom: nomsFo[k] || nom || 'Fournisseur', affiche: 0, juste: 0, anomalies: 0 };
+    return R.fournisseurs[k];
+  }
+
+  D.forEach(function(d){
+    if(!d) return;
+    var r = resteD(d);
+    if(d.type === 'fournisseur'){
+      if(d.commandeId !== undefined && d.commandeId !== null && d.commandeId !== ''){
+        var c = cmdConnues[String(d.commandeId)];
+        if(!c){
+          R.exclues.add(d);
+          if(r > 0.5){
+            R.miroirsSuspects.push(d);
+            var fo0 = foDe(d.fournisseurId, d.nom); fo0.anomalies++;
+            ano('orphelin', 'Dette de ' + (d.nom || 'fournisseur') + ' (' + argent(r) + ') : sa commande a ete supprimee — '
+              + 'elle n\'est plus comptee.', r);
+          }
+          return;
+        }
+        if(miroirVu[String(d.commandeId)]){
+          R.exclues.add(d);
+          var fo1 = foDe(c.fournisseurId, c.fournisseurNom || d.nom); fo1.anomalies++;
+          ano('miroir', 'La commande de ' + (d.nom || c.fournisseurNom || 'fournisseur') + ' du '
+            + new Date(c.date || 0).toLocaleDateString('fr-FR') + ' a deux reflets dans les dettes : un seul compte.', r);
+          return;
+        }
+        miroirVu[String(d.commandeId)] = true;
+        return;                                   /* la commande compte, pas son reflet */
+      }
+      var fo = foDe(d.fournisseurId, d.nom);
+      fo.affiche = r2(fo.affiche + r);
+      fo.juste = r2(fo.juste + r);
+      R.fournManuel += r;
+      return;
+    }
+    if(d.type === 'client'){
+      var ref = (d.factureId !== undefined && d.factureId !== null) ? String(d.factureId)
+              : ((d.factureNo !== undefined && d.factureNo !== null) ? String(d.factureNo) : null);
+      if(ref !== null && factConnues[ref]){
+        R.exclues.add(d);
+        R.dettesClientDoublons.push(d);
+        if(r > 0.5) ano('dette-double', 'Dette de ' + (d.nom || 'client') + ' (' + argent(r)
+          + ') saisie a part alors que la facture ' + ref + ' la porte deja : non comptee.', r);
+        return;
+      }
+      R.dettesClient += r;
+      var cidD = (d.clientId !== undefined && d.clientId !== null && d.clientId !== '') ? String(d.clientId) : cliParNom[norm(d.nom)];
+      if(cidD){ var fc = fiche(cidD, d.nom); fc.dettes = r2(fc.dettes + r); }
+      return;
+    }
+    R.autresDettes += r;
+  });
+
+  /* --- commandes fournisseurs --- */
+  C.forEach(function(c){
+    if(!c) return;
+    var tot = totalCommande(c);
+    if(tot <= 0) return;
+    var p = sommeP(c.paiements);
+    var du = r2(tot - p);
+    var fo = foDe(c.fournisseurId, c.fournisseurNom);
+    var aff = (c.soldeRestant !== undefined && c.soldeRestant !== null && c.soldeRestant !== '')
+            ? Math.max(0, nb(c.soldeRestant)) : Math.max(0, du);
+    fo.affiche = r2(fo.affiche + aff);
+    fo.juste = r2(fo.juste + Math.max(0, du));
+    R.commandesJuste += Math.max(0, du);
+    if(du < -0.5){ fo.anomalies++; ano('avance', 'Commande de ' + fo.nom + ' du ' + new Date(c.date || 0).toLocaleDateString('fr-FR')
+      + ' : ' + argent(-du) + ' verses en plus du montant — avance au fournisseur.', -du); }
+    if(c.montantPaye !== undefined && Math.abs(nb(c.montantPaye) - p) > 0.5){
+      fo.anomalies++;
+      ano('cmd-paye', 'Commande de ' + fo.nom + ' du ' + new Date(c.date || 0).toLocaleDateString('fr-FR')
+        + ' : montant paye inscrit ' + argent(c.montantPaye) + ', versements ' + argent(p) + '.', 0);
+    }
+  });
+
+  Object.keys(R.fournisseurs).forEach(function(k){ var f = R.fournisseurs[k]; R.fournAffiche += f.affiche; R.fournJuste += f.juste; });
+  R.fournJuste = r2(R.fournJuste); R.fournAffiche = r2(R.fournAffiche);
+  R.facturesJuste = r2(R.facturesJuste); R.facturesAffiche = r2(R.facturesAffiche);
+  R.creancesJuste = r2(R.facturesJuste + R.passageJuste + R.dettesClient + R.autresDettes);
+  return R;
+}
+API.registre = registre;
+
+/* registre des donnees vivantes, recalcule seulement quand elles changent */
+var memo = { cle: null, R: null };
+function empreinte(){
+  var f = brut('factureVentes'), d = brut('dettes'), c = brut('commandes');
+  var lf = tab(f), ld = tab(d), lc = tab(c);
+  var s = 0;
+  for(var i = 0; i < lf.length; i++){
+    var x = lf[i];
+    var np = x.paiements ? (x.paiements.length !== undefined ? x.paiements.length : Object.keys(x.paiements).length) : 0;
+    s += (i + 1) * (nb(x.soldeRestant) * 3 + nb(x.montantPaye) * 7 + nb(x.montantTotal) * 11 + nb(x.dettePrecedente) * 13
+      + nb(x.totalLignes) * 17 + (x.reportee ? 19 : 0) + np * 23 + (x.doublonDe ? 29 : 0))
+      + String(x.id).length * 31 + String(x.clientId).length;
+  }
+  for(var j = 0; j < ld.length; j++){
+    var y = ld[j];
+    s += (j + 1) * (nb(y.montant) * 3 + sommeP(y.paiements) * 5) + String(y.type).length;
+  }
+  for(var k = 0; k < lc.length; k++){
+    var z = lc[k];
+    s += (k + 1) * (nb(z.montantTotal) * 3 + sommeP(z.paiements) * 5 + nb(z.soldeRestant) * 7);
+  }
+  return lf.length + '|' + ld.length + '|' + lc.length + '|' + les('clients').length + '|' + s;
+}
+function vivant(){
+  return { factureVentes: brut('factureVentes'), dettes: brut('dettes'), commandes: brut('commandes'),
+           clients: brut('clients'), fournisseurs: brut('fournisseurs') };
+}
+function registreVivant(){
+  var k = empreinte();
+  if(memo.cle === k && memo.R) return memo.R;
+  memo.R = registre(vivant());
+  memo.cle = k;
+  return memo.R;
+}
+function oublier(){ memo.cle = null; memo.R = null; try{ if(window.AGV_PERF && window.AGV_PERF.oublierIndex) window.AGV_PERF.oublierIndex(); }catch(e){} }
+API.registreVivant = registreVivant;
+API.oublier = oublier;
+
+/* ---- les formules de l'application passent par le calcul juste ---- */
+function duFacturesClient(cid){
+  var c = registreVivant().clients[String(cid)];
+  return c ? Math.max(0, c.juste) : 0;
+}
+window.agvDuFacturesClient = function(cid){ return API.actif ? duFacturesClient(cid) : null; };
+window.agvResteFacture = function(f){
+  if(!API.actif || !f) return null;
+  var e = registreVivant().parObjet.get(f);
+  if(!e) return null;
+  return (e.doublon || e.absorbee) ? 0 : e.reste;
+};
+window.agvDetteComptee = function(d){ return !API.actif || !registreVivant().exclues.has(d); };
+window.agvChiffresDettes = function(data){
+  if(!API.actif) return null;
+  var R = registre({ factureVentes: data && data.factureVentes, dettes: data && data.dettes,
+                     commandes: data && data.commandes, clients: data && data.clients,
+                     fournisseurs: data && data.fournisseurs });
+  return { dettes: R.fournJuste, creances: R.creancesJuste };
+};
+
+(function poserFormules(){
+  function poser(){
+    var ok = true;
+    var g = window.getSoldeClient;
+    if(typeof g !== 'function') ok = false;
+    else if(!g.__agv39){
+      var n = function(cid){
+        if(!API.actif) return (g.__agvOrig || g)(cid);
+        try{ return duFacturesClient(cid); }catch(e){ return g(cid); }
+      };
+      n.__agv39 = true; n.__agvWrapped = true; n.__agvOrig = g.__agvOrig || g;
+      window.getSoldeClient = n;
+    }
+    var a = window.getTotalAchatsClient;
+    if(typeof a !== 'function') ok = false;
+    else if(!a.__agv39){
+      var m = function(cid){
+        if(!API.actif) return (a.__agvOrig || a)(cid);
+        try{ var c = registreVivant().clients[String(cid)]; return c ? c.achats : 0; }catch(e){ return a(cid); }
+      };
+      m.__agv39 = true; m.__agvWrapped = true; m.__agvOrig = a.__agvOrig || a;
+      window.getTotalAchatsClient = m;
+    }
+    if(!ok) setTimeout(poser, 600);
+  }
+  poser();
+  /* une autre couche qui reposerait les siennes est recouverte */
+  setInterval(function(){
+    try{
+      if(window.getSoldeClient && !window.getSoldeClient.__agv39) poser();
+      if(window.getTotalAchatsClient && !window.getTotalAchatsClient.__agv39) poser();
+    }catch(e){}
+  }, 3000);
+})();
+
+/* ============================================================
+   2. HARMONISER : recaler les factures sur le calcul juste
+   ============================================================ */
+var CHAMPS_H = ['dettePrecedente', 'montantTotal', 'soldeRestant', 'statut', 'reportee', 'reporteVers', 'doublonDe'];
+function different(a, b){
+  if(typeof b === 'number') return Math.abs(nb(a) - b) > 0.5 || a === undefined || a === null || a === '';
+  if(typeof b === 'boolean') return !!a !== b;
+  return String(a === undefined || a === null ? '' : a) !== String(b === undefined || b === null ? '' : b);
+}
+function cible(e){
+  var c = {};
+  /* seule une facture qui reprend la dette voit sa dette anterieure et son total
+     recales ; le montant propre d'une facture n'est jamais modifie */
+  if(e.rep){ c.dettePrecedente = e.porte; c.montantTotal = e.total; }
+  if(e.absorbee){
+    c.soldeRestant = 0; c.reportee = true; c.reporteVers = numeroDe(e.vers); c.statut = 'reporte';
+  }else{
+    c.soldeRestant = e.reste;
+    c.statut = e.reste <= 0.5 ? 'paye' : (e.paye > 0.5 ? 'partiel' : 'impaye');
+    if(e.f.reportee) c.reportee = false;
+    if(e.f.reporteVers) c.reporteVers = null;
+  }
+  return c;
+}
+function appliquer(f, c, T){
+  var diff = Object.keys(c).filter(function(k){ return different(f[k], c[k]); });
+  /* le statut et le renvoi suivent les montants : seuls, ils ne justifient pas de recaler */
+  if(!diff.filter(function(k){ return k !== 'statut' && k !== 'reporteVers'; }).length) return false;
+  if(!f._harmo || f._harmo.le !== T){
+    var av = {};
+    CHAMPS_H.forEach(function(k){ av[k] = (f[k] === undefined) ? null : f[k]; });
+    f._harmo = { le: T, par: moi(), avant: av };
+  }
+  diff.forEach(function(k){
+    if(c[k] === null) delete f[k];
+    else f[k] = c[k];
+  });
+  return true;
+}
+function harmoniserClients(filtreCid, motif){
+  var R = registre(vivant());
+  var T = Date.now(), n = 0;
+  R.entrees.forEach(function(e){
+    if(filtreCid !== undefined && filtreCid !== null && !meme(e.f.clientId, filtreCid)) return;
+    if(appliquer(e.f, cible(e), T)) n++;
+  });
+  R.doublons.forEach(function(x){
+    if(filtreCid !== undefined && filtreCid !== null && !meme(x.f.clientId, filtreCid)) return;
+    if(appliquer(x.f, { soldeRestant: 0, doublonDe: String(x.de.id) }, T)) n++;
+  });
+  if(n){
+    enregistrer();
+    oublier();
+    journal(motif || 'Harmonisation des dettes clients', n + ' facture(s) recalculee(s) — creances '
+      + argent(R.facturesAffiche) + ' -> ' + argent(R.facturesJuste + R.passageJuste) + ' — par ' + moi());
+  }
+  return { n: n, avant: R.facturesAffiche, apres: r2(R.facturesJuste + R.passageJuste) };
+}
+API.harmoniserClients = harmoniserClients;
+
+function harmoniserFournisseurs(){
+  var avant = registre(vivant());
+  var n = 0;
+  try{ if(typeof window.agvRecalculerFournisseurs === 'function') n = window.agvRecalculerFournisseurs() || 0; }catch(e){}
+  oublier();
+  var apres = registre(vivant());
+  if(Math.abs(avant.fournAffiche - apres.fournAffiche) > 0.5){
+    journal('Harmonisation des dettes fournisseurs', n + ' commande(s) recalculee(s) — '
+      + argent(avant.fournAffiche) + ' -> ' + argent(apres.fournAffiche) + ' — par ' + moi());
+  }
+  return { n: n, avant: avant.fournAffiche, apres: apres.fournAffiche };
+}
+
+function derniereHarmo(){
+  var le = 0;
+  les('factureVentes').forEach(function(f){ if(f._harmo && nb(f._harmo.le) > le) le = nb(f._harmo.le); });
+  return le;
+}
+function annulerHarmo(){
+  var le = derniereHarmo();
+  if(!le) return 0;
+  var n = 0;
+  les('factureVentes').forEach(function(f){
+    if(!f._harmo || nb(f._harmo.le) !== le) return;
+    /* la base ne garde pas les valeurs vides : un champ absent de « avant »
+       n'existait pas avant l'harmonisation */
+    var av = f._harmo.avant || {};
+    CHAMPS_H.forEach(function(k){
+      var x = (k in av) ? av[k] : null;
+      if(x === null || x === undefined) delete f[k];
+      else f[k] = x;
+    });
+    delete f._harmo;
+    n++;
+  });
+  if(n){
+    enregistrer(); oublier();
+    journal('Harmonisation des dettes annulee', n + ' facture(s) remises comme avant — par ' + moi());
+  }
+  return n;
+}
+API.annulerHarmonisation = annulerHarmo;
+
+/* ---- le panneau ---- */
+var ongletH = 'clients';
+function peutHarmoniser(){ return fondateurEnTitre() || peut('permEdit'); }
+
+window.agvHarmoniserDettes = function(onglet){
+  if(onglet) ongletH = onglet;
+  var vieux = document.getElementById('agv39-harmo');
+  if(vieux) vieux.remove();
+  oublier();
+  var R = registreVivant();
+  var ov = document.createElement('div');
+  ov.id = 'agv39-harmo';
+  ov.innerHTML = '<div class="box">'
+    + '<div class="top"><div><h2>Harmoniser les dettes</h2>'
+      + '<div style="font-size:12.5px;color:#64748b;margin-top:2px">' + esc((window._currentShop || {}).entreprise || '')
+      + ' — chaque dette comptee une fois, ni doublee ni oubliee</div></div>'
+      + '<button onclick="agvHarmoFermer()" style="padding:7px 13px;border:1px solid #cbd5e1;border-radius:9px;'
+      + 'background:#f8fafc;font-family:inherit;font-size:13px;cursor:pointer">Fermer</button></div>'
+    + '<div class="body"><div class="ong">'
+      + '<button id="agv39-o-c" onclick="agvHarmoOnglet(\'clients\')">Clients</button>'
+      + '<button id="agv39-o-f" onclick="agvHarmoOnglet(\'fournisseurs\')">Fournisseurs</button></div>'
+      + '<div id="agv39-h-corps"></div>'
+      + '<div class="msg" id="agv39-h-msg"></div></div>'
+    + '<div class="foot" id="agv39-h-pied"></div></div>';
+  ov.onclick = function(e){ if(e.target === ov) ov.remove(); };
+  document.body.appendChild(ov);
+  rendreHarmo(R);
+};
+window.agvHarmoFermer = function(){ var o = document.getElementById('agv39-harmo'); if(o) o.remove(); };
+window.agvHarmoOnglet = function(o){ ongletH = o; rendreHarmo(registreVivant()); };
+
+function rendreHarmo(R){
+  var corps = document.getElementById('agv39-h-corps');
+  var pied = document.getElementById('agv39-h-pied');
+  if(!corps || !pied) return;
+  var oc = document.getElementById('agv39-o-c'), of = document.getElementById('agv39-o-f');
+  if(oc) oc.className = ongletH === 'clients' ? 'on' : '';
+  if(of) of.className = ongletH === 'fournisseurs' ? 'on' : '';
+  var droit = peutHarmoniser();
+  var h = '', aFaire = false;
+  if(ongletH === 'clients'){
+    var juste = r2(R.facturesJuste + R.passageJuste);
+    var ecart = r2(R.facturesAffiche - juste);
+    aFaire = Math.abs(ecart) >= 1 || R.doublons.length > 0 || besoinRecalage(R);
+    h += '<div class="chif"><div><div class="l">Affiche</div><div class="v">' + esc(argent(R.facturesAffiche)) + '</div></div>'
+      + '<div><div class="l">Calcul juste</div><div class="v" style="color:#15803d">' + esc(argent(juste)) + '</div></div>'
+      + '<div><div class="l">Ecart</div><div class="v" style="color:' + (Math.abs(ecart) >= 1 ? '#dc2626' : '#15803d') + '">'
+      + esc((ecart > 0 ? '+' : '') + argent(ecart)) + '</div></div></div>';
+    var l = Object.keys(R.clients).map(function(k){ return R.clients[k]; })
+      .filter(function(c){ return Math.abs(c.affiche - c.juste) >= 1 || c.anomalies; })
+      .sort(function(a, b){ return Math.abs(b.affiche - b.juste) - Math.abs(a.affiche - a.juste); });
+    if(l.length){
+      h += '<div style="overflow-x:auto"><table><thead><tr><th>Client</th><th class="num">Affiche</th>'
+        + '<th class="num">Juste</th><th class="num">Ecart</th></tr></thead><tbody>'
+        + l.slice(0, 60).map(function(c){
+            var e = r2(c.affiche - c.juste);
+            return '<tr><td>' + esc(c.nom) + (c.anomalies ? ' <span style="color:#b45309;font-size:11px">(' + c.anomalies + ' a verifier)</span>' : '')
+              + '</td><td class="num">' + esc(argent(c.affiche)) + '</td>'
+              + '<td class="num" style="font-weight:700;color:#15803d">' + esc(argent(c.juste)) + '</td>'
+              + '<td class="num" style="color:' + (Math.abs(e) >= 1 ? '#dc2626' : '#64748b') + '">'
+              + esc((e > 0 ? '+' : '') + argent(e)) + '</td></tr>';
+          }).join('') + '</tbody></table></div>'
+        + (l.length > 60 ? '<div style="font-size:11.5px;color:#64748b;margin-top:6px">' + (l.length - 60)
+            + ' autre(s) client(s) — tous seront traites.</div>' : '');
+    }else{
+      h += '<div class="ok">Les dettes des clients sont justes : aucune facture a recaler.</div>';
+    }
+    if(R.dettesClient > 0.5 || R.dettesClientDoublons.length){
+      h += '<div style="font-size:12.5px;color:#334155;margin-top:12px">Dettes clients saisies a part : <b>'
+        + esc(argent(R.dettesClient)) + '</b> (comptees en plus des factures)'
+        + (R.dettesClientDoublons.length ? ' — ' + R.dettesClientDoublons.length + ' doublant une facture, <b>non comptee(s)</b>' : '')
+        + '.</div>';
+    }
+    h += anomaliesHtml(R, ['doublon', 'paiements', 'trop', 'total', 'dette-double']);
+    h += '<div class="formule"><b>Le calcul retenu</b><br>'
+      + 'Dette d\'une facture = articles &minus; remise + frais &minus; montant paye.<br>'
+      + 'Quand une facture reprend la dette anterieure du client, cette dette est portee par la nouvelle '
+      + 'facture et <b>n\'est plus comptee</b> sur les anciennes (marquees « reportee »). Si cette facture est '
+      + 'supprimee, les anciennes reprennent leur dette.<br>'
+      + 'Dette du client = somme des factures non reportees + dettes saisies a part qui ne doublent aucune facture.<br>'
+      + 'Les anciennes valeurs de chaque facture recalee sont gardees (champ <code>_harmo</code>) : '
+      + 'l\'harmonisation s\'annule d\'un clic.</div>';
+  }else{
+    var ecF = r2(R.fournAffiche - R.fournJuste);
+    var miroirs = R.anomalies.filter(function(a){ return a.type === 'miroir' || a.type === 'cmd-paye'; }).length;
+    aFaire = Math.abs(ecF) >= 1 || miroirs > 0;
+    h += '<div class="chif"><div><div class="l">Affiche</div><div class="v">' + esc(argent(R.fournAffiche)) + '</div></div>'
+      + '<div><div class="l">Calcul juste</div><div class="v" style="color:#15803d">' + esc(argent(R.fournJuste)) + '</div></div>'
+      + '<div><div class="l">Ecart</div><div class="v" style="color:' + (Math.abs(ecF) >= 1 ? '#dc2626' : '#15803d') + '">'
+      + esc((ecF > 0 ? '+' : '') + argent(ecF)) + '</div></div></div>';
+    var lf = Object.keys(R.fournisseurs).map(function(k){ return R.fournisseurs[k]; })
+      .filter(function(f){ return Math.abs(f.affiche - f.juste) >= 1 || f.anomalies || f.juste > 0.5; })
+      .sort(function(a, b){ return b.juste - a.juste; });
+    if(lf.length){
+      h += '<div style="overflow-x:auto"><table><thead><tr><th>Fournisseur</th><th class="num">Affiche</th>'
+        + '<th class="num">Juste</th><th class="num">Ecart</th></tr></thead><tbody>'
+        + lf.slice(0, 60).map(function(f){
+            var e = r2(f.affiche - f.juste);
+            return '<tr><td>' + esc(f.nom) + (f.anomalies ? ' <span style="color:#b45309;font-size:11px">(' + f.anomalies + ' a verifier)</span>' : '')
+              + '</td><td class="num">' + esc(argent(f.affiche)) + '</td>'
+              + '<td class="num" style="font-weight:700;color:#15803d">' + esc(argent(f.juste)) + '</td>'
+              + '<td class="num" style="color:' + (Math.abs(e) >= 1 ? '#dc2626' : '#64748b') + '">'
+              + esc((e > 0 ? '+' : '') + argent(e)) + '</td></tr>';
+          }).join('') + '</tbody></table></div>';
+    }else{
+      h += '<div class="ok">Aucune dette fournisseur en cours.</div>';
+    }
+    h += anomaliesHtml(R, ['orphelin', 'miroir', 'avance', 'cmd-paye']);
+    h += '<div class="formule"><b>Le calcul retenu</b><br>'
+      + 'Dette d\'une commande = montant de la commande (ou, s\'il manque, la valeur recue) &minus; versements.<br>'
+      + 'Chaque commande compte une fois : son reflet dans les dettes n\'ajoute rien. La dette d\'une commande '
+      + 'supprimee n\'est plus comptee. Les dettes fournisseurs saisies a part s\'y ajoutent.<br>'
+      + 'Harmoniser recalcule chaque commande a partir de ses versements et remet son reflet a jour.</div>';
+  }
+  corps.innerHTML = h;
+  var der = derniereHarmo();
+  pied.innerHTML = (ongletH === 'clients' && der && droit
+      ? '<button onclick="agvHarmoAnnuler()">Annuler l\'harmonisation du ' + esc(new Date(der).toLocaleString('fr-FR')) + '</button>' : '')
+    + '<button onclick="agvHarmoFermer()">Fermer</button>'
+    + (droit
+        ? '<button class="go" id="agv39-h-go" onclick="agvHarmoAppliquer()"' + (aFaire ? '' : ' disabled') + '>'
+          + (aFaire ? 'Harmoniser maintenant' : 'Rien a harmoniser') + '</button>'
+        : '<span style="font-size:12px;color:#64748b;align-self:center">Le fondateur, ou une personne autorisee a modifier, peut harmoniser.</span>');
+}
+function besoinRecalage(R){
+  for(var i = 0; i < R.entrees.length; i++){
+    var e = R.entrees[i], c = cible(e);
+    for(var k in c){ if(k !== 'statut' && k !== 'reporteVers' && different(e.f[k], c[k])) return true; }
+  }
+  return false;
+}
+function anomaliesHtml(R, types){
+  var l = R.anomalies.filter(function(a){ return types.indexOf(a.type) >= 0; });
+  if(!l.length) return '';
+  return '<div style="font-size:13px;font-weight:800;margin:16px 0 8px">A verifier (' + l.length + ')</div>'
+    + l.slice(0, 40).map(function(a){ return '<div class="ano">' + esc(a.texte) + '</div>'; }).join('')
+    + (l.length > 40 ? '<div style="font-size:11.5px;color:#64748b">… et ' + (l.length - 40) + ' autre(s).</div>' : '');
+}
+window.agvHarmoAppliquer = function(){
+  if(!peutHarmoniser()) return toast('Vous n\'avez pas le droit de modifier les dettes');
+  var msg = document.getElementById('agv39-h-msg');
+  var r;
+  if(ongletH === 'clients'){
+    if(!confirm('Recaler les factures des clients sur le calcul juste ?\n\n'
+      + 'Les anciennes valeurs sont gardees : vous pourrez annuler.')) return;
+    r = harmoniserClients(null, 'Harmonisation des dettes clients');
+  }else{
+    if(!confirm('Recalculer chaque commande fournisseur a partir de ses versements ?')) return;
+    r = harmoniserFournisseurs();
+  }
+  redessiner(['renderFacturesList', 'renderClientsListe', 'renderDashboard', 'renderFournisseurs', 'renderCommandesList']);
+  rendreHarmo(registreVivant());
+  msg = document.getElementById('agv39-h-msg');
+  if(msg){
+    msg.style.color = '#15803d';
+    msg.textContent = 'Harmonise : ' + r.n + (ongletH === 'clients' ? ' facture(s)' : ' commande(s)') + ' recalee(s) — '
+      + argent(r.avant) + ' -> ' + argent(r.apres) + '.';
+  }
+  var alerte = document.getElementById('agv39-dettes-alerte');
+  if(alerte) alerte.remove();
+};
+window.agvHarmoAnnuler = function(){
+  if(!peutHarmoniser()) return;
+  if(!confirm('Remettre les factures comme avant la derniere harmonisation ?')) return;
+  var n = annulerHarmo();
+  redessiner();
+  rendreHarmo(registreVivant());
+  var msg = document.getElementById('agv39-h-msg');
+  if(msg){ msg.style.color = '#b45309'; msg.textContent = n + ' facture(s) remise(s) comme avant.'; }
+};
+
+/* l'ancien panneau (module 4, modele different) mene ici */
+(function rediriger(){
+  function poser(){
+    var D = window.AGV_DETTES;
+    if(!D){ setTimeout(poser, 800); return; }
+    if(D.__agv39) return;
+    D.__agv39 = true;
+    D.panneauAncien = D.panneau;
+    D.panneau = function(){ return window.agvHarmoniserDettes('clients'); };
+  }
+  poser();
+})();
+
+/* boutons et bandeau */
+function bouton(id, texte, action){
+  var b = document.createElement('button');
+  b.id = id;
+  b.className = 'btn btn-ghost';
+  b.style.cssText = 'border:1px solid #f59e0b;color:#b45309;font-weight:700';
+  b.textContent = texte;
+  b.setAttribute('onclick', action);
+  return b;
+}
+setInterval(function(){
+  try{
+    if(!uid() || !API.actif) return;
+    var zc = document.querySelector('#view-clients-mgr .topbar > div');
+    if(zc && !document.getElementById('agv39-btn-hc')) zc.appendChild(bouton('agv39-btn-hc', '⚖ Harmoniser les dettes', "agvHarmoniserDettes('clients')"));
+    var zf = document.querySelector('#view-fournisseurs .topbar > div');
+    if(zf && !document.getElementById('agv39-btn-hf')) zf.appendChild(bouton('agv39-btn-hf', '⚖ Harmoniser les dettes', "agvHarmoniserDettes('fournisseurs')"));
+    var zv = document.getElementById('agv32-versements-actions');
+    if(zv && !document.getElementById('agv39-btn-hv')) zv.appendChild(bouton('agv39-btn-hv', '⚖ Harmoniser les dettes', "agvHarmoniserDettes('clients')"));
+  }catch(e){}
+}, 1500);
+
+var dernierControle = 0;
+setInterval(function(){
+  try{
+    if(!API.actif) return;
+    var zone = document.getElementById('factures-mgr-list');
+    if(!zone || !zone.innerHTML || !zone.offsetParent) return;
+    if(Date.now() - dernierControle < 15000 && document.getElementById('agv39-dettes-alerte')) return;
+    dernierControle = Date.now();
+    var R = registreVivant();
+    var ecart = r2(R.facturesAffiche - R.facturesJuste - R.passageJuste);
+    var vieux = document.getElementById('agv39-dettes-alerte');
+    if(Math.abs(ecart) < 1 && !R.doublons.length){ if(vieux) vieux.remove(); return; }
+    var txt = 'Les dettes clients affichees ne sont pas harmonisees : ecart de <b>' + esc(argent(ecart)) + '</b>'
+      + (R.doublons.length ? ' et ' + R.doublons.length + ' facture(s) en double' : '') + '.';
+    if(vieux){ vieux.querySelector('span').innerHTML = txt; return; }
+    var d = document.createElement('div');
+    d.id = 'agv39-dettes-alerte';
+    d.innerHTML = '<span>' + txt + '</span><button onclick="agvHarmoniserDettes(\'clients\')">Examiner et harmoniser</button>';
+    zone.insertBefore(d, zone.firstChild);
+  }catch(e){}
+}, 4000);
+
+/* ---- supprimer une facture qui avait repris des dettes : elles reviennent ---- */
+(function suivreSuppressionFacture(){
+  function poser(){
+    var f = window.deleteFacture;
+    if(typeof f !== 'function'){ setTimeout(poser, 700); return; }
+    if(f.__agv39) return;
+    var n = function(id){
+      var fact = null;
+      les('factureVentes').forEach(function(x){ if(!fact && meme(x.id, id)) fact = x; });
+      var r = f.apply(this, arguments);
+      try{
+        if(!API.actif || !fact) return r;
+        var reste = false;
+        les('factureVentes').forEach(function(x){ if(x === fact) reste = true; });
+        if(reste) return r;                              /* suppression annulee */
+        var change = false;
+        if(fact.stockSorti && fact.zoneFacturation !== undefined){
+          appliquerSorties(fact, [], tab(fact.stockSorti), 'Facture supprimee');
+          change = true;
+        }
+        if(fact.clientId && reportante(fact, baseF(fact))){
+          var h = harmoniserClients(fact.clientId, 'Facture supprimee — dettes reprises recalculees');
+          if(h.n) change = true;
+        }
+        if(change){ enregistrer(); oublier(); redessiner(); }
+      }catch(e){ console.warn('[AGV-39] suppression de facture', e); }
+      return r;
+    };
+    n.__agv39 = true;
+    window.deleteFacture = n;
+  }
+  poser();
+})();
+
+/* ============================================================
+   3. SUPPRESSION MULTIPLE DE VENTES
+   ============================================================ */
+var selV = {};
+function peutSupprimerVentes(){ return fondateurEnTitre() || peut('permDel'); }
+API.peutSupprimerVentes = peutSupprimerVentes;
+function venteParId(id){
+  var t = null;
+  les('ventes').forEach(function(v){ if(!t && meme(v.id, id)) t = v; });
+  return t;
+}
+function quandV(v){
+  var t = v.ts || v.date;
+  if(typeof t === 'number') return new Date(t);
+  var d = new Date(t);
+  return isNaN(d.getTime()) ? new Date(0) : d;
+}
+function jourV(v){ var d = quandV(v); return d.getTime() ? d.toLocaleDateString('fr-FR') : '—'; }
+/* la meme liste que la fenetre « Corriger une vente », dans le meme ordre */
+function listeCorriger(){
+  var q = String((document.getElementById('agvcv-recherche') || {}).value || '').toLowerCase().trim();
+  var l = les('ventes').filter(function(v){
+    if(!v || v.type === 'entree') return false;
+    if(!q) return true;
+    return ((v.name || v.produit || '') + ' ' + (v.ref || '') + ' ' + (v.gerant || '') + ' ' + jourV(v))
+      .toLowerCase().indexOf(q) >= 0;
+  });
+  l.sort(function(a, b){ return quandV(b) - quandV(a); });
+  return l.slice(0, 150);
+}
+
+/* une suppression, simple ou multiple, suit la case cochee — meme quand un
+   onglet reserve a eleve le role pour s'afficher */
+(function garderSuppression(){
+  function poser(){
+    var f = window.agvVenteSupprimer;
+    if(typeof f !== 'function'){ setTimeout(poser, 600); return; }
+    if(f.__agv39) return;
+    var n = function(id){
+      if(API.actif && !peutSupprimerVentes()){ toast('Vous n\'avez pas le droit de supprimer une vente'); return; }
+      return f.apply(this, arguments);
+    };
+    n.__agv39 = true;
+    if(f.__agvCorbeille) n.__agvCorbeille = true;
+    window.agvVenteSupprimer = n;
+  }
+  poser();
+  setInterval(function(){ try{ if(window.agvVenteSupprimer && !window.agvVenteSupprimer.__agv39) poser(); }catch(e){} }, 3000);
+})();
+
+function decorerCorriger(){
+  var zone = document.getElementById('agvcv-liste');
+  if(!zone) return;
+  var barre = document.getElementById('agv39-lot');
+  if(!API.actif || !peutSupprimerVentes()){
+    Array.prototype.forEach.call(zone.querySelectorAll('[onclick^="agvCorrigerSupprimer("]'), function(b){ b.remove(); });
+    if(barre) barre.remove();
+    return;
+  }
+  /* la selection ne garde que des ventes qui existent encore */
+  Object.keys(selV).forEach(function(k){ if(!venteParId(k)) delete selV[k]; });
+  var l = listeCorriger();
+  var lignes = Array.prototype.filter.call(zone.children, function(c){
+    return c.tagName === 'DIV' && /justify-content:\s*space-between/.test(c.getAttribute('style') || '');
+  });
+  l.forEach(function(v, i){
+    var row = lignes[i];
+    if(!row || row.querySelector('.agv39-cv')) return;
+    var id = String(v.id);
+    var cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.className = 'agv39-cv';
+    cb.setAttribute('data-id', id);
+    cb.title = 'Selectionner cette vente';
+    cb.checked = !!selV[id];
+    if(cb.checked) row.classList.add('agv39-cv-on');
+    cb.onchange = function(){
+      if(cb.checked){ selV[id] = true; row.classList.add('agv39-cv-on'); }
+      else{ delete selV[id]; row.classList.remove('agv39-cv-on'); }
+      majLot();
+    };
+    row.insertBefore(cb, row.firstChild);
+  });
+  if(!barre){
+    barre = document.createElement('div');
+    barre.id = 'agv39-lot';
+    barre.innerHTML = '<label><input type="checkbox" id="agv39-tout" onchange="agvVentesToutes(this.checked)"> '
+      + '<span id="agv39-tout-t">Tout selectionner</span></label>'
+      + '<span id="agv39-lot-n" style="flex:1;color:var(--text3)"></span>'
+      + '<button class="btn btn-ghost btn-sm" onclick="agvVentesAucune()">Deselectionner</button>'
+      + '<button class="btn btn-sm" id="agv39-lot-go" onclick="agvVentesSupprimerSelection()" '
+      + 'style="background:var(--red,#dc2626);color:#fff;border:none;font-weight:700">Supprimer la selection</button>';
+    zone.parentNode.insertBefore(barre, zone);
+  }
+  majLot();
+}
+function majLot(){
+  var ids = Object.keys(selV);
+  var total = 0;
+  ids.forEach(function(k){ var v = venteParId(k); if(v) total += nb(v.total); });
+  var n = document.getElementById('agv39-lot-n');
+  if(n) n.textContent = ids.length ? ids.length + ' vente(s) selectionnee(s) — ' + argent(total) : 'Cochez les ventes a supprimer';
+  var go = document.getElementById('agv39-lot-go');
+  if(go){
+    go.disabled = !ids.length;
+    go.style.opacity = ids.length ? '1' : '.5';
+    go.textContent = ids.length ? 'Supprimer la selection (' + ids.length + ')' : 'Supprimer la selection';
+  }
+  var visibles = listeCorriger();
+  var tout = document.getElementById('agv39-tout');
+  if(tout) tout.checked = visibles.length > 0 && visibles.every(function(v){ return selV[String(v.id)]; });
+  var tt = document.getElementById('agv39-tout-t');
+  if(tt) tt.textContent = 'Tout selectionner (' + visibles.length + ' affichee' + (visibles.length > 1 ? 's' : '') + ')';
+}
+window.agvVentesToutes = function(on){
+  listeCorriger().forEach(function(v){ if(on) selV[String(v.id)] = true; else delete selV[String(v.id)]; });
+  Array.prototype.forEach.call(document.querySelectorAll('#agvcv-liste .agv39-cv'), function(cb){
+    cb.checked = !!selV[cb.getAttribute('data-id')];
+    cb.parentNode.classList.toggle('agv39-cv-on', cb.checked);
+  });
+  majLot();
+};
+window.agvVentesAucune = function(){ selV = {}; window.agvVentesToutes(false); };
+
+window.agvVentesSupprimerSelection = function(){
+  if(!peutSupprimerVentes()) return toast('Vous n\'avez pas le droit de supprimer une vente');
+  var ids = Object.keys(selV).filter(function(k){ return !!venteParId(k); });
+  if(!ids.length) return toast('Aucune vente selectionnee');
+  var total = ids.reduce(function(s, k){ return s + nb(venteParId(k).total); }, 0);
+  if(!confirm('Supprimer definitivement ' + ids.length + ' vente(s) pour un total de ' + argent(total) + ' ?\n\n'
+    + 'Le stock de chaque article sera retabli et les factures automatiques de ces ventes seront retirees.')) return;
+
+  var gardes = {}, NOMS = ['renderDashboard', 'refreshVentesHistory', 'renderVentesView', 'renderTable',
+    'renderInventaire', 'renderJournalier', 'agvRafraichirEcran', 'agvRendreFactures', 'agvCorrigerRendre', 'showToast'];
+  var confirmOrig = window.confirm;
+  var faites = 0, montant = 0, refus = 0;
+  window.confirm = function(){ return true; };
+  NOMS.forEach(function(nom){
+    if(typeof window[nom] === 'function'){ gardes[nom] = window[nom]; window[nom] = function(){}; }
+  });
+  try{
+    ids.forEach(function(k){
+      var v = venteParId(k);
+      var t = v ? nb(v.total) : 0;
+      try{ window.agvVenteSupprimer(k); }catch(e){ console.warn('[AGV-39] suppression', k, e); }
+      if(venteParId(k)) refus++;
+      else { faites++; montant += t; }
+    });
+  }finally{
+    window.confirm = confirmOrig;
+    Object.keys(gardes).forEach(function(nom){ window[nom] = gardes[nom]; });
+  }
+  selV = {};
+  journal('Suppression multiple de ventes', faites + ' vente(s) — ' + argent(montant) + ' — par ' + moi());
+  ['renderDashboard', 'refreshVentesHistory', 'renderVentesView', 'renderTable', 'renderInventaire', 'renderJournalier', 'agvRafraichirEcran']
+    .forEach(function(f){ try{ if(typeof window[f] === 'function') window[f](); }catch(e){} });
+  try{ if(typeof window.agvCorrigerRendre === 'function') window.agvCorrigerRendre(); }catch(e){}
+  var msg = faites + ' vente(s) supprimee(s) — stock retabli' + (refus ? ' — ' + refus + ' non supprimee(s)' : '');
+  toast(msg);
+  var n = document.getElementById('agv39-lot-n');
+  if(n){ n.textContent = msg; n.style.color = refus ? '#b45309' : '#15803d'; }
+};
+
+(function brancherCorriger(){
+  function poser(){
+    var r = window.agvCorrigerRendre, o = window.agvCorrigerVentes;
+    if(typeof r !== 'function' || typeof o !== 'function'){ setTimeout(poser, 600); return; }
+    if(!r.__agv39){
+      var nr = function(){
+        var x = r.apply(this, arguments);
+        try{ decorerCorriger(); }catch(e){ console.warn('[AGV-39] corriger', e); }
+        return x;
+      };
+      nr.__agv39 = true;
+      window.agvCorrigerRendre = nr;
+    }
+    if(!o.__agv39){
+      var no = function(){ selV = {}; var b = document.getElementById('agv39-lot'); if(b) b.remove(); return o.apply(this, arguments); };
+      no.__agv39 = true;
+      window.agvCorrigerVentes = no;
+    }
+  }
+  poser();
+  setInterval(function(){
+    try{
+      if((window.agvCorrigerRendre && !window.agvCorrigerRendre.__agv39) || (window.agvCorrigerVentes && !window.agvCorrigerVentes.__agv39)) poser();
+    }catch(e){}
+  }, 3000);
+})();
+
+window.agvVentesLot = function(){
+  if(!peutSupprimerVentes()) return toast('Vous n\'avez pas le droit de supprimer une vente');
+  if(typeof window.agvCorrigerVentes === 'function') window.agvCorrigerVentes();
+};
+setInterval(function(){
+  try{
+    var z = document.querySelector('#view-ventes .topbar > div');
+    var b = document.getElementById('agv39-btn-lot');
+    var ok = API.actif && uid() && peutSupprimerVentes();
+    if(!z){ return; }
+    if(ok && !b){
+      b = document.createElement('button');
+      b.id = 'agv39-btn-lot';
+      b.className = 'btn btn-ghost';
+      b.style.cssText = 'border:1px solid var(--red,#dc2626);color:var(--red,#dc2626);font-weight:700';
+      b.textContent = '🗑 Supprimer plusieurs ventes';
+      b.setAttribute('onclick', 'agvVentesLot()');
+      z.appendChild(b);
+    }else if(!ok && b){ b.remove(); }
+  }catch(e){}
+}, 1500);
+
+/* ============================================================
+   4. REGLAGES DU FONDATEUR
+   ============================================================ */
+var reglagesLus = {};          /* uid -> { valeurs, le } */
+function reglagesConnus(){
+  var s = window._currentShop || {};
+  var r = (s.reglages && typeof s.reglages === 'object') ? s.reglages : null;
+  var m = reglagesLus[uid()];
+  if(m) return m.valeurs || {};
+  return r || {};
+}
+function natureActive(){ return !!reglagesConnus().natureFacture; }
+API.natureActive = natureActive;
+/* les reglages vivent dans la fiche de la boutique d'accueil : une boutique
+   rattachee suit ceux de sa mere */
+function accueil(cb){
+  var u = uid();
+  if(!u){ cb(null); return; }
+  var G = window.AGV_GERANTS;
+  if(G && typeof G.accueilDe === 'function'){ try{ G.accueilDe(u, function(h){ cb(h || u); }); return; }catch(e){} }
+  cb(u);
+}
+function lireReglages(cb){
+  accueil(function(h){
+    var r = h ? refBrut('gdv_shops/' + h + '/info/reglages') : null;
+    if(!r){ cb && cb(reglagesConnus()); return; }
+    var fini = false;
+    var t = setTimeout(function(){ if(!fini){ fini = true; cb && cb(reglagesConnus()); } }, 8000);
+    r.once('value').then(function(s){
+      if(fini) return; fini = true; clearTimeout(t);
+      var v = s.val() || {};
+      reglagesLus[uid()] = { valeurs: v, le: Date.now(), hote: h };
+      memoriserReglages(v);
+      cb && cb(v);
+    }, function(){ if(!fini){ fini = true; clearTimeout(t); cb && cb(reglagesConnus()); } });
+  });
+}
+API.lireReglages = lireReglages;
+function memoriserReglages(v){
+  var s = window._currentShop;
+  if(s) s.reglages = v;
+  try{
+    var k = 'agv_shop_' + uid();
+    var b = localStorage.getItem(k);
+    if(b){ var o = JSON.parse(b); o.reglages = v; localStorage.setItem(k, JSON.stringify(o)); }
+  }catch(e){}
+}
+function ecrireReglage(cle, valeur, cb){
+  if(!fondateurEnTitre()){ cb && cb('Reserve au fondateur'); return; }
+  accueil(function(h){
+    var r = h ? refBrut('gdv_shops/' + h + '/info/reglages/' + cle) : null;
+    if(!r){ cb && cb('Base indisponible'); return; }
+    r.set(valeur ? true : null).then(function(){
+      lireReglages(function(v){
+        var ok = (!!v[cle]) === (!!valeur);
+        if(ok) journal('Reglage modifie', cle + ' : ' + (valeur ? 'active' : 'desactive') + ' — par ' + moi());
+        cb && cb(ok ? null : 'non confirme par la base');
+      });
+    }, function(e){ cb && cb(e && e.message ? e.message : 'echec'); });
+  });
+}
+
+function styleReglages(){
+  if(document.getElementById('agv39-reg-style')) return;
+  var st = document.createElement('style');
+  st.id = 'agv39-reg-style';
+  st.textContent = '#agv39-reg{position:fixed;inset:0;z-index:99994;background:#eef2f7;overflow-y:auto;color:#0f172a;'
+    + '-webkit-overflow-scrolling:touch;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}'
+    + '#agv39-reg *{box-sizing:border-box}'
+    + '#agv39-reg .bar{background:#0f2b5b;color:#fff;padding:16px 18px;display:flex;justify-content:space-between;align-items:center;gap:12px}'
+    + '#agv39-reg .bar h1{margin:0;font-size:19px;font-weight:800}#agv39-reg .bar .s{font-size:12.5px;opacity:.8;margin-top:2px}'
+    + '#agv39-reg .retour{display:flex;align-items:center;gap:6px;padding:9px 14px;border-radius:10px;border:1px solid rgba(255,255,255,.35);'
+    + 'background:rgba(255,255,255,.08);color:#fff;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer}'
+    + '#agv39-reg .wrap{max-width:820px;margin:0 auto;padding:18px 16px 40px}';
+  document.head.appendChild(st);
+}
+window.agvReglagesFermer = function(){ var o = document.getElementById('agv39-reg'); if(o) o.remove(); };
+window.agvReglagesOuvrir = function(depuis){
+  if(!fondateurEnTitre()) return toast('Les reglages sont reserves au fondateur');
+  styleReglages();
+  window.agvReglagesFermer();
+  var s = window._currentShop || {};
+  var d = document.createElement('div');
+  d.id = 'agv39-reg';
+  d.innerHTML = '<div class="bar"><div><h1>Reglages</h1><div class="s">' + esc(s.entreprise || 'Ma boutique')
+      + ' — valables pour toutes vos boutiques</div></div>'
+      + '<button class="retour" onclick="agvReglagesRetour(\'' + (depuis === 'admin' ? 'admin' : 'portail') + '\')">'
+      + '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M15 19l-7-7 7-7"/></svg>'
+      + ' Retour</button></div>'
+    + '<div class="wrap">'
+      + '<div class="carte"><h3>Facturation des clients — nature de l\'operation</h3>'
+        + '<p>Activee, cette option fait choisir, sur chaque facture, s\'il s\'agit d\'un <b>pret de marchandises</b> '
+        + '(des articles remis au client, qui sortent du stock) ou d\'un <b>pret de fonds</b> (de l\'argent prete au client : '
+        + 'aucun article ne sort du stock et rien ne compte dans le benefice). La dette du client se suit de la meme facon.</p>'
+        + '<div class="ligne"><b id="agv39-nat-t">Lecture...</b>'
+        + '<label class="interr"><input type="checkbox" id="agv39-nat" onchange="agvReglageNature(this.checked)" disabled><span></span></label></div>'
+        + '<div class="etat" id="agv39-nat-etat"></div></div>'
+      + '<div class="carte"><h3>Zone de facturation</h3>'
+        + '<p id="agv39-zones-t">Lecture des lieux de stockage...</p></div>'
+      + '<div class="carte"><h3>Dettes des clients et des fournisseurs</h3>'
+        + '<p>Controle complet : chaque dette comptee une fois, ni doublee ni oubliee. L\'ecran montre l\'affiche, '
+        + 'le calcul juste et l\'ecart avant toute correction.</p>'
+        + '<div class="ligne"><span></span><button class="btn39" onclick="agvReglagesFermer();agvHarmoniserDettes(\'clients\')">'
+        + 'Harmoniser les dettes</button></div></div>'
+    + '</div>';
+  document.body.appendChild(d);
+  lireReglages(function(v){
+    var cb = document.getElementById('agv39-nat'), t = document.getElementById('agv39-nat-t');
+    if(cb){ cb.checked = !!v.natureFacture; cb.disabled = false; }
+    if(t) t.textContent = v.natureFacture ? 'Activee' : 'Desactivee';
+  });
+  lireZones(function(){
+    var t = document.getElementById('agv39-zones-t');
+    if(!t) return;
+    var z = listeZones();
+    t.innerHTML = z.length
+      ? 'Cette boutique a <b>' + (z.length + 1) + ' stocks</b> : Magasin principal, ' + z.map(function(x){ return esc(x.nom); }).join(', ')
+        + '. Sur chaque facture, la personne qui facture choisit la zone ; les articles sortent de cette zone et du stock total, '
+        + 'comme une vente. Les lieux se gerent dans l\'onglet Lieux de stockage.'
+      : 'Un seul stock pour l\'instant (Magasin principal). Des que vous creez un lieu de stockage (onglet Lieux de stockage), '
+        + 'la facture propose de choisir la zone d\'ou sortent les articles.';
+  });
+};
+window.agvReglagesRetour = function(vers){
+  window.agvReglagesFermer();
+  if(vers === 'admin' && typeof window.agvAdministration === 'function') return window.agvAdministration();
+};
+window.agvReglageNature = function(on){
+  var e = document.getElementById('agv39-nat-etat'), cb = document.getElementById('agv39-nat');
+  if(e){ e.style.color = '#64748b'; e.textContent = 'Enregistrement...'; }
+  if(cb) cb.disabled = true;
+  ecrireReglage('natureFacture', !!on, function(err){
+    if(cb) cb.disabled = false;
+    var t = document.getElementById('agv39-nat-t');
+    if(err){
+      if(cb) cb.checked = !on;
+      if(e){ e.style.color = '#dc2626'; e.textContent = 'Non enregistre : ' + err; }
+      return;
+    }
+    if(t) t.textContent = on ? 'Activee' : 'Desactivee';
+    if(e){ e.style.color = '#15803d'; e.textContent = (on ? 'Activee' : 'Desactivee') + ' — confirme dans la base.'; }
+  });
+};
+
+/* la tuile, dans le portail du fondateur et dans l'Administration */
+var ICO_REG = 'M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0M14 4v4M8 10v4M16 16v4';
+function svgReg(){
+  return '<svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" '
+    + 'stroke-linecap="round" stroke-linejoin="round"><path d="' + ICO_REG + '"/></svg>';
+}
+setInterval(function(){
+  try{
+    if(!API.actif || !fondateurEnTitre()) return;
+    var pin = document.querySelector('#agv39-tuiles .portail-in');
+    if(pin && !document.getElementById('agv39-t-reg')){
+      var t = document.createElement('div');
+      t.className = 'tuile';
+      t.id = 'agv39-t-reg';
+      t.setAttribute('onclick', "agvReglagesOuvrir('portail')");
+      t.innerHTML = '<div class="rond">' + svgReg() + '</div><div class="t">Reglages</div>'
+        + '<div class="s">factures, zones, dettes</div>';
+      var tuiles = pin.querySelectorAll('.tuile');
+      if(tuiles.length >= 2 && tuiles[1].nextSibling) pin.insertBefore(t, tuiles[1].nextSibling);
+      else pin.appendChild(t);
+    }
+    var page = document.getElementById('agv40-page');
+    if(page && String(page.innerHTML).indexOf('La boutique') >= 0 && !document.getElementById('agv39-a-reg')){
+      var g = page.querySelector('#agv40-corps .grid');
+      if(g){
+        var a = document.createElement('div');
+        a.className = 'tuile';
+        a.id = 'agv39-a-reg';
+        a.setAttribute('onclick', "agv40Fermer();agvReglagesOuvrir('admin')");
+        a.innerHTML = '<div class="ic">' + svgReg() + '</div><div class="t">Reglages</div>'
+          + '<div class="d">Nature de l\'operation sur les factures (pret de marchandises ou de fonds), '
+          + 'zone de facturation, harmonisation des dettes.</div>';
+        g.appendChild(a);
+      }
+    }
+  }catch(e){}
+}, 900);
+/* a l'ouverture de la boutique, les reglages sont lus une fois */
+setTimeout(function attendre(){
+  if(!uid()){ setTimeout(attendre, 1500); return; }
+  lireReglages(function(){});
+}, 2500);
+
+/* ============================================================
+   5. LES ZONES DE STOCK (noeud « depots » du module v48)
+   ============================================================ */
+var zones = null;
+function lireZones(cb){
+  var r = uid() ? refBloc('gdv_shops/' + uid() + '/depots') : null;
+  if(!r){ zones = zones || {}; cb && cb(zones); return; }
+  var fini = false;
+  var t = setTimeout(function(){ if(!fini){ fini = true; zones = zones || {}; cb && cb(zones); } }, 8000);
+  r.once('value').then(function(s){
+    if(fini) return; fini = true; clearTimeout(t);
+    zones = s.val() || {};
+    cb && cb(zones);
+  }, function(){ if(!fini){ fini = true; clearTimeout(t); zones = zones || {}; cb && cb(zones); } });
+}
+function listeZones(){
+  return tab(zones).filter(function(z){ return z && z.id !== undefined && z.actif !== false; })
+    .sort(function(a, b){ return String(a.nom || '').localeCompare(String(b.nom || '')); });
+}
+function zonesActives(){ return listeZones().length > 0; }
+function zoneParId(id){
+  var t = null;
+  tab(zones).forEach(function(z){ if(!t && z && String(z.id) === String(id)) t = z; });
+  return t;
+}
+function nomZone(id){
+  if(!id || id === 'principal') return 'Magasin principal';
+  var z = zoneParId(id);
+  return z ? (z.nom || 'Lieu') : 'Lieu retire';
+}
+function produitDe(nom){
+  var n = String(nom || '').toLowerCase().trim();
+  if(!n) return null;
+  var t = null;
+  les('products').forEach(function(p){
+    if(t) return;
+    if(String(p.designation || '').toLowerCase().trim() === n || String(p.reference || '').toLowerCase().trim() === n) t = p;
+  });
+  return t;
+}
+function produitParRef(ref){
+  var t = null;
+  les('products').forEach(function(p){ if(!t && String(p.reference) === String(ref)) t = p; });
+  return t;
+}
+function qteZone(id, ref){
+  if(!id || id === 'principal'){
+    var p = produitParRef(ref);
+    if(!p) return 0;
+    var place = 0;
+    tab(zones).forEach(function(z){ place += nb(((z && z.quantites) || {})[String(ref)]); });
+    return nb(p.stock_initial) - place;
+  }
+  var z = zoneParId(id);
+  return z ? nb((z.quantites || {})[String(ref)]) : 0;
+}
+/* les sorties de stock d'une liste de lignes, regroupees par article et par zone */
+function sortiesDe(lignes){
+  var m = {}, out = [];
+  lignes.forEach(function(l){
+    var p = l.ref ? produitParRef(l.ref) : produitDe(l.produit);
+    if(!p || !(nb(l.qte) > 0)) return;
+    var z = l.lieuId || 'principal';
+    var k = p.reference + '|' + z;
+    if(!m[k]){ m[k] = { ref: String(p.reference), lieuId: z, lieu: nomZone(z), qte: 0, produit: p.designation || l.produit }; out.push(m[k]); }
+    m[k].qte = r2(m[k].qte + nb(l.qte));
+  });
+  return out;
+}
+function verifierDispo(nouvelles, anciennes){
+  var credit = {};
+  (anciennes || []).forEach(function(a){ var k = a.ref + '|' + (a.lieuId || 'principal'); credit[k] = (credit[k] || 0) + nb(a.qte); });
+  for(var i = 0; i < nouvelles.length; i++){
+    var s = nouvelles[i];
+    var k = s.ref + '|' + s.lieuId;
+    var dispo = r2(qteZone(s.lieuId, s.ref) + (credit[k] || 0));
+    if(s.qte > dispo + 1e-9){
+      return 'Stock insuffisant : ' + s.produit + ' — ' + s.lieu + ' : disponible ' + Math.max(0, dispo) + ', demande ' + s.qte;
+    }
+  }
+  return null;
+}
+/* sortir (ou remettre) les articles : stock total + zone choisie */
+function appliquerSorties(fact, nouvelles, anciennes, motif){
+  var delta = {}, info = {};
+  (nouvelles || []).forEach(function(s){ var k = s.ref + '|' + (s.lieuId || 'principal'); delta[k] = (delta[k] || 0) + nb(s.qte); info[k] = s; });
+  (anciennes || []).forEach(function(s){ var k = s.ref + '|' + (s.lieuId || 'principal'); delta[k] = (delta[k] || 0) - nb(s.qte); info[k] = info[k] || s; });
+  var client = fact.clientNom || 'client';
+  Object.keys(delta).forEach(function(k){
+    var d = r2(delta[k]);
+    if(Math.abs(d) < 1e-9) return;
+    var s = info[k];
+    var p = produitParRef(s.ref);
+    if(!p) return;
+    var avant = nb(p.stock_initial);
+    p.stock_initial = r2(avant - d);
+    if(p.stock_initial < 0) p.stock_initial = 0;
+    p.total = nb(p.stock_initial) * nb(p.prix_achat);
+    if(!Array.isArray(p.mouvements)) p.mouvements = tab(p.mouvements);
+    p.mouvements.unshift({
+      date: new Date().toISOString(),
+      libelle: d > 0 ? 'Facture' : (motif || 'Facture modifiee — retour en stock'),
+      qte: -d, avant: avant, apres: p.stock_initial,
+      motif: 'Facture ' + numeroDe(fact) + ' — ' + client + ' — ' + nomZone(s.lieuId),
+      par: moi(), prixAchat: nb(p.prix_achat), prixVente: nb(p.prix_vente)
+    });
+    if(s.lieuId && s.lieuId !== 'principal'){
+      var z = zoneParId(s.lieuId);
+      if(z){ z.quantites = z.quantites || {}; z.quantites[s.ref] = Math.max(0, r2(nb(z.quantites[s.ref]) - d)); }
+      var r = uid() ? refBloc('gdv_shops/' + uid() + '/depots/' + s.lieuId + '/quantites/' + s.ref) : null;
+      if(r){
+        try{
+          r.transaction(function(cur){ return Math.max(0, r2(nb(cur) - d)); })
+            .catch(function(e){ console.warn('[AGV-39] zone', e); });
+        }catch(e){ console.warn('[AGV-39] zone', e); }
+      }
+    }
+  });
+  ['renderTable', 'renderInventaire', 'renderAlerts'].forEach(function(f){
+    try{ if(typeof window[f] === 'function') window[f](); }catch(e){}
+  });
+}
+API.appliquerSorties = appliquerSorties;
+
+/* ============================================================
+   6. L'ECRAN DE FACTURE : NATURE ET ZONE
+   ============================================================ */
+var etatF = { id: null, ancien: null, nature: null, lignesMarch: null, zonesPretes: false };
+function lignesF(){ try{ return (typeof window.agvFactureLignes === 'function') ? window.agvFactureLignes() : null; }catch(e){ return null; } }
+function factureParId(id){
+  var t = null;
+  les('factureVentes').forEach(function(f){ if(!t && meme(f.id, id)) t = f; });
+  return t;
+}
+function bouge(){ return !etatF.ancien || etatF.ancien.zoneFacturation !== undefined; }
+function libelleFonds(){
+  var o = String((document.getElementById('agv39-fonds-objet') || {}).value || '').trim();
+  return 'Pret de fonds' + (o ? ' — ' + o : '');
+}
+function sectionArticles(){
+  var p = document.getElementById('agv38-prod');
+  return p && p.closest ? p.closest('.sec') : null;
+}
+
+function poserNature(){
+  var box = document.getElementById('agv38-fact');
+  if(!box) return;
+  var montrer = natureActive() || !!(etatF.ancien && etatF.ancien.nature);
+  var sec = document.getElementById('agv39-nature');
+  if(!montrer){
+    if(sec){ if(etatF.nature === 'fonds') window.agvNatureChoisir('marchandises'); sec.remove(); }
+    etatF.nature = null;
+    return;
+  }
+  if(!etatF.nature) etatF.nature = (etatF.ancien && etatF.ancien.nature) || 'marchandises';
+  if(!sec){
+    var art = sectionArticles();
+    if(!art || !art.parentNode) return;
+    sec = document.createElement('div');
+    sec.className = 'sec';
+    sec.id = 'agv39-nature';
+    sec.innerHTML = '<h3>Nature de l\'operation</h3>'
+      + '<div class="g2">'
+        + '<button type="button" class="agv39-nat" data-n="marchandises" onclick="agvNatureChoisir(\'marchandises\')">'
+          + '<b>Pret de marchandises</b><span>des articles remis au client</span></button>'
+        + '<button type="button" class="agv39-nat" data-n="fonds" onclick="agvNatureChoisir(\'fonds\')">'
+          + '<b>Pret de fonds</b><span>de l\'argent prete au client</span></button>'
+      + '</div>'
+      + '<div id="agv39-fonds" style="display:none;margin-top:12px"><div class="g2">'
+        + '<div><label>Montant prete</label><input type="number" min="0" id="agv39-fonds-mt" placeholder="0" oninput="agvNatureMontant()"></div>'
+        + '<div><label>Objet du pret <span style="font-weight:400;color:#94a3b8">(facultatif)</span></label>'
+          + '<input id="agv39-fonds-objet" placeholder="ex : avance de tresorerie" oninput="agvNatureMontant()"></div>'
+      + '</div><div style="font-size:11.5px;color:#64748b;margin-top:7px;line-height:1.5">'
+        + 'Aucun article ne sort du stock ; la somme pretee devient la dette du client et ne compte pas dans le benefice.</div></div>';
+    art.parentNode.insertBefore(sec, art);
+    if(etatF.nature === 'fonds'){
+      var L = lignesF() || [];
+      var l0 = L[0] || {};
+      var mt = document.getElementById('agv39-fonds-mt');
+      if(mt) mt.value = nb(l0.total) || '';
+      var obj = String(l0.produit || '').split(' — ').slice(1).join(' — ');
+      var oi = document.getElementById('agv39-fonds-objet');
+      if(oi) oi.value = obj;
+      etatF.lignesMarch = [];
+    }
+  }
+  afficherNature();
+}
+function afficherNature(){
+  Array.prototype.forEach.call(document.querySelectorAll('#agv39-nature .agv39-nat'), function(b){
+    b.classList.toggle('on', b.getAttribute('data-n') === etatF.nature);
+  });
+  var art = sectionArticles();
+  var fonds = document.getElementById('agv39-fonds');
+  if(art) art.style.display = etatF.nature === 'fonds' ? 'none' : '';
+  if(fonds) fonds.style.display = etatF.nature === 'fonds' ? 'block' : 'none';
+}
+window.agvNatureChoisir = function(n){
+  if(n !== 'fonds' && n !== 'marchandises') return;
+  if(n === etatF.nature){ afficherNature(); return; }
+  var L = lignesF();
+  if(!L) return;
+  if(n === 'fonds'){
+    etatF.lignesMarch = L.slice();
+    L.length = 0;
+    etatF.nature = 'fonds';
+    afficherNature();
+    window.agvNatureMontant();
+    try{ document.getElementById('agv39-fonds-mt').focus(); }catch(e){}
+    return;
+  }
+  etatF.nature = 'marchandises';
+  L.length = 0;
+  (etatF.lignesMarch || []).forEach(function(l){ L.push(l); });
+  etatF.lignesMarch = null;
+  afficherNature();
+  /* le tableau des articles se redessine par le chemin de l'ecran lui-meme */
+  L.push({ produit: '', qte: 0, prixU: 0, total: 0 });
+  try{ window.agvFactureRetirer(L.length - 1); }catch(e){ try{ window.agvFactureMaj(); }catch(x){} }
+};
+window.agvNatureMontant = function(){
+  if(etatF.nature !== 'fonds') return;
+  var L = lignesF();
+  if(!L) return;
+  var mt = nb((document.getElementById('agv39-fonds-mt') || {}).value);
+  L.length = 0;
+  if(mt > 0) L.push({ produit: libelleFonds(), qte: 1, prixU: mt, total: mt });
+  try{ window.agvFactureMaj(); }catch(e){}
+};
+
+/* le selecteur de zone, a la place du « lieu de livraison » */
+function poserZone(){
+  var box = document.getElementById('agv38-fact');
+  if(!box) return;
+  var sel = document.getElementById('agv48-lieu');
+  if(!zonesActives()){
+    if(sel && sel.getAttribute('data-agv39')){ sel.removeAttribute('data-agv39'); }
+    return;
+  }
+  if(!sel){
+    var qte = document.getElementById('agv38-qte');
+    if(!qte || !qte.parentNode || !qte.parentNode.parentNode) return;
+    var grille = qte.parentNode.parentNode;
+    var d = document.createElement('div');
+    d.style.cssText = 'margin-top:10px';
+    d.innerHTML = '<label style="display:block;font-size:11.5px;font-weight:600;color:#475569;margin-bottom:4px">'
+      + 'Lieu de livraison</label><select id="agv48-lieu"></select>';
+    grille.parentNode.insertBefore(d, grille.nextSibling);
+    sel = document.getElementById('agv48-lieu');
+  }
+  if(sel.getAttribute('data-agv39') === String(listeZones().length)) return;
+  var garde = sel.value || etatF.derniereZone || 'principal';
+  sel.innerHTML = '<option value="principal">Magasin principal</option>'
+    + listeZones().map(function(z){ return '<option value="' + esc(String(z.id)) + '">' + esc(z.nom || 'Lieu') + '</option>'; }).join('');
+  sel.value = zoneParId(garde) || garde === 'principal' ? garde : 'principal';
+  if(!sel.value) sel.value = 'principal';
+  sel.setAttribute('data-agv39', String(listeZones().length));
+  sel.onchange = function(){ etatF.derniereZone = sel.value; majDispo(); };
+  var lab = sel.parentNode.querySelector('label');
+  if(lab) lab.textContent = 'Zone de facturation (stock d\'ou sortent les articles)';
+  if(!document.getElementById('agv39-dispo')){
+    var dd = document.createElement('div');
+    dd.id = 'agv39-dispo';
+    sel.parentNode.appendChild(dd);
+  }
+  if(etatF.ancien && !bouge()){
+    var note = document.getElementById('agv39-dispo');
+    if(note) note.setAttribute('data-ancienne', '1');
+  }
+  majDispo();
+}
+/* la zone de chaque ligne, sous le nom de l'article */
+function decorerLignes(){
+  var L = lignesF() || [];
+  var rows = document.querySelectorAll('#agv38-lignes tbody tr');
+  if(!zonesActives() || etatF.nature === 'fonds') return;
+  Array.prototype.forEach.call(rows, function(tr, i){
+    var l = L[i];
+    var td = tr.firstElementChild;
+    if(!l || !td || td.querySelector('.agv39-z')) return;
+    var d = document.createElement('div');
+    d.className = 'agv39-z';
+    d.style.cssText = 'font-size:11px;color:#15803d;font-weight:600;margin-top:2px';
+    d.textContent = nomZone(l.lieuId || 'principal');
+    td.appendChild(d);
+  });
+}
+function majDispo(){
+  var z = document.getElementById('agv39-dispo');
+  if(!z) return;
+  if(etatF.ancien && !bouge()){
+    z.innerHTML = '<span style="color:#b45309">Facture etablie avant la gestion des zones : sa modification ne fait pas bouger le stock.</span>';
+    return;
+  }
+  var p = produitDe((document.getElementById('agv38-prod') || {}).value);
+  if(!p){ z.textContent = 'Choisissez un article pour voir le stock de chaque zone.'; return; }
+  var sel = document.getElementById('agv48-lieu');
+  var ici = sel ? sel.value : 'principal';
+  var parts = [{ id: 'principal', nom: 'Magasin principal' }].concat(listeZones().map(function(x){ return { id: String(x.id), nom: x.nom }; }))
+    .map(function(x){
+      var q = Math.max(0, qteZone(x.id, p.reference));
+      return (x.id === ici ? '<b style="color:#1d4ed8">' : '') + esc(x.nom) + ' : ' + q + (x.id === ici ? '</b>' : '');
+    });
+  z.innerHTML = 'Disponible — ' + parts.join(' · ');
+}
+
+(function brancherFacture(){
+  function poser(){
+    var o = window.agvFactureOuvrir, a = window.agvFactureAjouter, v = window.agvFactureValider,
+        pr = window.agvFactureProduit, mj = window.agvFactureMaj, bf = window.agvBeneficeFacture;
+    if(typeof o !== 'function' || typeof a !== 'function' || typeof v !== 'function'){ setTimeout(poser, 600); return; }
+
+    if(!o.__agv39){
+      var no = function(id){
+        etatF = { id: id || null, ancien: id ? factureParId(id) : null, nature: null, lignesMarch: null, derniereZone: etatF.derniereZone };
+        var r = o.apply(this, arguments);
+        try{
+          /* l'ecran recopie les lignes sans leur zone : on la leur rend */
+          if(etatF.ancien){
+            var L0 = lignesF() || [], A0 = tab(etatF.ancien.lignes);
+            L0.forEach(function(l, i){
+              var x = A0[i];
+              if(!x) return;
+              if(x.lieuId) l.lieuId = x.lieuId;
+              if(x.lieu) l.lieu = x.lieu;
+              if(x.ref) l.ref = x.ref;
+            });
+          }
+          if(API.actif){
+            poserNature();
+            poserZone();
+            lireReglages(function(){ if(document.getElementById('agv38-fact')) poserNature(); });
+            lireZones(function(){ if(document.getElementById('agv38-fact')){ poserZone(); decorerLignes(); } });
+          }
+        }catch(e){ console.warn('[AGV-39] facture', e); }
+        return r;
+      };
+      no.__agv39 = true;
+      window.agvFactureOuvrir = no;
+    }
+
+    if(!a.__agv39){
+      var na = function(){
+        var L = lignesF();
+        var avant = L ? L.length : 0;
+        var r = a.apply(this, arguments);
+        try{
+          L = lignesF();
+          if(API.actif && L && L.length > avant){
+            var l = L[L.length - 1];
+            var sel = document.getElementById('agv48-lieu');
+            var p = produitDe(l.produit);
+            if(p) l.ref = String(p.reference);
+            if(zonesActives()){
+              l.lieuId = sel ? (sel.value || 'principal') : 'principal';
+              l.lieu = nomZone(l.lieuId);
+              if(bouge()){
+                var anciennes = etatF.ancien ? tab(etatF.ancien.stockSorti) : [];
+                var manque = verifierDispo(sortiesDe(L), anciennes);
+                if(manque){
+                  try{ window.agvFactureRetirer(L.length - 1); }catch(e){ L.pop(); }
+                  toast(manque);
+                  var ap = document.getElementById('agv38-apercu');
+                  if(ap) ap.innerHTML = '<b style="color:#dc2626">' + esc(manque) + '</b>';
+                }
+              }
+            }
+          }
+          majDispo();
+          decorerLignes();
+        }catch(e){ console.warn('[AGV-39] ligne', e); }
+        return r;
+      };
+      na.__agv39 = true;
+      window.agvFactureAjouter = na;
+    }
+
+    var rt = window.agvFactureRetirer;
+    if(typeof rt === 'function' && !rt.__agv39){
+      var nrt = function(){ var r = rt.apply(this, arguments); try{ decorerLignes(); }catch(e){} return r; };
+      nrt.__agv39 = true;
+      window.agvFactureRetirer = nrt;
+    }
+    if(typeof pr === 'function' && !pr.__agv39){
+      var np = function(){ var r = pr.apply(this, arguments); try{ majDispo(); }catch(e){} return r; };
+      np.__agv39 = true;
+      window.agvFactureProduit = np;
+    }
+
+    if(typeof mj === 'function' && !mj.__agv39){
+      var nm = function(){
+        var r = mj.apply(this, arguments);
+        try{
+          if(etatF.nature === 'fonds'){
+            var b = document.getElementById('agv38-valider');
+            var L = lignesF() || [];
+            if(b && !L.length) b.textContent = 'Saisissez le montant prete';
+            var t1 = document.querySelector('#agv38-totaux .tr span');
+            if(t1 && t1.textContent === 'Articles') t1.textContent = 'Montant prete';
+          }
+        }catch(e){}
+        return r;
+      };
+      nm.__agv39 = true;
+      window.agvFactureMaj = nm;
+    }
+
+    if(typeof bf === 'function' && !bf.__agv39){
+      var nb2 = function(f){
+        if(f && (f.nature === 'fonds' || (enValidation && enValidation.nature === 'fonds'))) return 0;
+        return bf.apply(this, arguments);
+      };
+      nb2.__agv39 = true;
+      window.agvBeneficeFacture = nb2;
+    }
+
+    if(!v.__agv39){
+      var nv = function(){
+        if(!API.actif) return v.apply(this, arguments);
+        var ctx = preparer();
+        if(ctx.refus){ toast(ctx.refus); var al = document.getElementById('agv38-alerte');
+          if(al) al.innerHTML = '<div class="warn"><b>' + esc(ctx.refus) + '</b></div>'; return; }
+        var avantIds = {};
+        les('factureVentes').forEach(function(f){ avantIds[String(f.id)] = f; });
+        enValidation = ctx;
+        var r;
+        try{ r = v.apply(this, arguments); }
+        finally{ enValidation = null; }
+        try{
+          var fact = null;
+          if(ctx.editId){
+            var f2 = factureParId(ctx.editId);
+            if(f2 && f2 !== ctx.ancien) fact = f2;
+          }else{
+            les('factureVentes').forEach(function(f){ if(!fact && !avantIds[String(f.id)]) fact = f; });
+          }
+          if(fact) apresValidation(ctx, fact);
+        }catch(e){ console.warn('[AGV-39] validation', e); }
+        return r;
+      };
+      nv.__agv39 = true;
+      window.agvFactureValider = nv;
+    }
+  }
+  poser();
+  setInterval(function(){
+    try{
+      if(['agvFactureOuvrir', 'agvFactureAjouter', 'agvFactureValider'].some(function(n){
+        return typeof window[n] === 'function' && !window[n].__agv39; })) poser();
+    }catch(e){}
+  }, 2500);
+})();
+
+var enValidation = null;
+function preparer(){
+  var ctx = { editId: etatF.id, ancien: etatF.ancien, nature: null, lignes: [], zones: false, bouger: false,
+              sorties: [], anciennes: [], refus: null };
+  if(document.getElementById('agv39-nature')) ctx.nature = etatF.nature || 'marchandises';
+  else if(ctx.ancien && ctx.ancien.nature) ctx.nature = ctx.ancien.nature;
+  var L = lignesF() || [];
+  if(ctx.nature === 'fonds'){
+    var mt = nb((document.getElementById('agv39-fonds-mt') || {}).value);
+    if(!(mt > 0)){ ctx.refus = 'Saisissez le montant prete'; return ctx; }
+    L.length = 0;
+    L.push({ produit: libelleFonds(), qte: 1, prixU: mt, total: mt });
+  }
+  ctx.lignes = L.map(function(l){
+    return { produit: l.produit, qte: nb(l.qte), lieuId: l.lieuId || null, lieu: l.lieu || null, ref: l.ref || null };
+  });
+  ctx.anciennes = ctx.ancien ? tab(ctx.ancien.stockSorti) : [];
+  ctx.zones = zonesActives() && ctx.nature !== 'fonds';
+  ctx.bouger = ctx.zones && (!ctx.ancien || ctx.ancien.zoneFacturation !== undefined);
+  if(ctx.zones){
+    ctx.lignes.forEach(function(l){
+      if(!l.lieuId){ l.lieuId = 'principal'; l.lieu = nomZone('principal'); }
+      if(!l.ref){ var p = produitDe(l.produit); if(p) l.ref = String(p.reference); }
+    });
+  }
+  if(ctx.bouger){
+    ctx.sorties = sortiesDe(ctx.lignes);
+    var manque = verifierDispo(ctx.sorties, ctx.anciennes);
+    if(manque) ctx.refus = manque;
+  }
+  return ctx;
+}
+function apresValidation(ctx, fact){
+  var fl = Array.isArray(fact.lignes) ? fact.lignes : tab(fact.lignes);
+  ctx.lignes.forEach(function(l, i){
+    var x = fl[i];
+    if(!x) return;
+    if(l.lieu) x.lieu = l.lieu;
+    if(l.lieuId) x.lieuId = l.lieuId;
+    if(l.ref) x.ref = l.ref;
+  });
+  if(ctx.nature){
+    fact.nature = ctx.nature;
+    if(ctx.nature === 'fonds'){ fact.beneficeCalcule = 0; fact.beneficeMajLe = Date.now(); }
+  }
+  if(ctx.bouger){
+    appliquerSorties(fact, ctx.sorties, ctx.anciennes);
+    fact.stockSorti = ctx.sorties.length ? ctx.sorties : null;
+    if(!fact.stockSorti) delete fact.stockSorti;
+    var noms = {};
+    ctx.sorties.forEach(function(s){ noms[s.lieu] = true; });
+    fact.zoneFacturation = Object.keys(noms).join(', ') || 'Magasin principal';
+  }else if(ctx.ancien && ctx.ancien.zoneFacturation !== undefined && ctx.nature === 'fonds'){
+    /* un pret de marchandises devenu pret de fonds : les articles reviennent en stock */
+    appliquerSorties(fact, [], ctx.anciennes, 'Facture changee en pret de fonds — retour en stock');
+    delete fact.stockSorti;
+    fact.zoneFacturation = '';
+  }else if(ctx.ancien){
+    if(ctx.ancien.stockSorti) fact.stockSorti = ctx.ancien.stockSorti;
+    if(ctx.ancien.zoneFacturation !== undefined) fact.zoneFacturation = ctx.ancien.zoneFacturation;
+  }
+  if(ctx.ancien && ctx.ancien._harmo) fact._harmo = ctx.ancien._harmo;
+  /* la dette anterieure est desormais portee par cette facture : les
+     factures qu'elle reprend ne la comptent plus (fin de la boule de neige) */
+  if(!ctx.editId && fact.clientId && nb(fact.dettePrecedente) > 0.5) absorber(fact);
+  enregistrer();
+  oublier();
+  redessiner();
+  if(ctx.nature === 'fonds') journal('Pret de fonds', (fact.clientNom || 'client') + ' — ' + argent(fact.totalLignes) + ' — par ' + moi());
+  if(ctx.bouger && ctx.sorties.length){
+    journal('Facture — sortie de stock', numeroDe(fact) + ' — ' + ctx.sorties.map(function(s){ return s.produit + ' x' + s.qte + ' (' + s.lieu + ')'; }).join(', '));
+  }
+}
+function absorber(fact){
+  var num = numeroDe(fact), k = 0;
+  les('factureVentes').forEach(function(f){
+    if(f === fact || !meme(f.clientId, fact.clientId)) return;
+    if(nb(f.soldeRestant) <= 0.5) return;
+    if(!f._avant){
+      f._avant = { montantTotal: nb(f.montantTotal), soldeRestant: nb(f.soldeRestant),
+                   dettePrecedente: nb(f.dettePrecedente), statut: f.statut || null, corrigeLe: new Date().toISOString() };
+    }
+    f.soldeRestant = 0;
+    f.reportee = true;
+    f.reporteVers = num || null;
+    f.statut = 'reporte';
+    k++;
+  });
+  if(k) journal('Dette reportee', k + ' facture(s) de ' + (fact.clientNom || 'client') + ' reprise(s) par la facture ' + num);
+  return k;
+}
+
+/* ---- reperes dans la liste des factures ---- */
+function badges(){
+  var zone = document.getElementById('factures-mgr-list');
+  if(!zone) return;
+  Array.prototype.forEach.call(zone.querySelectorAll('[onclick^="deleteFacture("]'), function(b){
+    var m = /deleteFacture\('([^']*)'\)/.exec(b.getAttribute('onclick') || '');
+    if(!m) return;
+    var carte = b.closest ? b.closest('.card') : null;
+    if(!carte || carte.querySelector('.agv39-badges')) return;
+    var f = factureParId(m[1]);
+    if(!f || (!f.nature && !f.zoneFacturation)) return;
+    var d = document.createElement('div');
+    d.className = 'agv39-badges';
+    d.innerHTML = (f.nature === 'fonds' ? '<span class="agv39-badge agv39-b-f">Pret de fonds</span>'
+                  : (f.nature === 'marchandises' ? '<span class="agv39-badge agv39-b-m">Pret de marchandises</span>' : ''))
+      + (f.zoneFacturation ? '<span class="agv39-badge agv39-b-z">Zone : ' + esc(f.zoneFacturation) + '</span>' : '');
+    var tete = carte.firstElementChild && carte.firstElementChild.firstElementChild;
+    if(tete) tete.appendChild(d); else carte.insertBefore(d, carte.firstChild);
+  });
+}
+(function brancherListe(){
+  function poser(){
+    var r = window.renderFacturesList;
+    if(typeof r !== 'function'){ setTimeout(poser, 800); return; }
+    if(r.__agv39) return;
+    var n = function(){ var x = r.apply(this, arguments); try{ badges(); }catch(e){} return x; };
+    n.__agv39 = true;
+    window.renderFacturesList = n;
+  }
+  poser();
+  setInterval(function(){ try{ if(window.renderFacturesList && !window.renderFacturesList.__agv39) poser(); badges(); }catch(e){} }, 2500);
+})();
+
+/* ---- la nature sur la facture imprimee ---- */
+var enImpression = null;
+(function brancherImpression(){
+  function poser(){
+    var f = window.agvFactureImprimer, b = window.agvBlobPrint;
+    if(typeof f === 'function' && !f.__agv39){
+      var n = function(id){
+        enImpression = factureParId(id);
+        try{ return f.apply(this, arguments); } finally { enImpression = null; }
+      };
+      n.__agv39 = true;
+      window.agvFactureImprimer = n;
+    }
+    if(typeof b === 'function' && !b.__agv39){
+      var nbp = function(css, corps, titre){
+        var x = enImpression;
+        if(x && x.nature && typeof corps === 'string'){
+          var t = x.nature === 'fonds' ? 'PRET DE FONDS' : 'PRET DE MARCHANDISES';
+          corps = '<div style="text-align:center;font-weight:700;font-size:11px;letter-spacing:.08em;padding:4px;'
+            + 'margin-bottom:8px;border:1.5px solid #111">NATURE DE L\'OPERATION : ' + t + '</div>' + corps;
+        }
+        return b.call(this, css, corps, titre);
+      };
+      nbp.__agv39 = true;
+      window.agvBlobPrint = nbp;
+    }
+  }
+  poser();
+  setInterval(function(){ try{ poser(); }catch(e){} }, 3000);
+})();
+
+API.etat = function(){
+  var R = registreVivant();
+  console.log('[AGV-39] creances clients : affiche ' + argent(R.facturesAffiche) + ' | juste ' + argent(R.facturesJuste + R.passageJuste));
+  console.log('[AGV-39] dettes fournisseurs : affiche ' + argent(R.fournAffiche) + ' | juste ' + argent(R.fournJuste));
+  console.log('[AGV-39] anomalies : ' + R.anomalies.length + ' | nature des factures : ' + (natureActive() ? 'activee' : 'desactivee')
+    + ' | zones : ' + listeZones().length);
+  return R;
+};
+
+})();
+</script>
+
 </body></html>
