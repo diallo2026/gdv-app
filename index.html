@@ -30033,6 +30033,10 @@ var VUES = [
   { cle:'rapport',     nom:'Rapport du jour' },
   { cle:'recap',       nom:'Recapitulatif annuel' },
   { cle:'alertes',     nom:'Stock en alerte' },
+  /* [AGV-40] */
+  { cle:'stockok',     nom:'Stock disponible (au-dessus du seuil)' },
+  { cle:'dormants',    nom:'Produits dormants' },
+  { cle:'palmares',    nom:'Palmares & graphiques' },
   { cle:'personnel',   nom:'Personnel' },
   { cle:'audit',       nom:'Journal d\'audit' },
   { cle:'reinitialisation', nom:'Reinitialisation' },
@@ -30044,14 +30048,15 @@ var POSTES = [
     vues:['ventes','journalier','rapport'],
     actions:{ permVentes:true, permDep:false, permEdit:false, permDel:false, permVers:false, permPers:false } },
   { cle:'gestionnaire', nom:'Gestionnaire — tient le stock uniquement',
-    vues:['produits','inventaire','entrees','sorties','appro','alertes','commandes'],
+    vues:['produits','inventaire','entrees','sorties','appro','alertes','commandes','stockok','dormants'],
     actions:{ permVentes:false, permDep:false, permEdit:true, permDel:false, permVers:false, permPers:false } },
   { cle:'caissier',     nom:'Caissier — encaissements et versements',
     vues:['ventes','versements','dettes','clients-mgr','journalier','rapport'],
     actions:{ permVentes:true, permDep:false, permEdit:false, permDel:false, permVers:true, permPers:false } },
   { cle:'gerant',       nom:'Gerant — vue large sur la boutique',
     vues:['dashboard','produits','inventaire','ventes','depenses','journalier','entrees','sorties',
-          'appro','commandes','clients-mgr','dettes','versements','salaires','rapport','recap','alertes'],
+          'appro','commandes','clients-mgr','dettes','versements','salaires','rapport','recap','alertes',
+          'stockok','dormants','palmares'],
     actions:{ permVentes:true, permDep:true, permEdit:true, permDel:true, permVers:true, permPers:false } },
   { cle:'comptable',    nom:'Comptable — depenses, dettes et salaires',
     vues:['depenses','dettes','versements','salaires','repartition','recap','rapport'],
@@ -39892,7 +39897,9 @@ window.agvStocks = function(){
 
 
 <!-- ==================================================================
-     App AGV — VERSION AGV-39 — fichier du 2026-10-12 15:40 UTC
+     App AGV — VERSION AGV-40 — fichier du 2026-10-12 18:30 UTC
+     (AGV-40 : stock disponible au-dessus du seuil, produits dormants et rappels de
+      verification, palmares des produits / clients / fournisseurs avec graphiques ; module 33)
      (AGV-39 : dettes harmonisees, suppression multiple de ventes, reglages du fondateur,
       pret de marchandises / de fonds, zone de facturation, ouverture instantanee ; module 32)
      (AGV-38 : onglet Personnel — Enregistrer, fondateur protege et modifiable, droits appliques ;
@@ -39912,7 +39919,7 @@ window.agvStocks = function(){
      modifiee, seule sa couleur change.
 
      VERSION : la console doit afficher
-        AGV AGV-39   fichier du 2026-10-12 15:40 UTC — 27 modules
+        AGV AGV-40   fichier du 2026-10-12 18:30 UTC — 27 modules
 
       1. agv-version           : repere de version
       2. agv-performance       : sauvegarde differentielle ; cache des soldes clients oubliable
@@ -39953,8 +39960,8 @@ window.agvStocks = function(){
 (function () {
   'use strict';
   var V = {
-    version: 'AGV-39',
-    date: '2026-10-12 15:40 UTC',
+    version: 'AGV-40',
+    date: '2026-10-12 18:30 UTC',
     modules: 27,
     corrections: [
       'empreinte : deux sels (agvc$ a l ecriture, agv$ a la verification)',
@@ -39995,7 +40002,10 @@ window.agvStocks = function(){
       'DETTES : calcul juste partout, bouton Harmoniser (clients, fournisseurs), annulable',
       'DETTES : nouvelle facture -> les factures reprises ne comptent plus ; suppression -> elles reviennent',
       'FACTURE MODIFIEE : le total deja paye n est plus reinscrit comme un nouveau versement',
-      'OUVERTURE INSTANTANEE des boutiques du gerant (portail) ; il n est jamais promu fondateur'
+      'OUVERTURE INSTANTANEE des boutiques du gerant (portail) ; il n est jamais promu fondateur',
+      'STOCK DISPONIBLE : liste imprimable des produits au-dessus de leur seuil d alerte',
+      'PRODUITS DORMANTS : plus de 2 mois sans vente -> rappel peremption / sechage / etat',
+      'PALMARES : meilleurs produits, clients et fournisseurs de chaque mois, graphiques imprimables'
     ]
   };
   window.AGV_VERSION = V;
@@ -40006,7 +40016,7 @@ window.agvStocks = function(){
   V.etat = function () {
     var noms = ['AGV_PERF', 'AGV_FACT', 'AGV_PORTAIL', 'AGV_DETTES', 'AGV_RESET',
                 'AGV_FORFAIT', 'AGV_STABLE', 'AGV_LIER', 'AGV_GERANTS', 'AGV_CONNEXION',
-                'AGV_COMPTES', 'AGV_ACCES', 'AGV_CHOIX', 'AGV_ECRAN', 'AGV_AUDIT', 'AGV_DEST', 'AGV_MDP', 'AGV_SIMPLE', 'AGV_TRACE', 'AGV_BOUTON', 'AGV_ROLE', 'AGV_STOCK', 'AGV_SESSION', 'AGV_LICENCE', 'AGV_FACTURE', 'AGV_SOLDE', 'AGV_PERSONNEL', 'AGV_PORTAIL_GERANT', 'AGV_39'];
+                'AGV_COMPTES', 'AGV_ACCES', 'AGV_CHOIX', 'AGV_ECRAN', 'AGV_AUDIT', 'AGV_DEST', 'AGV_MDP', 'AGV_SIMPLE', 'AGV_TRACE', 'AGV_BOUTON', 'AGV_ROLE', 'AGV_STOCK', 'AGV_SESSION', 'AGV_LICENCE', 'AGV_FACTURE', 'AGV_SOLDE', 'AGV_PERSONNEL', 'AGV_PORTAIL_GERANT', 'AGV_39', 'AGV_40'];
     var absents = noms.filter(function (n) { return typeof window[n] !== 'object'; });
     console.log('Version ' + V.version + ' — fichier du ' + V.date);
     console.log(absents.length ? 'MODULES ABSENTS : ' + absents.join(', ')
@@ -53640,6 +53650,1217 @@ API.etat = function(){
   console.log('[AGV-39] anomalies : ' + R.anomalies.length + ' | nature des factures : ' + (natureActive() ? 'activee' : 'desactivee')
     + ' | zones : ' + listeZones().length);
   return R;
+};
+
+})();
+</script>
+
+<!-- ============================================================
+     MODULE 33 — AGV-40 : STOCK DISPONIBLE, PRODUITS DORMANTS,
+     PALMARES ET GRAPHIQUES
+     ------------------------------------------------------------
+     1. STOCK AU-DESSUS DU SEUIL : la liste imprimable des produits
+        en stock qui ne sont ni en rupture ni en alerte (stock
+        strictement superieur au seuil d'alerte).
+     2. PRODUITS DORMANTS : un produit en stock qui n'a pas ete vendu
+        depuis plus de deux mois. Un rappel s'affiche (une fois par
+        jour) : verifier la PEREMPTION pour l'alimentation, le
+        SECHAGE ou la DETERIORATION pour le ciment et le bois, l'ETAT
+        (casse, rouille, destruction) pour les autres produits.
+        « Verifie » met le produit de cote 30 jours sur cet appareil.
+     3. PALMARES : le meilleur produit, le meilleur client et le
+        meilleur fournisseur de chaque mois de chaque annee, les
+        classements de la periode et leurs graphiques.
+
+     LECTURE SEULE : aucune donnee ecrite, aucune structure modifiee.
+     Les seules memoires sont celles de l'appareil (rappel du jour,
+     produits verifies). Trois onglets s'ajoutent a la grille des
+     droits du Personnel : le fondateur les accorde comme les autres.
+     ============================================================ -->
+<style>
+.agv40v{--a40-ink:var(--text,#1a1714);--a40-ink2:var(--text2,#5c574f);--a40-muted:var(--text3,#9b9590);
+  --a40-line:var(--border,#e8e4dc);--a40-surf:var(--surface,#fff);--a40-surf2:var(--surface2,#f9f8f6);
+  --a40-serie:#2a78d6;--a40-serie-fort:#1c5cab;--a40-gris:#c3c2b7;--a40-grille:#ebe8e1;--a40-base:#c3c2b7}
+.agv40v .a40-filtres{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:16px}
+.agv40v .a40-filtres label{display:block;font-size:11px;font-weight:600;color:var(--a40-muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.04em}
+.agv40v .a40-filtres select,.agv40v .a40-filtres input{padding:8px 11px;border:1px solid var(--a40-line);border-radius:8px;
+  background:var(--a40-surf);color:var(--a40-ink);font-family:inherit;font-size:13px;min-width:150px}
+.agv40v .a40-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:16px}
+.agv40v .a40-kpi{background:var(--a40-surf);border:1px solid var(--a40-line);border-radius:var(--r,12px);padding:14px 16px}
+.agv40v .a40-kpi .l{font-size:11.5px;color:var(--a40-muted);font-weight:600}
+.agv40v .a40-kpi .v{font-size:22px;font-weight:700;color:var(--a40-ink);margin-top:4px;line-height:1.15}
+.agv40v .a40-kpi .s{font-size:11.5px;color:var(--a40-ink2);margin-top:3px}
+.agv40v .a40-carte{background:var(--a40-surf);border:1px solid var(--a40-line);border-radius:var(--r,12px);padding:16px 18px;margin-bottom:16px}
+.agv40v .a40-carte h2{margin:0;font-size:14.5px;font-weight:700;color:var(--a40-ink)}
+.agv40v .a40-carte .sous{font-size:12px;color:var(--a40-muted);margin:3px 0 12px}
+.agv40v .a40-grille2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media(max-width:900px){.agv40v .a40-grille2{grid-template-columns:1fr}}
+.agv40v .a40-graph{position:relative;width:100%}
+.agv40v .a40-graph svg{display:block;overflow:visible}
+.agv40v .a40-graph [data-i]{cursor:default;outline:none}
+.agv40v .a40-graph [data-i]:focus-visible{outline:2px solid var(--a40-serie);outline-offset:1px}
+.agv40v .a40-vide{padding:22px 6px;text-align:center;color:var(--a40-muted);font-size:13px}
+.agv40v table.a40-t{width:100%;border-collapse:collapse;font-size:13px}
+.agv40v table.a40-t th{text-align:left;font-size:11px;font-weight:600;color:var(--a40-muted);text-transform:uppercase;letter-spacing:.04em;
+  padding:9px 10px;border-bottom:1px solid var(--a40-line);background:var(--a40-surf2);white-space:nowrap}
+.agv40v table.a40-t td{padding:9px 10px;border-bottom:1px solid var(--a40-line);vertical-align:middle;color:var(--a40-ink)}
+.agv40v table.a40-t td.n,.agv40v table.a40-t th.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.agv40v table.a40-t tr.on td{background:rgba(42,120,214,.07)}
+.agv40v .a40-mut{color:var(--a40-muted);font-size:11.5px}
+.a40-fam{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:999px;font-size:11px;font-weight:700;white-space:nowrap}
+.a40-fam i{width:7px;height:7px;border-radius:50%;display:inline-block}
+.a40-f-aliment{background:#fff4e0;color:#8a5300}.a40-f-aliment i{background:#eda100}
+.a40-f-sechage{background:#f1ece6;color:#6b4f2e}.a40-f-sechage i{background:#8a6a45}
+.a40-f-etat{background:#eef1f5;color:#3f4a5a}.a40-f-etat i{background:#7a8699}
+.agv40v .a40-btn{display:inline-flex;align-items:center;gap:6px;padding:7px 13px;border:1px solid var(--a40-line);border-radius:8px;
+  background:var(--a40-surf);color:var(--a40-ink2);font-family:inherit;font-size:12.5px;font-weight:600;cursor:pointer}
+.agv40v .a40-btn:hover{background:var(--a40-surf2);color:var(--a40-ink)}
+.agv40v .a40-btn.ok{border-color:#86c99a;color:#1a7a4a}
+.agv40v .a40-seg{display:inline-flex;border:1px solid var(--a40-line);border-radius:8px;overflow:hidden}
+.agv40v .a40-seg button{border:none;background:var(--a40-surf);padding:6px 11px;font-family:inherit;font-size:12px;font-weight:600;color:var(--a40-ink2);cursor:pointer}
+.agv40v .a40-seg button.on{background:var(--a40-ink);color:#fff}
+.agv40v .a40-entete{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap}
+.agv40v .a40-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.agv40v .a40-note{font-size:12.5px;line-height:1.6;color:var(--a40-ink2);background:var(--a40-surf2);border:1px solid var(--a40-line);
+  border-radius:10px;padding:11px 13px;margin-bottom:16px}
+#a40-tip{position:fixed;z-index:2147483100;pointer-events:none;background:#1a1714;color:#fff;border-radius:8px;padding:8px 10px;
+  font-size:12px;line-height:1.45;box-shadow:0 6px 18px rgba(0,0,0,.2);max-width:260px;display:none;font-family:system-ui,-apple-system,"Segoe UI",sans-serif}
+#a40-tip b{display:block;font-size:13.5px}
+#a40-tip .k{display:inline-block;width:12px;height:2px;vertical-align:middle;margin-right:6px}
+#a40-rappel{position:fixed;inset:0;z-index:99993;background:rgba(15,23,42,.55);display:flex;align-items:center;justify-content:center;padding:14px;
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+#a40-rappel .box{background:#fff;color:#0f172a;border-radius:16px;max-width:520px;width:100%;max-height:90vh;overflow-y:auto;
+  box-shadow:0 18px 50px rgba(0,0,0,.3);padding:20px 22px}
+#a40-rappel h2{margin:0 0 4px;font-size:17px;font-weight:800}
+#a40-rappel .g{border:1px solid #e2e8f0;border-radius:11px;padding:11px 13px;margin-top:10px}
+#a40-rappel .g b{font-size:13.5px}
+#a40-rappel .g .a{font-size:12.5px;color:#475569;margin-top:3px;line-height:1.5}
+#a40-rappel .g .p{font-size:12px;color:#334155;margin-top:6px}
+#a40-rappel .pied{display:flex;gap:9px;justify-content:flex-end;margin-top:16px;flex-wrap:wrap}
+#a40-rappel .pied button{padding:10px 15px;border-radius:10px;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;
+  border:1px solid #cbd5e1;background:#fff;color:#334155}
+#a40-rappel .pied .go{background:#1d4ed8;border-color:#1d4ed8;color:#fff}
+</style>
+<script>
+(function(){
+'use strict';
+
+var API = window.AGV_40 = { actif: true, version: '1.0' };
+
+/* ============================================================
+   OUTILS
+   ============================================================ */
+function nb(v){ var n = parseFloat(v); return isNaN(n) ? 0 : n; }
+function esc(v){
+  if(v === null || v === undefined) return '';
+  return String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+                  .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+function argent(n){
+  try{ if(typeof window.fmtGNF === 'function') return window.fmtGNF(Math.round(nb(n))); }catch(e){}
+  return Math.round(nb(n)).toLocaleString('fr-FR') + ' GNF';
+}
+function entier(n){ return Math.round(nb(n)).toLocaleString('fr-FR'); }
+function qte(n){ var x = nb(n); return (Math.round(x * 100) / 100).toLocaleString('fr-FR'); }
+function compact(n){
+  var x = Math.abs(nb(n)), s = nb(n) < 0 ? '-' : '';
+  if(x >= 1e9) return s + (x / 1e9).toLocaleString('fr-FR', { maximumFractionDigits: 1 }) + ' Md';
+  if(x >= 1e6) return s + (x / 1e6).toLocaleString('fr-FR', { maximumFractionDigits: x >= 1e7 ? 0 : 1 }) + ' M';
+  if(x >= 1e3) return s + Math.round(x / 1e3).toLocaleString('fr-FR') + ' k';
+  return s + Math.round(x).toLocaleString('fr-FR');
+}
+function toast(t){ try{ if(typeof window.showToast === 'function') window.showToast(t); }catch(e){} }
+function tab(v){
+  if(!v) return [];
+  if(Array.isArray(v)) return v.filter(Boolean);
+  try{ return Object.keys(v).map(function(k){ return v[k]; }).filter(Boolean); }catch(e){ return []; }
+}
+function norm(t){
+  var s = String(t || '').toLowerCase().trim();
+  try{ s = s.normalize('NFD').replace(/[̀-ͯ]/g, ''); }catch(e){}
+  return s.replace(/œ/g, 'oe').replace(/\s+/g, ' ');
+}
+function brut(nom){
+  try{
+    switch(nom){
+      case 'ventes': return ventes;
+      case 'factureVentes': return factureVentes;
+      case 'products': return products;
+      case 'clients': return clients;
+      case 'commandes': return commandes;
+      case 'fournisseurs': return fournisseurs;
+      case 'entrees': return entrees;
+    }
+  }catch(e){}
+  return window[nom];
+}
+function les(nom){ return tab(brut(nom)); }
+function role(){
+  try{ if(window.currentRole) return window.currentRole; }catch(e){}
+  try{ return currentRole; }catch(e){}
+  return null;
+}
+function gid(){
+  var g = window.currentGerantId;
+  try{ if(g === undefined) g = currentGerantId; }catch(e){}
+  return (g === undefined || g === null || g === '') ? null : g;
+}
+function boutique(){ return window._currentShop || {}; }
+function uid(){ return boutique().uid || null; }
+function blocActif(){
+  try{ if(typeof window.agvBlocActif === 'function') return window.agvBlocActif(); }catch(e){}
+  return window._agvBloc || 'A';
+}
+function fondateurEnTitre(){
+  var P = window.AGV_PORTAIL_GERANT;
+  try{ if(P && typeof P.fondateurEnTitre === 'function') return !!P.fondateurEnTitre(); }catch(e){}
+  return role() === 'fondateur' && gid() === null;
+}
+function moi(){
+  try{
+    var p = (typeof window.agvPersonneConnectee === 'function') ? window.agvPersonneConnectee() : null;
+    if(p && p.nom) return p.nom;
+  }catch(e){}
+  if(fondateurEnTitre()) return 'Fondateur';
+  try{ var g = window.getCurrentGerant && window.getCurrentGerant(); if(g && g.nom) return g.nom; }catch(e){}
+  return '—';
+}
+/* une date (horodatage, ISO ou « AAAA-MM-JJ ») en millisecondes ; 0 si illisible */
+function quand(v){
+  if(v === undefined || v === null || v === '') return 0;
+  if(typeof v === 'number') return v > 1e11 ? v : 0;
+  var d = new Date(v).getTime();
+  return isNaN(d) ? 0 : d;
+}
+var MOIS = ['Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
+var MOIS_C = ['Jan','Fév','Mar','Avr','Mai','Juin','Juil','Août','Sep','Oct','Nov','Déc'];
+function jourFr(ms){ return ms ? new Date(ms).toLocaleDateString('fr-FR') : '—'; }
+function duree(jours){
+  if(jours < 60) return jours + ' jours';
+  var m = Math.floor(jours / 30.44), j = Math.round(jours - m * 30.44);
+  return m + ' mois' + (j > 0 ? ' et ' + j + ' j' : '');
+}
+
+/* qui voit quoi : le fondateur tout ; le personnel suit sa grille d'onglets ;
+   une fiche sans grille garde les regles d'origine (le palmares, comme le
+   tableau de bord, reste alors au fondateur) */
+function vueOuverte(cle){
+  if(!uid()) return false;
+  if(fondateurEnTitre()) return true;
+  var A = null;
+  try{ if(window.AGV_MENU && typeof window.AGV_MENU.autorises === 'function') A = window.AGV_MENU.autorises(); }catch(e){}
+  if(A === 'tout') return true;
+  if(A && typeof A === 'object') return !!A[cle];
+  return cle !== 'palmares';
+}
+API.vueOuverte = vueOuverte;
+
+/* ============================================================
+   1. LES DONNEES : produits, lignes vendues, dates d'entree
+   ============================================================ */
+function indexProduits(){
+  var parRef = {}, parNom = {}, liste = les('products');
+  liste.forEach(function(p){
+    if(p.reference !== undefined && p.reference !== null && p.reference !== '') parRef[String(p.reference)] = p;
+    if(p.designation) parNom[norm(p.designation)] = p;
+  });
+  return { liste: liste, parRef: parRef, parNom: parNom };
+}
+function produitDe(IP, ref, nom){
+  if(ref !== undefined && ref !== null && ref !== '' && IP.parRef[String(ref)]) return IP.parRef[String(ref)];
+  if(nom && IP.parNom[norm(nom)]) return IP.parNom[norm(nom)];
+  if(nom && IP.parRef[String(nom).trim()]) return IP.parRef[String(nom).trim()];
+  return null;
+}
+/* chaque ligne vendue, une seule fois : les ventes, puis les articles des
+   factures qui ne viennent pas d'une vente (sans les prets de fonds) */
+function lignesVendues(IP){
+  var out = [];
+  var facturesDeVentes = {};
+  les('ventes').forEach(function(v){
+    if(v.factureId !== undefined && v.factureId !== null && v.factureId !== '') facturesDeVentes[String(v.factureId)] = true;
+    if(v.type === 'entree') return;
+    var nom = v.name || v.produit || v.product || v.designation || '';
+    var q = nb(v.qty !== undefined ? v.qty : v.qte);
+    var ca = nb(v.total);
+    if(!ca) ca = q * nb(v.prixU || v.prix_unitaire || v.prix);
+    var p = produitDe(IP, v.ref || v.reference, nom);
+    out.push({ t: quand(v.ts) || quand(v.date), p: p, nom: p ? p.designation : nom, cle: p ? 'r:' + p.reference : 'n:' + norm(nom),
+               q: q, ca: ca, src: 'vente' });
+  });
+  var vus = {};
+  les('factureVentes').forEach(function(f){
+    if(!f || vus[String(f.id)]) return;
+    vus[String(f.id)] = true;
+    if(f.nature === 'fonds') return;
+    if(f.doublonDe !== undefined && f.doublonDe !== null && f.doublonDe !== '') return;
+    if(f.venteId !== undefined && f.venteId !== null && f.venteId !== '') return;
+    if(/^V/.test(String(f.id || '')) || f.origine === 'vente') return;
+    if(facturesDeVentes[String(f.id)]) return;                     /* deja dans les ventes */
+    var t = quand(f.dateOp) || quand(f.date) || quand(f.createdAt);
+    tab(f.lignes).forEach(function(l){
+      var nom = l.produit || l.designation || l.name || '';
+      if(!nom) return;
+      var q = nb(l.qte !== undefined ? l.qte : l.qty);
+      var ca = nb(l.total) || q * nb(l.prixU || l.prix);
+      var p = produitDe(IP, l.ref, nom);
+      out.push({ t: t, p: p, nom: p ? p.designation : nom, cle: p ? 'r:' + p.reference : 'n:' + norm(nom),
+                 q: q, ca: ca, src: 'facture' });
+    });
+  });
+  return out;
+}
+/* depuis quand un produit est-il en stock (entree la plus ancienne connue) */
+function datesEntree(IP){
+  var m = new Map();
+  function noter(p, t){ if(!p || !t) return; var x = m.get(p); if(!x || t < x) m.set(p, t); }
+  var maintenant = Date.now();
+  IP.liste.forEach(function(p){
+    var id = nb(p.id);
+    if(id > 1.3e12 && id < maintenant) noter(p, id);
+    noter(p, quand(p.dateCreation) || quand(p.createdAt) || quand(p.dateAjout));
+    tab(p.mouvements).forEach(function(mv){ noter(p, quand(mv.date)); });
+  });
+  les('ventes').forEach(function(v){
+    if(v.type !== 'entree') return;
+    noter(produitDe(IP, v.ref || v.reference, v.name || v.produit), quand(v.ts) || quand(v.date));
+  });
+  les('entrees').forEach(function(e){
+    var p = null;
+    if(e.produitId !== undefined) IP.liste.forEach(function(x){ if(!p && String(x.id) === String(e.produitId)) p = x; });
+    if(!p) p = produitDe(IP, e.ref, e.produit);
+    noter(p, quand(e.date));
+  });
+  return m;
+}
+
+/* ============================================================
+   2. STOCK AU-DESSUS DU SEUIL
+   ============================================================ */
+var zones = null;
+function lireZones(cb){
+  var r = (uid() && window.db && typeof window.db.ref === 'function') ? window.db.ref('gdv_shops/' + uid() + '/depots') : null;
+  if(!r){ zones = zones || {}; cb && cb(); return; }
+  var fini = false;
+  var t = setTimeout(function(){ if(!fini){ fini = true; zones = zones || {}; cb && cb(); } }, 6000);
+  r.once('value').then(function(s){ if(fini) return; fini = true; clearTimeout(t); zones = s.val() || {}; cb && cb(); },
+    function(){ if(!fini){ fini = true; clearTimeout(t); zones = zones || {}; cb && cb(); } });
+}
+function listeZones(){
+  return tab(zones).filter(function(z){ return z && z.id !== undefined && z.actif !== false; })
+    .sort(function(a, b){ return String(a.nom || '').localeCompare(String(b.nom || '')); });
+}
+function repartition(p){
+  var l = listeZones();
+  if(!l.length) return '';
+  var place = 0, parts = [];
+  tab(zones).forEach(function(z){ place += nb(((z && z.quantites) || {})[String(p.reference)]); });
+  parts.push('Magasin ' + qte(nb(p.stock_initial) - place));
+  l.forEach(function(z){
+    var q = nb((z.quantites || {})[String(p.reference)]);
+    if(q) parts.push(String(z.nom || 'Lieu') + ' ' + qte(q));
+  });
+  return parts.join(' · ');
+}
+function stockDispo(){
+  return les('products').filter(function(p){ return nb(p.stock_initial) > 0 && nb(p.stock_initial) > nb(p.seuil_alerte); });
+}
+API.stockDispo = stockDispo;
+var filtreStock = { q: '', cat: '' };
+
+function rendreStock(){
+  var vue = document.getElementById('view-stockok');
+  if(!vue) return;
+  if(!vueOuverte('stockok')){
+    vue.querySelector('.a40-corps').innerHTML = '<div class="a40-vide">Cet onglet ne vous est pas ouvert.</div>';
+    return;
+  }
+  var tous = stockDispo();
+  var cats = {};
+  tous.forEach(function(p){ cats[p.categorie || '—'] = true; });
+  var q = norm(filtreStock.q);
+  var l = tous.filter(function(p){
+    if(filtreStock.cat && (p.categorie || '—') !== filtreStock.cat) return false;
+    if(!q) return true;
+    return norm((p.designation || '') + ' ' + (p.reference || '') + ' ' + (p.categorie || '')).indexOf(q) >= 0;
+  }).sort(function(a, b){
+    return String(a.categorie || '').localeCompare(String(b.categorie || '')) || String(a.designation || '').localeCompare(String(b.designation || ''));
+  });
+  var valA = 0, valV = 0, quant = 0;
+  l.forEach(function(p){ quant += nb(p.stock_initial); valA += nb(p.stock_initial) * nb(p.prix_achat); valV += nb(p.stock_initial) * nb(p.prix_vente); });
+  var tousP = les('products').length;
+  var avecZones = listeZones().length > 0;
+  var corps = vue.querySelector('.a40-corps');
+  corps.innerHTML = ''
+    + '<div class="a40-note">Produits <b>en stock et au-dessus de leur seuil d\'alerte</b> (stock strictement supérieur au seuil) : '
+      + 'ni en rupture, ni en alerte. ' + tous.length + ' produit(s) sur ' + tousP + '.</div>'
+    + '<div class="a40-filtres">'
+      + '<div><label>Rechercher</label><input id="a40-s-q" placeholder="désignation, référence..." value="' + esc(filtreStock.q)
+        + '" oninput="agv40StockFiltre()"></div>'
+      + '<div><label>Catégorie</label><select id="a40-s-cat" onchange="agv40StockFiltre()"><option value="">Toutes</option>'
+        + Object.keys(cats).sort().map(function(c){ return '<option' + (c === filtreStock.cat ? ' selected' : '') + ' value="' + esc(c) + '">' + esc(c) + '</option>'; }).join('')
+        + '</select></div></div>'
+    + '<div class="a40-kpis">'
+      + kpi('Produits listés', entier(l.length), 'au-dessus du seuil')
+      + kpi('Quantité en stock', qte(quant), 'toutes unités')
+      + kpi('Valeur d\'achat', argent(valA), 'prix d\'achat × stock')
+      + kpi('Valeur de vente', argent(valV), 'prix de vente × stock')
+    + '</div>'
+    + '<div class="a40-carte" style="padding:0;overflow:hidden"><div class="a40-scroll"><table class="a40-t" style="min-width:760px">'
+      + '<thead><tr><th>Référence</th><th>Désignation</th><th>Catégorie</th><th class="n">Stock</th><th class="n">Seuil</th>'
+      + '<th class="n">Au-dessus</th><th class="n">Prix d\'achat</th><th class="n">Prix de vente</th><th class="n">Valeur</th></tr></thead><tbody>'
+      + (l.length ? l.map(function(p){
+          var rep = avecZones ? repartition(p) : '';
+          return '<tr><td class="a40-mut" style="font-family:monospace">' + esc(p.reference || '—') + '</td>'
+            + '<td><b>' + esc(p.designation || '—') + '</b>' + (rep ? '<div class="a40-mut">' + esc(rep) + '</div>' : '') + '</td>'
+            + '<td>' + esc(p.categorie || '—') + '</td>'
+            + '<td class="n"><b>' + qte(p.stock_initial) + '</b> <span class="a40-mut">' + esc(p.unite || '') + '</span></td>'
+            + '<td class="n">' + qte(p.seuil_alerte) + '</td>'
+            + '<td class="n" style="color:#1a7a4a">+' + qte(nb(p.stock_initial) - nb(p.seuil_alerte)) + '</td>'
+            + '<td class="n">' + argent(p.prix_achat) + '</td><td class="n">' + argent(p.prix_vente) + '</td>'
+            + '<td class="n"><b>' + argent(nb(p.stock_initial) * nb(p.prix_achat)) + '</b></td></tr>';
+        }).join('') : '<tr><td colspan="9" class="a40-vide">Aucun produit au-dessus de son seuil.</td></tr>')
+      + '</tbody></table></div></div>';
+  API.derniereListeStock = l;
+}
+window.agv40StockFiltre = function(){
+  var a = document.getElementById('a40-s-q'), c = document.getElementById('a40-s-cat');
+  var garde = (document.activeElement === a), pos = a ? a.selectionStart : 0;
+  filtreStock.q = a ? a.value : '';
+  filtreStock.cat = c ? c.value : '';
+  rendreStock();
+  if(garde){
+    var b = document.getElementById('a40-s-q');
+    if(b){ b.focus(); try{ b.setSelectionRange(pos, pos); }catch(e){} }
+  }
+};
+function kpi(l, v, s){
+  return '<div class="a40-kpi"><div class="l">' + esc(l) + '</div><div class="v">' + esc(v) + '</div>'
+    + (s ? '<div class="s">' + esc(s) + '</div>' : '') + '</div>';
+}
+
+/* ---- impression : un document A4 net ---- */
+var CSS_IMP = '@page{size:A4 portrait;margin:11mm 10mm}*{box-sizing:border-box}'
+  + 'body,div{font-family:Arial,Helvetica,sans-serif;color:#111}'
+  + '.en{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:2px solid #1e3a5f;padding-bottom:8px;margin-bottom:12px}'
+  + '.en .b{font-size:16px;font-weight:700;color:#1e3a5f}.en .c{font-size:10px;color:#555}'
+  + '.ti{font-size:14px;font-weight:700;margin:0 0 3px}.st{font-size:10.5px;color:#555;margin-bottom:10px}'
+  + 'table{width:100%;border-collapse:collapse;font-size:10px}'
+  + 'th{background:#1e3a5f;color:#fff;font-weight:700;padding:5px 6px;text-align:left;font-size:9.5px}'
+  + 'td{padding:4px 6px;border-bottom:1px solid #d6dbe1;vertical-align:top}'
+  + 'td.n,th.n{text-align:right;white-space:nowrap}thead{display:table-header-group}tr{page-break-inside:avoid}'
+  + '.tot td{font-weight:700;background:#eef2f6;border-top:1.5px solid #1e3a5f}'
+  + '.gr{font-size:12px;font-weight:700;margin:14px 0 4px;padding:5px 8px;background:#f1f4f8;border-left:4px solid #1e3a5f}'
+  + '.ac{font-size:10px;color:#333;margin:0 0 6px 2px}'
+  + '.mu{color:#666;font-size:9px}.case{display:inline-block;width:11px;height:11px;border:1px solid #444}'
+  + '.sig{display:flex;justify-content:space-between;gap:30px;margin-top:26px;font-size:10px}'
+  + '.sig div{flex:1;border-top:1px solid #777;padding-top:4px;text-align:center}'
+  + '.kp{display:flex;gap:8px;margin:8px 0 12px}.kp>div{flex:1;border:1px solid #d6dbe1;border-radius:4px;padding:6px 8px}'
+  + '.kp .l{font-size:8.5px;color:#666;text-transform:uppercase}.kp .v{font-size:12.5px;font-weight:700;margin-top:2px}'
+  + '.fig{margin:6px 0 14px;page-break-inside:avoid}.fig .ft{font-size:11.5px;font-weight:700;margin-bottom:4px}'
+  + '.pied{margin-top:12px;font-size:8.5px;color:#777;text-align:center}';
+function enteteImp(titre, sous){
+  var s = boutique(), d = new Date();
+  return '<div class="en"><div><div class="b">' + esc(s.entreprise || 'Boutique') + '</div>'
+    + '<div class="c">' + esc([s.ville, s.adresse, s.tel].filter(Boolean).join(' · ')) + '</div></div>'
+    + '<div class="c">Imprimé le ' + esc(d.toLocaleDateString('fr-FR')) + ' à '
+    + esc(d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })) + '<br>par ' + esc(moi()) + '</div></div>'
+    + '<div class="ti">' + esc(titre) + '</div>' + (sous ? '<div class="st">' + esc(sous) + '</div>' : '');
+}
+function imprimer(css, corps, titre){
+  try{ if(typeof window.agvJournaliser === 'function') window.agvJournaliser('Impression', titre); }catch(e){}
+  if(typeof window.agvBlobPrint === 'function'){ window.agvBlobPrint(css, corps, titre); return; }
+  var w = window.open('', '_blank');
+  if(w){ w.document.write('<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><title>' + esc(titre) + '</title><style>' + css
+    + '</style></head><body>' + corps + '</body></html>'); w.document.close(); }
+  else toast('Autorisez les fenêtres pour imprimer');
+}
+window.agv40ImprimerStock = function(){
+  if(!vueOuverte('stockok')) return toast('Cet onglet ne vous est pas ouvert');
+  var l = API.derniereListeStock || stockDispo();
+  var valA = 0, quant = 0;
+  l.forEach(function(p){ quant += nb(p.stock_initial); valA += nb(p.stock_initial) * nb(p.prix_achat); });
+  var avecZones = listeZones().length > 0;
+  var corps = enteteImp('Stock disponible — produits au-dessus du seuil d\'alerte',
+      l.length + ' produit(s) en stock, ni en rupture ni en alerte'
+      + (filtreStock.cat ? ' — catégorie ' + filtreStock.cat : '') + (filtreStock.q ? ' — recherche « ' + filtreStock.q + ' »' : ''))
+    + '<table><thead><tr><th>Réf.</th><th>Désignation</th><th>Catégorie</th><th class="n">Stock</th><th class="n">Seuil</th>'
+    + '<th class="n">P. achat</th><th class="n">P. vente</th><th class="n">Valeur</th></tr></thead><tbody>'
+    + l.map(function(p){
+        var rep = avecZones ? repartition(p) : '';
+        return '<tr><td>' + esc(p.reference || '') + '</td><td><b>' + esc(p.designation || '') + '</b>'
+          + (rep ? '<div class="mu">' + esc(rep) + '</div>' : '') + '</td><td>' + esc(p.categorie || '') + '</td>'
+          + '<td class="n"><b>' + qte(p.stock_initial) + '</b> ' + esc(p.unite || '') + '</td><td class="n">' + qte(p.seuil_alerte) + '</td>'
+          + '<td class="n">' + argent(p.prix_achat) + '</td><td class="n">' + argent(p.prix_vente) + '</td>'
+          + '<td class="n">' + argent(nb(p.stock_initial) * nb(p.prix_achat)) + '</td></tr>';
+      }).join('')
+    + '<tr class="tot"><td colspan="3">Total — ' + l.length + ' produit(s)</td><td class="n">' + qte(quant) + '</td><td></td><td></td><td></td>'
+    + '<td class="n">' + argent(valA) + '</td></tr></tbody></table>'
+    + '<div class="sig"><div>Le gestionnaire</div><div>Le fondateur</div></div>'
+    + '<div class="pied">Liste établie à partir du stock enregistré dans l\'application.</div>';
+  imprimer(CSS_IMP, corps, 'Stock disponible');
+};
+
+/* ============================================================
+   3. PRODUITS DORMANTS ET RAPPEL DE VERIFICATION
+   ============================================================ */
+var FAMILLES = {
+  aliment: { nom: 'Alimentation', action: 'Vérifier la date de péremption',
+             detail: 'Contrôler les dates de péremption ; retirer et détruire les produits périmés ou abîmés.' },
+  sechage: { nom: 'Ciment et bois', action: 'Vérifier le séchage ou la détérioration',
+             detail: 'Ciment durci ou pris en masse, bois fendu, humide ou attaqué : à écarter ou à détruire.' },
+  etat:    { nom: 'Autres produits', action: 'Vérifier l\'état du produit',
+             detail: 'Casse, rouille, emballage abîmé ou produit détruit : décider de la vente, du retour ou de la destruction.' }
+};
+var EXACT_ALIM = ['the','eau','mil','riz','sel','ail','jus','mais','pain','pate','pates','patte','pattes','cafe','lait','oeuf','oeufs',
+  'miel','soja','cube','cubes','thon','sucre','chips','sauce','glace','creme','fruit','fruits','vivres','food'];
+var PREF_ALIM = ['aliment','nourrit','denree','epicer','boisson','yaour','yogou','yogh','fromag','beurre','sucr','farin','huile','spaghet',
+  'macaron','conserv','sardin','tomat','condiment','epice','bonbon','biscuit','gateau','chocol','nescaf','cereal','viande','poisson',
+  'poulet','legum','mayon','ketchup','ingredi','cornb','corned','soda','coca','fanta','sirop','confitur','haricot','arachid','fonio',
+  'oignon','piment','vinaigr','bouillon','maggi','magui','boulang','patiss','charcut','surgel','aromat','lentil','semoul','couscous',
+  'avoine','limonad','nectar','laitier','frigo','alimen'];
+var EXACT_SECH = ['bois','latte','lattes'];
+var PREF_SECH = ['ciment','beton','mortier','platre','chaux','enduit','planche','madrier','chevron','contreplaq','contre-plaq','bastaing',
+  'parquet','menuiser','scierie'];
+function mots(t){ return norm(t).split(/[^a-z0-9-]+/).filter(Boolean); }
+function correspond(liste, exact, pref){
+  for(var i = 0; i < liste.length; i++){
+    var w = liste[i];
+    if(exact.indexOf(w) >= 0) return true;
+    for(var j = 0; j < pref.length; j++){ if(w.indexOf(pref[j]) === 0) return true; }
+  }
+  return false;
+}
+function famille(p){
+  var c = mots(p.categorie), d = mots(p.designation);
+  if(correspond(c, EXACT_SECH, PREF_SECH)) return 'sechage';
+  if(correspond(c, EXACT_ALIM, PREF_ALIM)) return 'aliment';
+  if(correspond(d, EXACT_SECH, PREF_SECH)) return 'sechage';
+  if(correspond(d, EXACT_ALIM, PREF_ALIM)) return 'aliment';
+  return 'etat';
+}
+API.famille = famille;
+
+/* « verifie » : memoire de l'appareil seulement, rien dans la base */
+var REPOS = 30;           /* jours pendant lesquels un produit verifie ne revient pas dans le rappel */
+function cleVu(){ return 'agv40_dormants_vu_' + (uid() || 'x') + '_' + blocActif(); }
+function vus(){
+  try{ return JSON.parse(localStorage.getItem(cleVu()) || '{}') || {}; }catch(e){ return {}; }
+}
+function ecrireVus(o){ try{ localStorage.setItem(cleVu(), JSON.stringify(o)); }catch(e){} }
+function cleProduit(p){ return String(p.reference || p.id || p.designation); }
+
+function dormants(){
+  var IP = indexProduits();
+  var derniere = new Map();
+  lignesVendues(IP).forEach(function(l){
+    if(!l.p || !l.t) return;
+    var x = derniere.get(l.p);
+    if(!x || l.t > x) derniere.set(l.p, l.t);
+  });
+  var entree = datesEntree(IP);
+  var ouverture = quand(boutique().dateCreation);
+  var limite = new Date(); limite.setMonth(limite.getMonth() - 2);
+  limite = limite.getTime();
+  var maintenant = Date.now(), V = vus();
+  var out = [];
+  IP.liste.forEach(function(p){
+    if(!(nb(p.stock_initial) > 0)) return;
+    var dv = derniere.get(p) || 0;
+    var de = entree.get(p) || 0;
+    var depuis = dv || de || ouverture;
+    if(!depuis || depuis > limite) return;
+    var vu = V[cleProduit(p)];
+    out.push({ p: p, famille: famille(p), derniereVente: dv, entree: de || (dv ? 0 : ouverture), depuis: depuis,
+               jours: Math.floor((maintenant - depuis) / 864e5),
+               verifie: (vu && maintenant - vu < REPOS * 864e5) ? vu : 0,
+               valeur: nb(p.stock_initial) * nb(p.prix_achat) });
+  });
+  out.sort(function(a, b){ return b.jours - a.jours; });
+  return out;
+}
+API.dormants = dormants;
+
+var filtreDorm = { fam: '' };
+function rendreDormants(){
+  var vue = document.getElementById('view-dormants');
+  if(!vue) return;
+  var corps = vue.querySelector('.a40-corps');
+  if(!vueOuverte('dormants')){ corps.innerHTML = '<div class="a40-vide">Cet onglet ne vous est pas ouvert.</div>'; return; }
+  var tous = dormants();
+  var parF = { aliment: 0, sechage: 0, etat: 0 };
+  tous.forEach(function(d){ parF[d.famille]++; });
+  var l = tous.filter(function(d){ return !filtreDorm.fam || d.famille === filtreDorm.fam; });
+  var valeur = 0;
+  l.forEach(function(d){ valeur += d.valeur; });
+  var aVerifier = tous.filter(function(d){ return !d.verifie; }).length;
+  corps.innerHTML = ''
+    + '<div class="a40-note">Produits <b>en stock et non vendus depuis plus de deux mois</b> (depuis la dernière vente, '
+      + 'ou depuis leur entrée s\'ils n\'ont jamais été vendus). Chacun appelle une vérification selon sa nature. '
+      + '« Vérifié » le retire du rappel pendant ' + REPOS + ' jours sur cet appareil ; rien n\'est écrit dans la base.</div>'
+    + '<div class="a40-kpis">'
+      + kpi('À vérifier', entier(aVerifier), tous.length + ' produit(s) dormant(s) au total')
+      + kpi('Alimentation', entier(parF.aliment), 'péremption')
+      + kpi('Ciment et bois', entier(parF.sechage), 'séchage ou détérioration')
+      + kpi('Autres produits', entier(parF.etat), 'état du produit')
+      + kpi('Valeur immobilisée', argent(valeur), 'au prix d\'achat')
+    + '</div>'
+    + '<div class="a40-filtres"><div><label>Nature</label><select id="a40-d-fam" onchange="agv40DormFiltre(this.value)">'
+      + '<option value="">Toutes</option>'
+      + ['aliment', 'sechage', 'etat'].map(function(k){ return '<option value="' + k + '"' + (filtreDorm.fam === k ? ' selected' : '') + '>'
+          + FAMILLES[k].nom + ' (' + parF[k] + ')</option>'; }).join('')
+      + '</select></div></div>'
+    + '<div class="a40-carte" style="padding:0;overflow:hidden"><div class="a40-scroll"><table class="a40-t" style="min-width:820px">'
+      + '<thead><tr><th>Produit</th><th>Nature</th><th class="n">Stock</th><th>Dernière vente</th><th class="n">Sans vente</th>'
+      + '<th>Vérification à faire</th><th></th></tr></thead><tbody>'
+      + (l.length ? l.map(function(d){
+          var p = d.p, F = FAMILLES[d.famille];
+          return '<tr' + (d.verifie ? ' style="opacity:.55"' : '') + '><td><b>' + esc(p.designation || '—') + '</b>'
+              + '<div class="a40-mut">' + esc((p.reference || '') + (p.categorie ? ' · ' + p.categorie : '')) + '</div></td>'
+            + '<td><span class="a40-fam a40-f-' + d.famille + '"><i></i>' + esc(F.nom) + '</span></td>'
+            + '<td class="n"><b>' + qte(p.stock_initial) + '</b> <span class="a40-mut">' + esc(p.unite || '') + '</span></td>'
+            + '<td>' + (d.derniereVente ? esc(jourFr(d.derniereVente))
+                : '<span class="a40-mut">jamais vendu' + (d.entree ? ' — en stock depuis le ' + esc(jourFr(d.entree)) : '') + '</span>') + '</td>'
+            + '<td class="n"><b>' + esc(duree(d.jours)) + '</b></td>'
+            + '<td><b>' + esc(F.action) + '</b><div class="a40-mut">' + esc(F.detail) + '</div></td>'
+            + '<td style="white-space:nowrap">' + (d.verifie
+                ? '<span class="a40-mut">vérifié le ' + esc(jourFr(d.verifie)) + '</span> '
+                  + '<button class="a40-btn" onclick="agv40DormVu(\'' + esc(encodeURIComponent(cleProduit(p))) + '\',0)">Annuler</button>'
+                : '<button class="a40-btn ok" onclick="agv40DormVu(\'' + esc(encodeURIComponent(cleProduit(p))) + '\',1)">✔ Vérifié</button>')
+            + '</td></tr>';
+        }).join('') : '<tr><td colspan="7" class="a40-vide">Aucun produit dormant : tout ce qui est en stock s\'est vendu ces deux derniers mois.</td></tr>')
+      + '</tbody></table></div></div>';
+  majBadge(tous);
+}
+window.agv40DormFiltre = function(v){ filtreDorm.fam = v || ''; rendreDormants(); };
+window.agv40DormVu = function(cle, on){
+  var V = vus();
+  cle = decodeURIComponent(cle);
+  if(on) V[cle] = Date.now(); else delete V[cle];
+  ecrireVus(V);
+  rendreDormants();
+};
+var badgeMemo = { cle: '', t: 0 };
+function empreinteStock(){
+  return les('products').length + '|' + les('ventes').length + '|' + les('factureVentes').length + '|'
+    + les('products').reduce(function(s, p){ return s + nb(p.stock_initial); }, 0) + '|' + JSON.stringify(vus()).length;
+}
+function majBadge(l){
+  var b = document.getElementById('nb-dormants');
+  if(!b) return;
+  if(!l){
+    var k = empreinteStock();
+    if(k === badgeMemo.cle && Date.now() - badgeMemo.t < 60000) return;
+    badgeMemo.cle = k; badgeMemo.t = Date.now();
+  }
+  var n = (l || dormants()).filter(function(d){ return !d.verifie; }).length;
+  b.textContent = n;
+  b.style.display = n ? '' : 'none';
+}
+window.agv40ImprimerDormants = function(){
+  if(!vueOuverte('dormants')) return toast('Cet onglet ne vous est pas ouvert');
+  var l = dormants().filter(function(d){ return !filtreDorm.fam || d.famille === filtreDorm.fam; });
+  var corps = enteteImp('Produits dormants — vérification de l\'état du stock',
+    l.length + ' produit(s) en stock sans vente depuis plus de deux mois — fiche de contrôle à remplir sur place');
+  ['aliment', 'sechage', 'etat'].forEach(function(k){
+    var g = l.filter(function(d){ return d.famille === k; });
+    if(!g.length) return;
+    var F = FAMILLES[k];
+    corps += '<div class="gr">' + esc(F.nom) + ' — ' + esc(F.action) + ' (' + g.length + ')</div>'
+      + '<div class="ac">' + esc(F.detail) + '</div>'
+      + '<table><thead><tr><th>Produit</th><th>Catégorie</th><th class="n">Stock</th><th>Dernière vente</th><th class="n">Sans vente</th>'
+      + '<th>Constat</th><th>Décision</th></tr></thead><tbody>'
+      + g.map(function(d){
+          var p = d.p;
+          return '<tr><td><b>' + esc(p.designation || '') + '</b><div class="mu">' + esc(p.reference || '') + '</div></td>'
+            + '<td>' + esc(p.categorie || '') + '</td><td class="n">' + qte(p.stock_initial) + ' ' + esc(p.unite || '') + '</td>'
+            + '<td>' + (d.derniereVente ? esc(jourFr(d.derniereVente)) : 'jamais vendu' + (d.entree ? '<div class="mu">en stock depuis le ' + esc(jourFr(d.entree)) + '</div>' : '')) + '</td>'
+            + '<td class="n">' + esc(duree(d.jours)) + '</td>'
+            + '<td><span class="case"></span> bon &nbsp; <span class="case"></span> à écarter</td>'
+            + '<td style="width:22%">&nbsp;</td></tr>';
+        }).join('') + '</tbody></table>';
+  });
+  if(!l.length) corps += '<div class="st">Aucun produit dormant.</div>';
+  corps += '<div class="sig"><div>Contrôlé par</div><div>Date du contrôle</div><div>Visa du fondateur</div></div>';
+  imprimer(CSS_IMP, corps, 'Produits dormants');
+};
+
+/* ---- le rappel, une fois par jour sur cet appareil ---- */
+function cleRappel(){ return 'agv40_rappel_' + (uid() || 'x') + '_' + blocActif(); }
+function aujourdHui(){ var d = new Date(); return d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate(); }
+function ecranLibre(){
+  var app = document.getElementById('app');
+  if(!app || !app.classList.contains('visible')) return false;
+  var bloquants = ['agv-accueil', 'agv-pg', 'agv-splash', 'agv38-fact', 'agvcv-overlay', 'agv40-page', 'agv39-reg', 'agv39-harmo',
+    'agv-print-area', 'agv-ecran-blocage', 'agv-ecran-hors-ligne', 'agvcu-overlay', 'a40-rappel', 'agv-ger-depart'];
+  for(var i = 0; i < bloquants.length; i++){ if(document.getElementById(bloquants[i])) return false; }
+  var inst = document.querySelector('.modal-overlay.open, .overlay.open');
+  return !inst;
+}
+function afficherRappel(l){
+  var parF = { aliment: [], sechage: [], etat: [] };
+  l.forEach(function(d){ parF[d.famille].push(d); });
+  var ov = document.createElement('div');
+  ov.id = 'a40-rappel';
+  ov.innerHTML = '<div class="box" role="dialog" aria-labelledby="a40-r-t">'
+    + '<h2 id="a40-r-t">Rappel — vérification du stock</h2>'
+    + '<div style="font-size:13px;color:#475569;line-height:1.55"><b>' + l.length + ' produit(s)</b> en stock n\'ont pas été vendus '
+      + 'depuis plus de deux mois. Vérifiez leur état avant qu\'ils ne se perdent.</div>'
+    + ['aliment', 'sechage', 'etat'].map(function(k){
+        var g = parF[k];
+        if(!g.length) return '';
+        var F = FAMILLES[k];
+        return '<div class="g"><span class="a40-fam a40-f-' + k + '"><i></i>' + esc(F.nom) + ' · ' + g.length + '</span>'
+          + '<div style="margin-top:6px"><b>' + esc(F.action) + '</b></div><div class="a">' + esc(F.detail) + '</div>'
+          + '<div class="p">' + g.slice(0, 4).map(function(d){ return esc(d.p.designation) + ' (' + esc(duree(d.jours)) + ')'; }).join(' · ')
+          + (g.length > 4 ? ' · et ' + (g.length - 4) + ' autre(s)' : '') + '</div></div>';
+      }).join('')
+    + '<div class="pied"><button onclick="agv40RappelFermer()">Plus tard</button>'
+      + '<button class="go" onclick="agv40RappelFermer();showView(\'dormants\')">Voir les produits</button></div></div>';
+  ov.onclick = function(e){ if(e.target === ov) window.agv40RappelFermer(); };
+  document.body.appendChild(ov);
+}
+window.agv40RappelFermer = function(){ var o = document.getElementById('a40-rappel'); if(o) o.remove(); };
+var rappelFait = false;
+function surveillerRappel(){
+  if(rappelFait || !API.actif) return;
+  if(!uid() || !window._AGV_READY || !les('products').length) return;
+  if(!vueOuverte('dormants')) return;
+  var cle = cleRappel();
+  var deja = null;
+  try{ deja = localStorage.getItem(cle); }catch(e){}
+  if(deja === aujourdHui()){ rappelFait = true; return; }
+  if(!ecranLibre()) return;
+  var l = dormants().filter(function(d){ return !d.verifie; });
+  rappelFait = true;
+  if(!l.length) return;
+  try{ localStorage.setItem(cle, aujourdHui()); }catch(e){}
+  afficherRappel(l);
+}
+API.rappelMaintenant = function(){
+  try{ localStorage.removeItem(cleRappel()); }catch(e){}
+  rappelFait = false;
+  surveillerRappel();
+};
+setInterval(function(){ try{ surveillerRappel(); }catch(e){ console.warn('[AGV-40] rappel', e); } }, 4000);
+
+/* ============================================================
+   4. PALMARES : meilleurs produits, clients, fournisseurs
+   ============================================================ */
+function cleMois(ms){ var d = new Date(ms); return d.getFullYear() + '-' + (d.getMonth() < 9 ? '0' : '') + (d.getMonth() + 1); }
+var GENERIQUES = ['client comptant', 'client de passage', 'client', 'comptant', 'passage', 'divers', 'clients divers', ''];
+function achatsClients(){
+  var nomsCli = {};
+  les('clients').forEach(function(c){ if(c && c.id !== undefined) nomsCli[String(c.id)] = c.nom || ''; });
+  var out = [], vus = {};
+  les('factureVentes').forEach(function(f){
+    if(!f || vus[String(f.id)]) return;
+    vus[String(f.id)] = true;
+    if(f.nature === 'fonds') return;
+    if(f.doublonDe !== undefined && f.doublonDe !== null && f.doublonDe !== '') return;
+    var t = quand(f.dateOp) || quand(f.date) || quand(f.createdAt);
+    if(!t) return;
+    var cle, nom;
+    if(f.clientId !== undefined && f.clientId !== null && f.clientId !== ''){
+      cle = 'c:' + f.clientId; nom = nomsCli[String(f.clientId)] || f.clientNom || ('Client ' + f.clientId);
+    }else{
+      nom = String(f.acheteurNom || f.clientNom || '').trim();
+      if(GENERIQUES.indexOf(norm(nom)) >= 0) return;
+      cle = 'p:' + norm(nom); nom = nom + ' (de passage)';
+    }
+    var t2 = f.totalLignes;
+    if(t2 === undefined || t2 === null || t2 === '') t2 = tab(f.lignes).reduce(function(s, l){ return s + nb(l && l.total); }, 0) || nb(f.total);
+    var m = nb(t2) - nb(f.remise) + nb(f.frais);
+    if(!(m > 0)) return;
+    out.push({ t: t, cle: cle, nom: nom, montant: m, paye: nb(f.montantPaye) });
+  });
+  return out;
+}
+function montantCommande(c){
+  if(nb(c.montantTotal) > 0) return nb(c.montantTotal);
+  var recu = tab(c.lignes).reduce(function(s, l){ return l.statut === 'non-recu' ? s : s + nb(l.qteRecue) * nb(l.prixU); }, 0);
+  if(recu > 0) return recu;
+  return nb(c.totalEstime) || tab(c.lignes).reduce(function(s, l){ return s + nb(l.total); }, 0);
+}
+function achatsFournisseurs(){
+  var noms = {};
+  les('fournisseurs').forEach(function(f){ if(f && f.id !== undefined) noms[String(f.id)] = f.nom || ''; });
+  var out = [];
+  les('commandes').forEach(function(c){
+    if(!c) return;
+    var t = quand(c.date) || quand(c.createdAt);
+    var m = montantCommande(c);
+    if(!t || !(m > 0)) return;
+    var nom = noms[String(c.fournisseurId)] || c.fournisseurNom || 'Fournisseur';
+    var cle = noms[String(c.fournisseurId)] !== undefined ? 'f:' + c.fournisseurId : 'n:' + norm(nom);
+    var cmd = 0, recu = 0;
+    tab(c.lignes).forEach(function(l){ cmd += nb(l.qte); recu += nb(l.qteRecue); });
+    out.push({ t: t, cle: cle, nom: nom, montant: m, paye: tab(c.paiements).reduce(function(s, p){ return s + nb(p && p.montant); }, 0),
+               qCmd: cmd, qRecu: recu, recue: c.statut === 'recu' || c.statut === 'partiel' || recu > 0 });
+  });
+  return out;
+}
+function classer(lignes, filtre, valeur){
+  var m = {};
+  lignes.forEach(function(l){
+    if(!filtre(l)) return;
+    var x = m[l.cle] || (m[l.cle] = { cle: l.cle, nom: l.nom, v: 0, n: 0, q: 0, paye: 0, qCmd: 0, qRecu: 0 });
+    x.v += valeur(l); x.n++; x.q += nb(l.q); x.paye += nb(l.paye); x.qCmd += nb(l.qCmd); x.qRecu += nb(l.qRecu);
+  });
+  return Object.keys(m).map(function(k){ return m[k]; }).filter(function(x){ return x.v > 0; })
+    .sort(function(a, b){ return b.v - a.v || String(a.nom).localeCompare(String(b.nom)); });
+}
+
+var choix = { an: null, mois: null, mesure: 'ca' };     /* mois : 0-11, ou null = toute l'annee */
+function donneesPalmares(){
+  var IP = indexProduits();
+  return { ventes: lignesVendues(IP).filter(function(l){ return l.t; }), clients: achatsClients(), fourn: achatsFournisseurs() };
+}
+function anneesDe(D){
+  var a = {};
+  [D.ventes, D.clients, D.fourn].forEach(function(l){ l.forEach(function(x){ a[new Date(x.t).getFullYear()] = true; }); });
+  a[new Date().getFullYear()] = true;
+  return Object.keys(a).map(Number).sort(function(x, y){ return y - x; });
+}
+function dansPeriode(an, mois){
+  return function(l){
+    var d = new Date(l.t);
+    return d.getFullYear() === an && (mois === null || d.getMonth() === mois);
+  };
+}
+
+/* ---- les graphiques (SVG, une seule serie, palette validee) ---- */
+var TIPS = {};
+function tip(){
+  var t = document.getElementById('a40-tip');
+  if(!t){ t = document.createElement('div'); t.id = 'a40-tip'; t.setAttribute('role', 'tooltip'); document.body.appendChild(t); }
+  return t;
+}
+function montrerTip(ev, info){
+  var t = tip();
+  t.textContent = '';
+  var b = document.createElement('b'); b.textContent = info.valeur; t.appendChild(b);
+  var r = document.createElement('div');
+  var k = document.createElement('span'); k.className = 'k'; k.style.background = info.couleur || '#2a78d6';
+  r.appendChild(k); r.appendChild(document.createTextNode(info.titre)); t.appendChild(r);
+  (info.lignes || []).forEach(function(x){ var d = document.createElement('div'); d.style.opacity = '.8'; d.textContent = x; t.appendChild(d); });
+  t.style.display = 'block';
+  var x, y;
+  if(ev && ev.clientX !== undefined && ev.type !== 'focus'){ x = ev.clientX; y = ev.clientY; }
+  else{ var rc = ev.target.getBoundingClientRect(); x = rc.left + rc.width / 2; y = rc.top; }
+  var w = t.offsetWidth, h = t.offsetHeight;
+  var gx = Math.min(window.innerWidth - w - 8, Math.max(8, x + 14));
+  var gy = y - h - 12 < 8 ? y + 16 : y - h - 12;
+  t.style.left = gx + 'px'; t.style.top = gy + 'px';
+}
+function cacherTip(){ var t = document.getElementById('a40-tip'); if(t) t.style.display = 'none'; }
+function brancherTips(el, id){
+  Array.prototype.forEach.call(el.querySelectorAll('[data-i]'), function(m){
+    var i = Number(m.getAttribute('data-i'));
+    var f = function(ev){
+      var info = TIPS[id] && TIPS[id][i];
+      if(!info) return;
+      var cible = el.querySelector('[data-m="' + i + '"]');
+      Array.prototype.forEach.call(el.querySelectorAll('[data-m]'), function(x){ x.style.opacity = ''; });
+      if(cible) cible.style.opacity = '.82';
+      montrerTip(ev, info);
+    };
+    m.addEventListener('pointermove', f);
+    m.addEventListener('focus', f);
+    var out = function(){ cacherTip(); Array.prototype.forEach.call(el.querySelectorAll('[data-m]'), function(x){ x.style.opacity = ''; }); };
+    m.addEventListener('pointerleave', out);
+    m.addEventListener('blur', out);
+  });
+}
+function texteCoupe(s, maxCar){ s = String(s || ''); return s.length > maxCar ? s.slice(0, Math.max(1, maxCar - 1)) + '…' : s; }
+/* barres horizontales : rangs du meilleur au moins bon ; valeur au bout */
+function svgBarres(items, largeur, id, fmt, couleur){
+  couleur = couleur || '#2a78d6';
+  var n = items.length, rangH = 30, barreH = 18, haut = n * rangH + 6;
+  var etiq = Math.max(104, Math.min(210, Math.round(largeur * 0.34)));
+  var valW = 82;
+  var x0 = etiq, plot = Math.max(40, largeur - etiq - valW);
+  var max = 0; items.forEach(function(x){ if(x.v > max) max = x.v; });
+  var maxCar = Math.floor((etiq - 12) / 6.6);
+  var s = '<svg xmlns="http://www.w3.org/2000/svg" width="' + largeur + '" height="' + haut + '" viewBox="0 0 ' + largeur + ' ' + haut + '" '
+    + 'font-family="system-ui,-apple-system,Segoe UI,sans-serif" role="img">';
+  TIPS[id] = [];
+  items.forEach(function(x, i){
+    var y = 3 + i * rangH + (rangH - barreH) / 2;
+    var w = max > 0 ? Math.max(2, Math.round(x.v / max * plot)) : 2;
+    var r = Math.min(4, w);
+    s += '<text x="' + (x0 - 10) + '" y="' + (y + barreH / 2 + 4.5) + '" text-anchor="end" font-size="12.5" fill="#5c574f">'
+      + esc(texteCoupe((i + 1) + '. ' + x.nom, maxCar)) + '</text>';
+    s += '<path data-m="' + i + '" fill="' + couleur + '" d="M' + x0 + ',' + y + 'h' + (w - r) + 'a' + r + ',' + r + ' 0 0 1 ' + r + ',' + r
+      + 'v' + (barreH - 2 * r) + 'a' + r + ',' + r + ' 0 0 1 -' + r + ',' + r + 'h-' + (w - r) + 'z"/>';
+    s += '<text x="' + (x0 + w + 6) + '" y="' + (y + barreH / 2 + 4.5) + '" font-size="12" font-weight="600" fill="#1a1714">'
+      + esc(fmt.court(x.v)) + '</text>';
+    s += '<rect data-i="' + i + '" tabindex="0" aria-label="' + esc(x.nom + ' : ' + fmt.long(x.v)) + '" x="0" y="' + (3 + i * rangH)
+      + '" width="' + largeur + '" height="' + rangH + '" fill="transparent"/>';
+    TIPS[id].push({ valeur: fmt.long(x.v), titre: x.nom, lignes: x.details || [], couleur: couleur });
+  });
+  s += '<line x1="' + x0 + '" y1="0" x2="' + x0 + '" y2="' + haut + '" stroke="#c3c2b7" stroke-width="1"/>';
+  return s + '</svg>';
+}
+/* colonnes des 12 mois ; le mois choisi en couleur, les autres en retrait */
+function svgMois(valeurs, largeur, id, moisChoisi, fmt){
+  var haut = 210, g = 46, d = 8, h0 = 14, b = 26;
+  var plotW = largeur - g - d, plotH = haut - h0 - b;
+  var max = 0; valeurs.forEach(function(v){ if(v > max) max = v; });
+  var pas = graduation(max);
+  var top = pas * Math.max(1, Math.ceil(max / pas));
+  var s = '<svg xmlns="http://www.w3.org/2000/svg" width="' + largeur + '" height="' + haut + '" viewBox="0 0 ' + largeur + ' ' + haut + '" '
+    + 'font-family="system-ui,-apple-system,Segoe UI,sans-serif" role="img">';
+  for(var v = 0; v <= top + 1e-9; v += pas){
+    var y = h0 + plotH - (top ? v / top * plotH : 0);
+    s += '<line x1="' + g + '" y1="' + y + '" x2="' + (largeur - d) + '" y2="' + y + '" stroke="' + (v === 0 ? '#c3c2b7' : '#ebe8e1') + '" stroke-width="1"/>';
+    s += '<text x="' + (g - 7) + '" y="' + (y + 4) + '" text-anchor="end" font-size="11" fill="#9b9590" style="font-variant-numeric:tabular-nums">'
+      + esc(compact(v)) + '</text>';
+  }
+  var bande = plotW / 12, colW = Math.min(24, Math.max(6, bande * 0.56));
+  var iMax = -1; valeurs.forEach(function(v, i){ if(v > 0 && (iMax < 0 || v > valeurs[iMax])) iMax = i; });
+  var etiquette = (moisChoisi !== null && valeurs[moisChoisi] > 0) ? moisChoisi : iMax;
+  TIPS[id] = [];
+  valeurs.forEach(function(v, i){
+    var x = g + i * bande + (bande - colW) / 2;
+    var hh = top ? v / top * plotH : 0;
+    var y = h0 + plotH - hh;
+    var c = (moisChoisi === null || moisChoisi === i) ? '#2a78d6' : '#c3c2b7';
+    if(hh > 0){
+      var r = Math.min(4, hh, colW / 2);
+      s += '<path data-m="' + i + '" fill="' + c + '" d="M' + x + ',' + (h0 + plotH) + 'v-' + (hh - r) + 'a' + r + ',' + r + ' 0 0 1 ' + r + ',-' + r
+        + 'h' + (colW - 2 * r) + 'a' + r + ',' + r + ' 0 0 1 ' + r + ',' + r + 'v' + (hh - r) + 'z"/>';
+    }
+    if(i === etiquette && v > 0){
+      s += '<text x="' + (x + colW / 2) + '" y="' + (y - 6) + '" text-anchor="middle" font-size="11.5" font-weight="600" fill="#1a1714">'
+        + esc(compact(v)) + '</text>';
+    }
+    /* sur un ecran etroit, l'initiale du mois : les noms abreges se chevauchaient */
+    var nomM = bande < 36 ? MOIS[i].charAt(0) : MOIS_C[i];
+    s += '<text x="' + (x + colW / 2) + '" y="' + (haut - 8) + '" text-anchor="middle" font-size="11" fill="' + (moisChoisi === i ? '#1a1714' : '#9b9590') + '"'
+      + (moisChoisi === i ? ' font-weight="700"' : '') + '>' + nomM + '</text>';
+    s += '<rect data-i="' + i + '" tabindex="0" aria-label="' + esc(MOIS[i] + ' : ' + fmt.long(v)) + '" x="' + (g + i * bande) + '" y="' + h0
+      + '" width="' + bande + '" height="' + (plotH + b) + '" fill="transparent"/>';
+    TIPS[id].push({ valeur: fmt.long(v), titre: MOIS[i], lignes: [], couleur: c });
+  });
+  return s + '</svg>';
+}
+function graduation(max){
+  if(!(max > 0)) return 1;
+  var brutPas = max / 4, p = Math.pow(10, Math.floor(Math.log10(brutPas))), r = brutPas / p;
+  var m = r <= 1 ? 1 : r <= 2 ? 2 : r <= 2.5 ? 2.5 : r <= 5 ? 5 : 10;
+  return m * p;
+}
+var FMT_ARGENT = { court: function(v){ return compact(v); }, long: function(v){ return argent(v); } };
+var FMT_QTE = { court: function(v){ return compact(v); }, long: function(v){ return qte(v) + ' unité(s)'; } };
+
+function libellePeriode(){ return choix.mois === null ? 'année ' + choix.an : MOIS[choix.mois] + ' ' + choix.an; }
+
+function rendrePalmares(){
+  var vue = document.getElementById('view-palmares');
+  if(!vue) return;
+  var corps = vue.querySelector('.a40-corps');
+  if(!vueOuverte('palmares')){ corps.innerHTML = '<div class="a40-vide">Cet onglet est réservé au fondateur ou aux personnes à qui il l\'a accordé.</div>'; return; }
+  var D = donneesPalmares();
+  var ans = anneesDe(D);
+  if(choix.an === null || ans.indexOf(choix.an) < 0){
+    choix.an = ans[0];
+    var m = new Date().getMonth();
+    choix.mois = D.ventes.some(dansPeriode(choix.an, m)) ? m : null;
+  }
+  var fP = dansPeriode(choix.an, choix.mois);
+  var prod = classer(D.ventes, fP, function(l){ return choix.mesure === 'q' ? nb(l.q) : nb(l.ca); });
+  var prodCa = classer(D.ventes, fP, function(l){ return nb(l.ca); });
+  var cli = classer(D.clients, fP, function(l){ return l.montant; });
+  var fo = classer(D.fourn, fP, function(l){ return l.montant; });
+  var parMois = [];
+  for(var i = 0; i < 12; i++){
+    var fm = dansPeriode(choix.an, i);
+    parMois.push({
+      ca: D.ventes.filter(fm).reduce(function(s, l){ return s + nb(l.ca); }, 0),
+      p: classer(D.ventes, fm, function(l){ return nb(l.ca); })[0] || null,
+      c: classer(D.clients, fm, function(l){ return l.montant; })[0] || null,
+      f: classer(D.fourn, fm, function(l){ return l.montant; })[0] || null
+    });
+  }
+  var caPer = prodCa.reduce(function(s, x){ return s + x.v; }, 0);
+  var qPer = prodCa.reduce(function(s, x){ return s + x.q; }, 0);
+  var achatsF = fo.reduce(function(s, x){ return s + x.v; }, 0);
+
+  corps.innerHTML = ''
+    + '<div class="a40-filtres">'
+      + '<div><label>Année</label><select id="a40-p-an" onchange="agv40Periode()">'
+        + ans.map(function(a){ return '<option' + (a === choix.an ? ' selected' : '') + '>' + a + '</option>'; }).join('') + '</select></div>'
+      + '<div><label>Période</label><select id="a40-p-mois" onchange="agv40Periode()"><option value="">Toute l\'année</option>'
+        + MOIS.map(function(m, i){ return '<option value="' + i + '"' + (choix.mois === i ? ' selected' : '') + '>' + m + '</option>'; }).join('') + '</select></div>'
+    + '</div>'
+    + '<div class="a40-kpis">'
+      + kpi('Ventes — ' + libellePeriode(), argent(caPer), entier(qPer) + ' unité(s) vendue(s)')
+      + kpi('Meilleur produit', prodCa[0] ? prodCa[0].nom : '—', prodCa[0] ? argent(prodCa[0].v) : 'aucune vente')
+      + kpi('Meilleur client', cli[0] ? cli[0].nom : '—', cli[0] ? argent(cli[0].v) + ' d\'achats' : 'aucune facture client')
+      + kpi('Meilleur fournisseur', fo[0] ? fo[0].nom : '—', fo[0] ? argent(fo[0].v) + ' d\'achats' : 'aucune commande')
+    + '</div>'
+    + '<div class="a40-carte"><h2>Ventes par mois — ' + choix.an + '</h2>'
+      + '<div class="sous">' + (choix.mois === null ? 'Chaque mois de l\'année ; le meilleur mois est chiffré.' : MOIS[choix.mois] + ' en couleur, les autres mois en retrait.') + '</div>'
+      + '<div class="a40-graph" id="a40-g-mois"></div></div>'
+    + '<div class="a40-grille2">'
+      + '<div class="a40-carte"><div class="a40-entete"><div><h2>Meilleurs produits</h2><div class="sous">' + esc(libellePeriode())
+          + ' — classés par ' + (choix.mesure === 'q' ? 'quantité vendue' : 'chiffre de ventes') + '</div></div>'
+        + '<div class="a40-seg"><button class="' + (choix.mesure === 'ca' ? 'on' : '') + '" onclick="agv40Mesure(\'ca\')">Montant</button>'
+        + '<button class="' + (choix.mesure === 'q' ? 'on' : '') + '" onclick="agv40Mesure(\'q\')">Quantité</button></div></div>'
+        + '<div class="a40-graph" id="a40-g-prod"></div></div>'
+      + '<div class="a40-carte"><h2>Meilleurs clients</h2><div class="sous">' + esc(libellePeriode()) + ' — achats facturés (hors prêts de fonds)</div>'
+        + '<div class="a40-graph" id="a40-g-cli"></div></div>'
+    + '</div>'
+    + '<div class="a40-carte"><h2>Meilleurs fournisseurs</h2><div class="sous">' + esc(libellePeriode()) + ' — montant des commandes</div>'
+      + '<div class="a40-grille2" style="align-items:start"><div class="a40-graph" id="a40-g-fo"></div>'
+      + '<div class="a40-scroll">' + tableFourn(fo) + '</div></div></div>'
+    + '<div class="a40-carte"><h2>Le meilleur de chaque mois — ' + choix.an + '</h2>'
+      + '<div class="sous">Meilleur produit (montant vendu), meilleur client (achats) et meilleur fournisseur (commandes) de chaque mois.</div>'
+      + '<div class="a40-scroll">' + tableMois(parMois) + '</div></div>';
+
+  API.dernierPalmares = { prod: prod, cli: cli, fo: fo, parMois: parMois, caPer: caPer, qPer: qPer, achatsF: achatsF };
+  dessinerGraphiques();
+}
+function tableFourn(fo){
+  if(!fo.length) return '<div class="a40-vide">Aucune commande sur la période.</div>';
+  return '<table class="a40-t"><thead><tr><th>Fournisseur</th><th class="n">Commandes</th><th class="n">Montant</th><th class="n">Livré</th></tr></thead><tbody>'
+    + fo.slice(0, 10).map(function(x){
+        var taux = x.qCmd > 0 ? Math.round(Math.min(1, x.qRecu / x.qCmd) * 100) + ' %' : '—';
+        return '<tr><td>' + esc(x.nom) + '</td><td class="n">' + x.n + '</td><td class="n">' + argent(x.v) + '</td><td class="n">' + taux + '</td></tr>';
+      }).join('') + '</tbody></table>';
+}
+function tableMois(parMois){
+  var auj = new Date();
+  return '<table class="a40-t" style="min-width:720px"><thead><tr><th>Mois</th><th class="n">Ventes du mois</th><th>Meilleur produit</th>'
+    + '<th>Meilleur client</th><th>Meilleur fournisseur</th></tr></thead><tbody>'
+    + parMois.map(function(m, i){
+        var cell = function(x){ return x ? '<b>' + esc(x.nom) + '</b><div class="a40-mut">' + argent(x.v) + '</div>' : '<span class="a40-mut">—</span>'; };
+        var futur = choix.an > auj.getFullYear() || (choix.an === auj.getFullYear() && i > auj.getMonth());
+        return '<tr class="' + (choix.mois === i ? 'on' : '') + '"' + (futur ? ' style="opacity:.45"' : '') + '><td><b>' + MOIS[i] + '</b></td>'
+          + '<td class="n">' + (m.ca ? argent(m.ca) : '<span class="a40-mut">—</span>') + '</td>'
+          + '<td>' + cell(m.p) + '</td><td>' + cell(m.c) + '</td><td>' + cell(m.f) + '</td></tr>';
+      }).join('') + '</tbody></table>';
+}
+function largeurDe(id, defaut){
+  var el = document.getElementById(id);
+  var w = el ? el.clientWidth : 0;
+  return Math.max(260, w || defaut || 600);
+}
+function dessinerGraphiques(){
+  var P = API.dernierPalmares;
+  if(!P) return;
+  var g1 = document.getElementById('a40-g-mois');
+  if(g1){
+    g1.innerHTML = svgMois(P.parMois.map(function(m){ return m.ca; }), largeurDe('a40-g-mois', 700), 'mois', choix.mois, FMT_ARGENT);
+    brancherTips(g1, 'mois');
+  }
+  var fmtP = choix.mesure === 'q' ? FMT_QTE : FMT_ARGENT;
+  remplir('a40-g-prod', 'prod', P.prod.slice(0, 10).map(function(x){
+    return { nom: x.nom, v: x.v, details: [qte(x.q) + ' unité(s) — ' + x.n + ' vente(s)'] };
+  }), fmtP, 'Aucune vente sur la période.');
+  remplir('a40-g-cli', 'cli', P.cli.slice(0, 10).map(function(x){
+    return { nom: x.nom, v: x.v, details: [x.n + ' facture(s) — payé ' + argent(x.paye)] };
+  }), FMT_ARGENT, 'Aucun achat de client enregistré sur la période.');
+  remplir('a40-g-fo', 'fo', P.fo.slice(0, 8).map(function(x){
+    return { nom: x.nom, v: x.v, details: [x.n + ' commande(s) — payé ' + argent(x.paye)] };
+  }), FMT_ARGENT, 'Aucune commande sur la période.');
+}
+function remplir(id, cle, items, fmt, vide){
+  var el = document.getElementById(id);
+  if(!el) return;
+  if(!items.length){ el.innerHTML = '<div class="a40-vide">' + esc(vide) + '</div>'; return; }
+  el.innerHTML = svgBarres(items, largeurDe(id, 420), cle, fmt);
+  brancherTips(el, cle);
+}
+window.agv40Periode = function(){
+  var a = document.getElementById('a40-p-an'), m = document.getElementById('a40-p-mois');
+  choix.an = a ? Number(a.value) : choix.an;
+  choix.mois = (m && m.value !== '') ? Number(m.value) : null;
+  rendrePalmares();
+};
+window.agv40Mesure = function(x){ choix.mesure = x === 'q' ? 'q' : 'ca'; rendrePalmares(); };
+var minuteurTaille = null;
+window.addEventListener('resize', function(){
+  clearTimeout(minuteurTaille);
+  minuteurTaille = setTimeout(function(){
+    var v = document.getElementById('view-palmares');
+    if(v && v.classList.contains('active')) dessinerGraphiques();
+  }, 200);
+});
+
+window.agv40ImprimerPalmares = function(){
+  if(!vueOuverte('palmares')) return toast('Cet onglet ne vous est pas ouvert');
+  if(!API.dernierPalmares) rendrePalmares();
+  var P = API.dernierPalmares;
+  if(!P) return;
+  var L = 680;
+  var fmtP = choix.mesure === 'q' ? FMT_QTE : FMT_ARGENT;
+  var corps = enteteImp('Palmarès — ' + libellePeriode(), 'Meilleurs produits, clients et fournisseurs ; ventes par mois de ' + choix.an)
+    + '<div class="kp"><div><div class="l">Ventes de la période</div><div class="v">' + argent(P.caPer) + '</div></div>'
+    + '<div><div class="l">Unités vendues</div><div class="v">' + entier(P.qPer) + '</div></div>'
+    + '<div><div class="l">Achats aux fournisseurs</div><div class="v">' + argent(P.achatsF) + '</div></div></div>'
+    + '<div class="fig"><div class="ft">Ventes par mois — ' + choix.an + '</div>'
+      + svgMois(P.parMois.map(function(m){ return m.ca; }), L, 'imp-mois', choix.mois, FMT_ARGENT) + '</div>'
+    + figure('Meilleurs produits — ' + libellePeriode() + (choix.mesure === 'q' ? ' (quantité)' : ' (montant)'), P.prod.slice(0, 10), fmtP, L, 'imp-prod')
+    + figure('Meilleurs clients — ' + libellePeriode(), P.cli.slice(0, 10), FMT_ARGENT, L, 'imp-cli')
+    + figure('Meilleurs fournisseurs — ' + libellePeriode(), P.fo.slice(0, 8), FMT_ARGENT, L, 'imp-fo')
+    + '<div class="fig"><div class="ft">Le meilleur de chaque mois — ' + choix.an + '</div><table><thead><tr><th>Mois</th><th class="n">Ventes</th>'
+      + '<th>Meilleur produit</th><th>Meilleur client</th><th>Meilleur fournisseur</th></tr></thead><tbody>'
+      + P.parMois.map(function(m, i){
+          var c = function(x){ return x ? esc(x.nom) + '<div class="mu">' + argent(x.v) + '</div>' : '—'; };
+          return '<tr><td><b>' + MOIS[i] + '</b></td><td class="n">' + (m.ca ? argent(m.ca) : '—') + '</td><td>' + c(m.p) + '</td><td>' + c(m.c) + '</td><td>' + c(m.f) + '</td></tr>';
+        }).join('') + '</tbody></table></div>'
+    + '<div class="pied">Ventes : ventes enregistrées et factures établies hors vente (prêts de fonds exclus). Clients : achats facturés. Fournisseurs : montant des commandes.</div>';
+  imprimer(CSS_IMP, corps, 'Palmarès ' + libellePeriode());
+};
+function figure(titre, liste, fmt, L, id){
+  return '<div class="fig"><div class="ft">' + esc(titre) + '</div>'
+    + (liste.length ? svgBarres(liste.map(function(x){ return { nom: x.nom, v: x.v }; }), L, id, fmt)
+                    : '<div class="mu">Aucune donnée sur la période.</div>') + '</div>';
+}
+
+/* ============================================================
+   5. LES ONGLETS : menu, cadres, ouverture
+   ============================================================ */
+var ICONES = {
+  stockok: 'M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4M9 12l2 2 4-4',
+  dormants: 'M12 8v4l3 3M21 12a9 9 0 11-18 0 9 9 0 0118 0z',
+  palmares: 'M8 21h8M12 17v4M7 4h10v5a5 5 0 01-10 0V4zM17 5h3v2a3 3 0 01-3 3M7 5H4v2a3 3 0 003 3'
+};
+var ONGLETS = [
+  { cle: 'stockok', titre: 'Stock au-dessus du seuil', menu: 'Stock disponible', imprimer: 'agv40ImprimerStock()', apres: 'alertes' },
+  { cle: 'dormants', titre: 'Produits dormants — vérification du stock', menu: 'Produits dormants', imprimer: 'agv40ImprimerDormants()', apres: 'stockok' },
+  { cle: 'palmares', titre: 'Palmarès et graphiques', menu: 'Palmarès & graphiques', imprimer: 'agv40ImprimerPalmares()', apres: 'recap' }
+];
+function icone(d){
+  return '<svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="' + d
+    + '" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+}
+function navDe(cle){
+  if(cle === 'alertes'){
+    var t = null;
+    Array.prototype.forEach.call(document.querySelectorAll('.nav-item'), function(b){
+      if(!t && /showView\(\s*'alertes'\s*\)/.test(b.getAttribute('onclick') || '')) t = b;
+    });
+    return t;
+  }
+  return document.getElementById('nav-' + cle);
+}
+function poserOnglets(){
+  var modele = document.getElementById('view-alertes');
+  if(!modele || !modele.parentNode) return false;
+  var ok = true;
+  ONGLETS.forEach(function(o){
+    if(!document.getElementById('view-' + o.cle)){
+      var v = document.createElement('div');
+      v.className = 'view agv40v';
+      v.id = 'view-' + o.cle;
+      v.innerHTML = '<div class="topbar" style="flex-wrap:wrap"><h1>' + esc(o.titre) + '</h1>'
+        + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-left:auto"><button class="btn-print" onclick="' + o.imprimer + '">🖨️ Imprimer / PDF</button></div></div>'
+        + '<div class="a40-corps"></div>';
+      modele.parentNode.appendChild(v);
+    }
+    if(!document.getElementById('nav-' + o.cle)){
+      var ancre = navDe(o.apres);
+      if(!ancre || !ancre.parentNode){ ok = false; return; }
+      var b = document.createElement('button');
+      b.className = 'nav-item';
+      b.id = 'nav-' + o.cle;
+      b.setAttribute('onclick', "showView('" + o.cle + "')");
+      b.innerHTML = icone(ICONES[o.cle]) + ' ' + esc(o.menu)
+        + (o.cle === 'dormants' ? ' <span class="nav-badge" id="nb-dormants" style="background:#eda100;color:#1a1714;display:none">0</span>' : '');
+      ancre.parentNode.insertBefore(b, ancre.nextSibling);
+    }
+  });
+  return ok;
+}
+function appliquerMenu(){
+  ONGLETS.forEach(function(o){
+    var b = document.getElementById('nav-' + o.cle);
+    if(!b) return;
+    /* une fiche sans grille d'onglets : le palmares reste au fondateur */
+    if(o.cle === 'palmares'){
+      var cache = !vueOuverte('palmares');
+      if(cache) b.style.display = 'none';
+      else if(b.style.display === 'none' && !b.classList.contains('agv-nav-interdit')) b.style.display = '';
+    }
+  });
+}
+function rendre(cle){
+  if(cle === 'stockok'){ rendreStock(); lireZones(function(){ var v = document.getElementById('view-stockok'); if(v && v.classList.contains('active')) rendreStock(); }); }
+  else if(cle === 'dormants') rendreDormants();
+  else if(cle === 'palmares') rendrePalmares();
+}
+(function brancherVues(){
+  function poser(){
+    var f = window.showView;
+    if(typeof f !== 'function'){ setTimeout(poser, 400); return; }
+    if(window._agv40Vues) return;
+    window._agv40Vues = true;
+    var n = function(v){
+      var r = f.apply(this, arguments);
+      try{
+        if(API.actif && (v === 'stockok' || v === 'dormants' || v === 'palmares')){
+          var el = document.getElementById('view-' + v);
+          if(el && el.classList.contains('active')){
+            var nav = document.getElementById('nav-' + v);
+            if(nav) nav.classList.add('active');
+            rendre(v);
+          }
+        }
+      }catch(e){ console.warn('[AGV-40]', e); }
+      return r;
+    };
+    n.__agv40 = true;
+    window.showView = n;
+  }
+  poser();
+})();
+
+setInterval(function(){
+  try{
+    if(!uid() || !API.actif) return;
+    poserOnglets();
+    appliquerMenu();
+    if(window._AGV_READY) majBadge();
+    ['stockok', 'dormants'].forEach(function(k){
+      var v = document.getElementById('view-' + k);
+      if(!v || !v.classList.contains('active')) return;
+      var emp = k + '|' + les('products').length + '|' + les('ventes').length + '|' + les('products').reduce(function(s, p){ return s + nb(p.stock_initial); }, 0);
+      if(v.getAttribute('data-emp') !== emp){
+        v.setAttribute('data-emp', emp);
+        var actif = document.activeElement;
+        if(!actif || !v.contains(actif) || actif.tagName === 'BUTTON') rendre(k);
+      }
+    });
+  }catch(e){}
+}, 1500);
+
+/* une tuile « Palmares » dans le portail du fondateur */
+setInterval(function(){
+  try{
+    if(!API.actif || !fondateurEnTitre()) return;
+    var pin = document.querySelector('#agv39-tuiles .portail-in');
+    if(!pin || document.getElementById('agv40-t-pal')) return;
+    var t = document.createElement('div');
+    t.className = 'tuile';
+    t.id = 'agv40-t-pal';
+    t.setAttribute('onclick', "agvAccueilFermer&&agvAccueilFermer();showView('palmares')");
+    t.innerHTML = '<div class="rond"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" '
+      + 'stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16M7 16v-5M12 16V6M17 16v-8"/></svg></div>'
+      + '<div class="t">Palmarès</div><div class="s">produits, clients, fournisseurs</div>';
+    var reg = document.getElementById('agv39-t-reg');
+    if(reg && reg.nextSibling) pin.insertBefore(t, reg.nextSibling);
+    else pin.appendChild(t);
+  }catch(e){}
+}, 900);
+
+API.etat = function(){
+  var d = dormants();
+  console.log('[AGV-40] stock au-dessus du seuil : ' + stockDispo().length + ' | dormants : ' + d.length
+    + ' (a verifier : ' + d.filter(function(x){ return !x.verifie; }).length + ')');
+  return { stock: stockDispo().length, dormants: d.length };
 };
 
 })();
