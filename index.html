@@ -55015,6 +55015,7 @@ function brut(nom){
       case 'factureVentes': return factureVentes;
       case 'commandes': return commandes;
       case 'dettes': return dettes;
+      case 'gerants': return gerants;
     }
   }catch(e){}
   return window[nom];
@@ -55354,15 +55355,93 @@ function empreinte(){
   var a39 = (window.AGV_39 && window.AGV_39.actif) ? 1 : 0;
   return [lc.length, lf.length, lv.length, lm.length, ld.length, a39, h].join('|');
 }
-var memo = { cle: null, R: null };
+/* [CORRECTIF VERSEMENTS NON APPLIQUES] l'ecouteur Firebase remplace les tableaux
+   par de NOUVEAUX objets a chaque mise a jour, souvent avec un contenu identique :
+   l'empreinte ne changeait pas, le registre gardait les ANCIENS objets, et le
+   versement suivant etait ecrit dans des objets qui ne sont plus sauvegardes.
+   Le registre est desormais refait des que les tableaux ne sont plus les memes. */
+var memo = { cle: null, R: null, refs: null };
+function refsActuelles(){
+  var s = vivant();
+  return [s.clients, s.fournisseurs, s.factureVentes, s.commandes, s.dettes];
+}
+function memesRefs(a, b){
+  if(!a || !b || a.length !== b.length) return false;
+  for(var i = 0; i < a.length; i++) if(a[i] !== b[i]) return false;
+  return true;
+}
 function registre(){
+  var refs = refsActuelles();
   var k = empreinte();
-  if(memo.R && memo.cle === k) return memo.R;
+  if(memo.R && memo.cle === k && memesRefs(memo.refs, refs)) return memo.R;
+  if(memo.refs && !memesRefs(memo.refs, refs)){
+    try{ if(window.AGV_39 && typeof window.AGV_39.oublier === 'function') window.AGV_39.oublier(); }catch(e){}
+  }
   memo.R = construire(vivant(), true);
   memo.cle = k;
+  memo.refs = refs;
   return memo.R;
 }
-function oublier(){ memo.cle = null; memo.R = null; }
+function oublier(){ memo.cle = null; memo.R = null; memo.refs = null; }
+/* l'objet VIVANT (celui qui sera sauvegarde) designe par sa cle F:, C:, D: */
+function objetVivant(cle){
+  var s = String(cle || ''), sorte = { D: 'dette', F: 'facture', C: 'commande' }[s.charAt(0)];
+  if(!sorte || s.charAt(1) !== ':') return null;
+  var id = s.slice(2);
+  var l = tab(brut(sorte === 'facture' ? 'factureVentes' : (sorte === 'commande' ? 'commandes' : 'dettes')));
+  for(var i = 0; i < l.length; i++){ if(l[i] && String(l[i].id) === id) return { sorte: sorte, obj: l[i] }; }
+  return null;
+}
+API.objetVivant = objetVivant;
+function totalFacture(o){
+  var mt = parseFloat(o.montantTotal);
+  if(!isNaN(mt) && mt > 0) return mt;
+  var t = !vide(o.totalLignes) ? nb(o.totalLignes) : tab(o.lignes).reduce(function(s, l){ return s + nb(l && l.total); }, 0);
+  return Math.max(0, t - nb(o.remise) + nb(o.frais));
+}
+/* les soldes d'une piece recalcules depuis ses versements */
+function recalculerPiece(sorte, o, deltaPaye){
+  if(sorte === 'facture'){
+    o.montantPaye = Math.max(0, r2(nb(o.montantPaye) + deltaPaye));
+    o.soldeRestant = Math.max(0, r2(totalFacture(o) - o.montantPaye));
+    o.statut = o.soldeRestant <= 0.5 ? 'paye' : (o.montantPaye > 0 ? 'partiel' : 'impaye');
+  }else if(sorte === 'commande'){
+    o.montantPaye = r2(sommeP(o.paiements));
+    o.soldeRestant = Math.max(0, r2(totalCommande(o) - o.montantPaye));
+  }
+}
+/* la sauvegarde part TOUT DE SUITE : le delai de regroupement (500 ms) laissait
+   une mise a jour venue d'un autre appareil effacer le versement avant son envoi */
+function sauverMaintenant(branches){
+  enregistrer();
+  try{
+    var P = window.AGV_PERF;
+    if(P && P.actif !== false && typeof P.viderFileAttente === 'function'){
+      var st = P.stats || {}, e0 = st.envois || 0, v0 = st.ecrituresEvitees || 0;
+      P.viderFileAttente();
+      st = P.stats || {};
+      if((st.envois || 0) > e0 || (st.ecrituresEvitees || 0) > v0) return true;
+    }
+  }catch(e){}
+  /* un envoi est deja en cours : ces branches partent quand meme maintenant */
+  try{
+    var s = window._currentShop;
+    if(!window._AGV_READY || !s || !s.uid || !window.db || typeof window.db.ref !== 'function') return false;
+    var maj = {}, n = 0;
+    (branches || []).forEach(function(b){
+      var v = brut(b);
+      if(v === undefined || v === null) return;
+      maj[b] = JSON.parse(JSON.stringify(Array.isArray(v) ? v : tab(v)));
+      n++;
+    });
+    if(!n) return false;
+    window.db.ref('gdv_shops/' + s.uid + '/data').update(maj).then(null, function(err){
+      console.warn('[AGV-41] envoi immediat refuse, la sauvegarde normale prendra le relais', err);
+    });
+    return true;
+  }catch(e){ return false; }
+}
+API.sauverMaintenant = sauverMaintenant;
 API.registre = registre;
 API.oublier = oublier;
 
@@ -55558,7 +55637,7 @@ function rendreFiche(){
         + '<th style="text-align:right;padding:7px">Montant</th>'
         + '<th style="text-align:left;padding:7px">Mode</th>'
         + '<th style="text-align:left;padding:7px">Caisse</th>'
-        + '<th style="text-align:left;padding:7px">Note</th></tr></thead><tbody>'
+        + '<th style="text-align:left;padding:7px">Note</th><th style="text-align:left;padding:7px">Corriger</th></tr></thead><tbody>'
         + versements.map(function(x){
             return '<tr style="border-top:1px solid var(--border)">'
               + '<td style="padding:7px;font-size:12px">' + esc(jour(x.p.date)) + '</td>'
@@ -55578,11 +55657,18 @@ function rendreFiche(){
                       + esc(x.p.caisseNom || nomMoyen(x.p.caisse)) + '</span>'
                     : '<span style="color:var(--text3)">—</span>') + '</td>'
               + '<td style="padding:7px;font-size:11.5px;color:var(--text3)">' + esc(x.p.note || '—') + '</td>'
+              + '<td style="padding:7px;white-space:nowrap">'
+                + '<button class="agv41-mini" title="Modifier ce versement" onclick="agvVersModifier(decodeURIComponent(\'' + encoder(x.item.cle) + '\'),' + x.i
+                  + ',decodeURIComponent(\'' + encoder(x.p.id === undefined || x.p.id === null ? '' : x.p.id) + '\'))">&#9998; Modifier</button>'
+                + '<button class="agv41-mini" title="Supprimer ce versement" style="color:var(--red,#dc2626)" onclick="agvVersSupprimer(decodeURIComponent(\'' + encoder(x.item.cle) + '\'),' + x.i
+                  + ',decodeURIComponent(\'' + encoder(x.p.id === undefined || x.p.id === null ? '' : x.p.id) + '\'))">&#128465;</button>'
+              + '</td>'
               + '</tr>';
           }).join('')
         + '</tbody></table></div>'
         + '<div style="font-size:10.5px;color:var(--text3);margin-top:9px">'
-        + 'Le mode d\'un versement deja enregistre se change directement dans la liste.</div>'
+        + 'Le mode d\'un versement se change directement dans la liste ; « Modifier » corrige son montant, sa date, '
+        + 'sa caisse ou sa note, et les restes dus sont recalcules.</div>'
       : '<div style="font-size:12.5px;color:var(--text3)">Aucun versement pour l\'instant.</div>')
     + '</div></div>';
   apercu();
@@ -55621,24 +55707,21 @@ function apercu(){
 
 /* l'ecriture, identique au module v32 */
 function inscrire(item, montant, pm){
-  var o = item.obj;
+  var v = objetVivant(item.cle);
+  if(!v) return false;
+  var o = v.obj;
   var ligne = {};
   for(var k in pm) ligne[k] = pm[k];
   ligne.montant = montant;
   if(!Array.isArray(o.paiements)) o.paiements = tab(o.paiements);
   o.paiements.push(ligne);
-  if(item.sorte === 'facture'){
-    o.montantPaye = nb(o.montantPaye) + montant;
-    o.soldeRestant = Math.max(0, nb(o.montantTotal) - o.montantPaye);
-    o.statut = o.soldeRestant <= 0 ? 'paye' : (o.montantPaye > 0 ? 'partiel' : 'impaye');
-  }else if(item.sorte === 'commande'){
-    o.montantPaye = sommeP(o.paiements);
-    o.soldeRestant = Math.max(0, nb(o.montantTotal) - o.montantPaye);
-  }
+  recalculerPiece(item.sorte, o, montant);
+  return true;
 }
 
 function enregistrerVersement(){
   if(!peutVerser()) return toast('Vous n\'enregistrez pas les versements');
+  oublier();                                   /* le registre est refait sur les donnees vivantes */
   var g = groupeChoisi();
   if(!g) return toast('Choisissez d\'abord un client ou un fournisseur');
   var choix = (document.getElementById('agv32-vers-dette') || {}).value;
@@ -55666,20 +55749,21 @@ function enregistrerVersement(){
   var libelle = nomMoyen(mode) || mode;
   var libDest = nomMoyen(dest) || dest;
   var base = Date.now();
-  var commandesTouchees = false;
+  var commandesTouchees = false, rates = 0;
   r.parts.forEach(function(x, k){
-    inscrire(x.item, x.montant, {
+    var ok = inscrire(x.item, x.montant, {
       id: base + k, date: date, note: note || 'Versement',
       mode: mode, modeNom: libelle, caisse: dest, caisseNom: libDest,
       sens: client ? 'entree' : 'sortie', auto: false, par: auteur(), origine: 'versements'
     });
+    if(!ok) rates++;
     if(x.item.sorte === 'commande') commandesTouchees = true;
   });
+  if(rates) toast(rates + ' piece(s) introuvable(s) — actualisez la page et verifiez le versement');
   if(commandesTouchees && typeof window.agvRecalculerFournisseurs === 'function'){
-    try{ window.agvRecalculerFournisseurs(); }catch(e){ enregistrer(); }
-  }else{
-    enregistrer();
+    try{ window.agvRecalculerFournisseurs(); }catch(e){}
   }
+  sauverMaintenant(['factureVentes', 'dettes', 'commandes']);
   oublier();
   try{ if(window.AGV_PERF && typeof window.AGV_PERF.oublierIndex === 'function') window.AGV_PERF.oublierIndex(); }catch(e){}
   try{ if(window.AGV_39 && typeof window.AGV_39.oublier === 'function') window.AGV_39.oublier(); }catch(e){}
@@ -55698,6 +55782,136 @@ function enregistrerVersement(){
     try{ if(window.AGV_SOLDE && typeof window.AGV_SOLDE.rafraichir === 'function') window.AGV_SOLDE.rafraichir('un versement'); }catch(e){}
   }, 260);
 }
+
+/* ============================================================
+   3 bis. CORRIGER OU SUPPRIMER UN VERSEMENT DEJA ENREGISTRE
+   La ligne est modifiee dans les paiements de sa piece (facture,
+   commande ou dette) et les soldes de la piece sont recalcules :
+   facture  -> montant paye corrige de la difference, reste, statut
+   commande -> montant paye = somme des versements, reste, reflet
+   dette    -> le reste se recalcule de lui-meme
+   ============================================================ */
+function droit(cle){
+  if(role() === 'fondateur'){
+    try{
+      var p = (typeof window.agvPersonneConnectee === 'function') ? window.agvPersonneConnectee() : null;
+      if(!p) return true;
+    }catch(e){ return true; }
+  }
+  try{ if(typeof window.agvActionPermise === 'function') return !!window.agvActionPermise(cle); }catch(e){}
+  return role() === 'fondateur';
+}
+function trouverPaiement(cle, i, pid){
+  var v = objetVivant(cle);
+  if(!v) return null;
+  var l = tab(v.obj.paiements);
+  if(!Array.isArray(v.obj.paiements)) v.obj.paiements = l;
+  var k = -1;
+  if(!vide(pid)) for(var j = 0; j < l.length; j++){ if(l[j] && String(l[j].id) === String(pid)){ k = j; break; } }
+  if(k < 0 && l[nb(i)]) k = nb(i);
+  if(k < 0) return null;
+  return { sorte: v.sorte, obj: v.obj, liste: v.obj.paiements, index: k, p: v.obj.paiements[k] };
+}
+function apresCorrection(t, action, detail){
+  if(t.sorte === 'commande' && typeof window.agvRecalculerFournisseurs === 'function'){
+    try{ window.agvRecalculerFournisseurs(); }catch(e){}
+  }
+  sauverMaintenant(['factureVentes', 'dettes', 'commandes']);
+  oublier();
+  try{ if(window.AGV_PERF && typeof window.AGV_PERF.oublierIndex === 'function') window.AGV_PERF.oublierIndex(); }catch(e){}
+  try{ if(window.AGV_39 && typeof window.AGV_39.oublier === 'function') window.AGV_39.oublier(); }catch(e){}
+  journal(action, detail);
+  ['renderDettes', 'renderDashboard', 'renderFacturesList', 'renderClientsListe', 'renderCommandesList',
+   'renderFournisseurs'].forEach(function(f){
+    try{ if(typeof window[f] === 'function') window[f](); }catch(e){}
+  });
+  rendreTousLesBlocs();
+  chercher();
+  rendreFiche();
+  setTimeout(function(){
+    try{ if(window.AGV_SOLDE && typeof window.AGV_SOLDE.rafraichir === 'function') window.AGV_SOLDE.rafraichir('une correction de versement'); }catch(e){}
+  }, 260);
+}
+
+window.agvVersModifier = function(cle, i, pid){
+  if(!droit('permEdit')) return toast('Vous n\'avez pas le droit de modifier un enregistrement');
+  var t = trouverPaiement(cle, i, pid);
+  if(!t) return toast('Versement introuvable — actualisez la page');
+  var p = t.p, g = groupeChoisi();
+  var client = g ? g.type === 'client' : (t.sorte === 'facture' || (t.obj.type === 'client'));
+  var vieux = document.getElementById('agv41-edit');
+  if(vieux) vieux.remove();
+  var ov = document.createElement('div');
+  ov.id = 'agv41-edit';
+  ov.style.cssText = 'position:fixed;inset:0;z-index:99996;background:rgba(15,23,42,.6);display:flex;align-items:center;'
+    + 'justify-content:center;padding:14px';
+  var champ = 'width:100%;padding:9px 11px;border:1px solid var(--border,#cbd5e1);border-radius:8px;background:var(--surface2,#fff);'
+    + 'color:var(--text,#111);font-family:inherit;font-size:14px;box-sizing:border-box';
+  var lab = 'display:block;font-size:11.5px;font-weight:700;color:var(--text3,#64748b);margin:10px 0 4px';
+  var jourP = String(p.date || '').slice(0, 10);
+  ov.innerHTML = '<div style="background:var(--surface,#fff);color:var(--text,#111);border:1px solid var(--border,#e2e8f0);'
+      + 'border-radius:15px;max-width:440px;width:100%;padding:18px 20px;box-shadow:0 18px 50px rgba(0,0,0,.35);max-height:92vh;overflow-y:auto">'
+    + '<div style="font-size:16px;font-weight:800">&#9998; Modifier le versement</div>'
+    + '<div style="font-size:12px;color:var(--text3,#64748b);margin-top:3px">' + esc(g ? g.nom : '') + ' — '
+      + esc(t.sorte === 'facture' ? 'facture ' + (t.obj.numero || t.obj.no || '') : (t.sorte === 'commande' ? 'commande du ' + jour(t.obj.date) : 'dette'))
+      + ' — montant actuel <b>' + esc(argent(p.montant)) + '</b></div>'
+    + '<label style="' + lab + '">Montant (GNF)</label><input id="agv41-e-mt" type="number" min="0" value="' + esc(nb(p.montant)) + '" style="' + champ + '">'
+    + '<label style="' + lab + '">Date du versement</label><input id="agv41-e-date" type="date" value="' + esc(jourP) + '" style="' + champ + '">'
+    + '<label style="' + lab + '">' + (client ? 'Mode de paiement du client' : 'Caisse d\'ou sort l\'argent') + '</label>'
+      + '<select id="agv41-e-mode" style="' + champ + '">' + optionsMoyens(p.mode || '') + (p.mode ? '' : '<option value="" selected>— non precise —</option>') + '</select>'
+    + (client ? '<label style="' + lab + '">Caisse vers laquelle le montant est dirige</label>'
+        + '<select id="agv41-e-dest" style="' + champ + '">' + optionsMoyens(p.caisse || p.mode || '')
+        + ((p.caisse || p.mode) ? '' : '<option value="" selected>— non precise —</option>') + '</select>' : '')
+    + '<label style="' + lab + '">Note</label><input id="agv41-e-note" value="' + esc(p.note || '') + '" style="' + champ + '">'
+    + '<div id="agv41-e-msg" style="font-size:12px;margin-top:10px;min-height:16px;color:var(--text3,#64748b)"></div>'
+    + '<div style="display:flex;gap:8px;margin-top:12px">'
+      + '<button id="agv41-e-x" style="flex:1;padding:11px;border:1px solid var(--border,#cbd5e1);border-radius:10px;background:transparent;'
+        + 'color:var(--text,#111);font-family:inherit;font-size:13.5px;cursor:pointer">Annuler</button>'
+      + '<button id="agv41-e-ok" style="flex:1;padding:11px;border:none;border-radius:10px;background:var(--accent,#2563eb);color:#fff;'
+        + 'font-family:inherit;font-size:13.5px;font-weight:700;cursor:pointer">Enregistrer la correction</button>'
+    + '</div></div>';
+  document.body.appendChild(ov);
+  ov.onclick = function(e){ if(e.target === ov) ov.remove(); };
+  ov.querySelector('#agv41-e-x').onclick = function(){ ov.remove(); };
+  ov.querySelector('#agv41-e-ok').onclick = function(){
+    var t2 = trouverPaiement(cle, i, pid);
+    if(!t2) return toast('Versement introuvable — actualisez la page');
+    var mt = nb(document.getElementById('agv41-e-mt').value);
+    if(mt <= 0) return toast('Montant invalide — pour annuler ce versement, utilisez la corbeille');
+    var date = document.getElementById('agv41-e-date').value || jourP || aujourdHui();
+    var mode = (document.getElementById('agv41-e-mode') || {}).value || '';
+    var dEl = document.getElementById('agv41-e-dest');
+    var dest = dEl ? (dEl.value || mode) : mode;
+    var note = String(document.getElementById('agv41-e-note').value || '').trim();
+    var q = t2.p, ancien = nb(q.montant);
+    var avant = argent(ancien) + ' du ' + jour(q.date);
+    q.montant = mt;
+    q.date = date;
+    if(mode){ q.mode = mode; q.modeNom = nomMoyen(mode) || mode; }
+    if(dest){ q.caisse = dest; q.caisseNom = nomMoyen(dest) || dest; }
+    q.note = note || q.note || 'Versement';
+    recalculerPiece(t2.sorte, t2.obj, mt - ancien);
+    ov.remove();
+    apresCorrection(t2, 'Versement modifie', (g ? g.nom + ' — ' : '') + avant + ' -> ' + argent(mt) + ' du ' + jour(date));
+    toast('Versement corrige : ' + argent(ancien) + ' -> ' + argent(mt));
+  };
+};
+
+window.agvVersSupprimer = function(cle, i, pid){
+  if(!droit('permDel')) return toast('Vous n\'avez pas le droit de supprimer un enregistrement');
+  var t = trouverPaiement(cle, i, pid);
+  if(!t) return toast('Versement introuvable — actualisez la page');
+  var g = groupeChoisi();
+  var mt = nb(t.p.montant);
+  if(!confirm('Supprimer le versement de ' + argent(mt) + ' du ' + jour(t.p.date) + (g ? ' (' + g.nom + ')' : '') + ' ?\n\n'
+    + 'Le montant sera de nouveau du et les soldes seront recalcules.')) return;
+  var t2 = trouverPaiement(cle, i, pid);
+  if(!t2) return toast('Versement introuvable — actualisez la page');
+  var p = t2.liste.splice(t2.index, 1)[0];
+  recalculerPiece(t2.sorte, t2.obj, -nb(p && p.montant));
+  apresCorrection(t2, 'Versement supprime', (g ? g.nom + ' — ' : '') + argent(mt) + ' du ' + jour(p && p.date));
+  toast('Versement de ' + argent(mt) + ' supprime — soldes recalcules');
+};
 
 function choisir(type, x){
   if(!API.actif) return;
@@ -57376,6 +57590,680 @@ API.etat = function(){
 };
 try{ console.log('[AGV-43] module actif — v' + API.version); }catch(e){}
 
+})();
+</script>
+
+<!-- ============================================================
+     MODULE 37 — AGV-44 : PERSONNEL ET VERSEMENTS
+     ------------------------------------------------------------
+     1. LE FONDATEUR CHOISIT SON MODE DE REMUNERATION
+        Sa fiche (onglet Personnel et Parametres) ne proposait que
+        la part des benefices. On y choisit desormais « Pourcentage
+        des benefices » ou « Salaire fixe mensuel » (+ montant),
+        exactement comme pour un co-fondateur : champs remun et
+        salaire de sa fiche, deja lus par tous les calculs
+        (agvRemunSalaire). La part des benefices reste modifiable.
+
+     2. LES FICHES DES GERANTS ET CO-FONDATEURS SE CORRIGENT
+        Onglet Personnel : le numero WhatsApp (utilise pour envoyer
+        le bulletin) se corrige sur la carte ; changer le mode de
+        remuneration reprend le bon montant (salaire ou %).
+        Ancien ecran « Gerants & Acces » :
+          - « Modifier », « Supprimer », « Bloquer » et les bascules
+            de droits ne trouvaient pas la fiche quand son
+            identifiant etait enregistre en texte (comparaison
+            stricte 17 ≠ "17") : rien ne se passait, ou la
+            suppression annoncee n'avait pas lieu ;
+          - l'enregistrement REMPLACAIT la fiche entiere : l'e-mail,
+            le mode de remuneration (remun), le poste, le telephone,
+            les onglets et actions accordes disparaissaient.
+            Desormais seuls les champs du formulaire changent ;
+          - un code absent s'affichait « undefined ».
+        Un gerant retire perd aussi son acces de connexion (comme
+        depuis l'onglet Personnel).
+        Chaque enregistrement part dans la base AUSSITOT : une
+        mise a jour venue d'un autre appareil ne peut plus
+        l'effacer pendant le delai de regroupement.
+
+     3. LES VERSEMENTS FAITS AILLEURS QUE DANS « VERSEMENTS »
+        - « Regler une dette » (fournisseurs) se fiait au solde
+          memorise des commandes : une commande dont ce solde
+          n'etait pas a jour ne recevait RIEN, l'excedent etait
+          perdu, et le message annoncait pourtant « enregistre ».
+          Le bouton ouvre maintenant l'onglet Versements, sur le
+          fournisseur concerne, ou le calcul part du du reel.
+        - Versement client sur facture, paiement de commande,
+          paiement de dette : envoi immediat a la base ; le reste
+          d'une facture sans montant total est calcule sur ses
+          articles au lieu de tomber a 0.
+
+     AUCUNE STRUCTURE MODIFIEE : seuls des champs existants des
+     fiches sont ecrits (remun, salaire, whatsapp, actif du compte).
+     Verifier : AGV_44.etat()      Desactiver : AGV_44.actif = false
+     ============================================================ -->
+<script>
+(function(){
+'use strict';
+if(window.AGV_44) return;
+var API = window.AGV_44 = { actif: true, version: '1.0', corrections: 0 };
+
+/* ============================================================
+   OUTILS
+   ============================================================ */
+function nb(v){ var n = parseFloat(v); return isNaN(n) ? 0 : n; }
+function vide(v){ return v === undefined || v === null || String(v).trim() === ''; }
+function tab(v){
+  if(!v) return [];
+  if(Array.isArray(v)) return v;
+  try{ return Object.keys(v).map(function(k){ return v[k]; }); }catch(e){ return []; }
+}
+function esc(v){
+  return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+function $(id){ return document.getElementById(id); }
+function argent(v){
+  try{ if(typeof window.fmtGNF === 'function') return window.fmtGNF(nb(v)); }catch(e){}
+  return Math.round(nb(v)).toLocaleString('fr-FR') + ' GNF';
+}
+function toast(m){
+  try{ if(typeof window.showToast === 'function') return window.showToast(m); }catch(e){}
+  try{ console.log('[AGV-44]', m); }catch(e){}
+}
+function memeId(a, b){
+  if(a === null || a === undefined || b === null || b === undefined) return false;
+  return String(a) === String(b);
+}
+function lesGerants(){ var g; try{ g = gerants; }catch(e){ g = window.gerants; } return tab(g).filter(Boolean); }
+function trouver(id){
+  var t = null;
+  lesGerants().forEach(function(g){ if(!t && memeId(g.id, id)) t = g; });
+  return t;
+}
+function estFondateur(g){
+  try{ if(typeof window.agvFicheEstFondateur === 'function') return !!window.agvFicheEstFondateur(g); }catch(e){}
+  return !!(g && (String(g.id) === '1' || g.role === 'fondateur' || g.type === 'fondateur'));
+}
+function ficheFondateur(){
+  var f = null;
+  lesGerants().forEach(function(g){ if(!f && estFondateur(g)) f = g; });
+  return f;
+}
+function estCofondateur(g){ return !!(g && (g.type === 'associe' || g.role === 'associe')); }
+function remunSalaire(g){
+  if(!g) return false;
+  try{ if(typeof window.agvRemunSalaire === 'function') return !!window.agvRemunSalaire(g); }catch(e){}
+  return String(g.remun || g.type || '') === 'salaire';
+}
+/* le mode affiche pour le fondateur : sa fiche par defaut porte type
+   'salaire' avec un salaire nul — il est alors remunere par sa part */
+function modeFondateur(f){
+  if(!f) return 'pourcentage';
+  if(f.remun === 'salaire' || f.remun === 'pourcentage') return f.remun;
+  return (remunSalaire(f) && nb(f.salaire) > 0) ? 'salaire' : 'pourcentage';
+}
+function chiffres(v){ return String(v || '').replace(/[^\d+]/g, '').replace(/^\+/, ''); }
+
+/* la sauvegarde part tout de suite (module 34), sinon par le chemin normal */
+function sauver(branches){
+  try{
+    if(window.AGV_41 && typeof window.AGV_41.sauverMaintenant === 'function'){
+      window.AGV_41.sauverMaintenant(branches);
+      return;
+    }
+  }catch(e){}
+  try{ if(typeof window.saveAll === 'function') window.saveAll(); }catch(e){}
+  try{ if(window.AGV_PERF && typeof window.AGV_PERF.viderFileAttente === 'function') window.AGV_PERF.viderFileAttente(); }catch(e){}
+}
+function oublierCaches(){
+  try{ if(window.AGV_41 && typeof window.AGV_41.oublier === 'function') window.AGV_41.oublier(); }catch(e){}
+  try{ if(window.AGV_39 && typeof window.AGV_39.oublier === 'function') window.AGV_39.oublier(); }catch(e){}
+  try{ if(window.AGV_PERF && typeof window.AGV_PERF.oublierIndex === 'function') window.AGV_PERF.oublierIndex(); }catch(e){}
+}
+
+/* enveloppe posee AU-DESSUS des autres ; un seul passage meme si un autre
+   module l'enveloppe a son tour ; les temoins des autres modules (__agvPerso,
+   __agv28...) sont recopies pour qu'ils ne se reposent pas en boucle */
+var dedans = {};
+function envelopper(nom, fabrique){
+  var f = window[nom];
+  if(typeof f !== 'function' || f.__agv44) return false;
+  var w = fabrique(f);
+  var g = function(){
+    if(!API.actif || dedans[nom]) return f.apply(this, arguments);
+    dedans[nom] = true;
+    try{ return w.apply(this, arguments); }
+    finally{ dedans[nom] = false; }
+  };
+  try{ Object.keys(f).forEach(function(k){ if(/^_+agv/.test(k) && k !== '__agvOrig') g[k] = f[k]; }); }catch(e){}
+  g.__agv44 = true;
+  g.__agvOrig = f;
+  window[nom] = g;
+  return true;
+}
+
+/* ============================================================
+   1. LE FONDATEUR : MODE DE REMUNERATION
+   ============================================================ */
+var OPTIONS_REMUN = [
+  { v: 'pourcentage', t: 'Pourcentage des bénéfices' },
+  { v: 'salaire', t: 'Salaire fixe mensuel' }
+];
+function optionsRemun(mode){
+  return OPTIONS_REMUN.map(function(o){
+    return '<option value="' + o.v + '"' + (o.v === mode ? ' selected' : '') + '>' + o.t + '</option>';
+  }).join('');
+}
+function appliquerRemunFondateur(f, mode, montant){
+  if(!f || (mode !== 'salaire' && mode !== 'pourcentage')) return false;
+  var avant = modeFondateur(f) + '|' + (modeFondateur(f) === 'salaire' ? nb(f.salaire) : 0);
+  var apres = mode + '|' + (mode === 'salaire' ? nb(montant) : 0);
+  if(avant === apres && f.remun === mode) return false;
+  f.remun = mode;
+  if(mode === 'salaire') f.salaire = Math.max(0, nb(montant));
+  else if(nb(f.salaire) !== 0) f.salaire = 0;
+  API.corrections++;
+  return true;
+}
+
+/* --- carte du fondateur, onglet Personnel --- */
+function habillerCarteFondateur(){
+  var c = $('agv32-fondateur');
+  if(!c || c.getAttribute('data-agv44')) return;
+  var f = ficheFondateur();
+  if(!f) return;                                   /* sa part se regle dans la boutique ou est sa fiche */
+  c.setAttribute('data-agv44', '1');
+  var mode = modeFondateur(f);
+  if($('agv32-f-nom')){
+    /* mode modification */
+    var grille = $('agv32-f-nom').closest ? $('agv32-f-nom').closest('.agv32-g') : null;
+    if(!grille) return;
+    var a = document.createElement('div');
+    a.innerHTML = '<label for="agv44-f-remun">Mode de rémunération</label>'
+      + '<select id="agv44-f-remun">' + optionsRemun(mode) + '</select>';
+    var b = document.createElement('div');
+    b.id = 'agv44-f-sal-wrap';
+    b.innerHTML = '<label for="agv44-f-sal">Salaire fixe mensuel (GNF)</label>'
+      + '<input id="agv44-f-sal" type="number" min="0" value="' + esc(mode === 'salaire' ? nb(f.salaire) : '') + '" placeholder="ex. 1500000">';
+    b.style.display = (mode === 'salaire') ? '' : 'none';
+    var pct = $('agv32-f-pct');
+    var avantQui = pct ? pct.parentNode : ($('agv32-f-photo') ? $('agv32-f-photo').parentNode : null);
+    if(avantQui && avantQui.parentNode === grille){
+      grille.insertBefore(a, avantQui);
+      grille.insertBefore(b, avantQui);
+    }else{
+      grille.appendChild(a);
+      grille.appendChild(b);
+    }
+    a.querySelector('select').onchange = function(){
+      b.style.display = (this.value === 'salaire') ? '' : 'none';
+      if(this.value === 'salaire'){ var s = $('agv44-f-sal'); if(s){ try{ s.focus(); }catch(e){} } }
+    };
+  }else{
+    /* mode lecture */
+    var g2 = c.querySelector('.agv32-g.agv32-f');
+    if(!g2){
+      g2 = document.createElement('div');
+      g2.className = 'agv32-g agv32-f';
+      var h = c.querySelector('.agv32-h');
+      if(h && h.nextSibling) c.insertBefore(g2, h.nextSibling); else c.appendChild(g2);
+    }
+    var d = document.createElement('div');
+    d.innerHTML = '<label>Mode de rémunération</label><div class="agv32-val">'
+      + esc(mode === 'salaire' ? 'Salaire fixe mensuel — ' + argent(f.salaire) : 'Pourcentage des bénéfices')
+      + '</div>';
+    g2.appendChild(d);
+  }
+}
+
+function poserFondateurPersonnel(){
+  return envelopper('agvPersFondateurEnregistrer', function(prev){
+    return function(){
+      var sel = $('agv44-f-remun'), sal = $('agv44-f-sal');
+      var mode = sel ? sel.value : null;
+      var montant = sal ? nb(sal.value) : 0;
+      var etat = $('agv32-etat-fondateur');
+      if(mode === 'salaire' && (!sal || vide(sal.value) || nb(sal.value) < 0)){
+        if(etat){ etat.textContent = 'Indiquez le salaire fixe mensuel du fondateur'; etat.style.color = 'var(--red,#dc2626)'; }
+        toast('Indiquez le salaire fixe mensuel du fondateur');
+        return false;
+      }
+      if(etat) etat.textContent = '';
+      var r = prev.apply(this, arguments);
+      if(mode){
+        etat = $('agv32-etat-fondateur');
+        var parti = etat && /Enregistrement|enregistr/i.test(etat.textContent || '') && !/red|220, 38, 38/.test(etat.style.color || '');
+        if(parti){
+          var f = ficheFondateur();
+          if(f && appliquerRemunFondateur(f, mode, montant)){
+            sauver(['gerants']);
+            try{ if(typeof window.agvJournaliser === 'function') window.agvJournaliser('Remuneration du fondateur',
+              mode === 'salaire' ? 'salaire fixe ' + argent(montant) : 'pourcentage des benefices'); }catch(e){}
+          }
+        }
+      }
+      return r;
+    };
+  });
+}
+
+/* --- section « Informations du Fondateur », Parametres --- */
+function assurerChampsParametres(){
+  var pct = $('fond-pct');
+  if(!pct) return false;
+  if($('agv44-fond-remun')) return true;
+  var groupePct = pct.closest ? pct.closest('.form-group') : null;
+  if(!groupePct || !groupePct.parentNode) return false;
+  var a = document.createElement('div');
+  a.className = 'form-group';
+  a.innerHTML = '<label class="form-label">Mode de rémunération du Fondateur</label>'
+    + '<select class="form-select" id="agv44-fond-remun">' + optionsRemun('pourcentage') + '</select>';
+  var b = document.createElement('div');
+  b.className = 'form-group';
+  b.id = 'agv44-fond-sal-wrap';
+  b.style.display = 'none';
+  b.innerHTML = '<label class="form-label">Salaire fixe mensuel du Fondateur (GNF)</label>'
+    + '<input class="form-input" id="agv44-fond-sal" type="number" min="0" placeholder="ex. 1500000">'
+    + '<div style="font-size:11px;color:var(--text3);margin-top:4px">Déduit avant la répartition, comme les autres salaires fixes.</div>';
+  groupePct.parentNode.insertBefore(a, groupePct);
+  groupePct.parentNode.insertBefore(b, groupePct);
+  $('agv44-fond-remun').onchange = function(){ b.style.display = (this.value === 'salaire') ? '' : 'none'; };
+  return true;
+}
+function remplirParametres(){
+  if(!assurerChampsParametres()) return;
+  var f = ficheFondateur();
+  var mode = modeFondateur(f);
+  var s = $('agv44-fond-remun'), m = $('agv44-fond-sal'), w = $('agv44-fond-sal-wrap');
+  if(s) s.value = mode;
+  if(m) m.value = (f && mode === 'salaire') ? nb(f.salaire) : '';
+  if(w) w.style.display = (mode === 'salaire') ? '' : 'none';
+}
+function poserParametres(){
+  var a = envelopper('renderParametresBoutique', function(prev){
+    return function(){
+      var r = prev.apply(this, arguments);
+      try{ remplirParametres(); }catch(e){}
+      return r;
+    };
+  });
+  var b = envelopper('saveFondateurInfo', function(prev){
+    return function(){
+      var s = $('agv44-fond-remun'), m = $('agv44-fond-sal');
+      var mode = s ? s.value : null, montant = m ? nb(m.value) : 0;
+      var msg = $('fond-msg');
+      if(mode === 'salaire' && (!m || vide(m.value) || nb(m.value) < 0)){
+        if(msg){
+          msg.style.display = 'block'; msg.style.background = 'rgba(239,68,68,0.1)'; msg.style.color = '#ef4444';
+          msg.textContent = 'Indiquez le salaire fixe mensuel du Fondateur';
+        }
+        return;
+      }
+      if(msg) msg.textContent = '';
+      var r = prev.apply(this, arguments);
+      msg = $('fond-msg');
+      var reussi = msg && /enregistr/i.test(msg.textContent || '') && /34,\s*197,\s*94|#22c55e/i.test(msg.style.color || '');
+      if(reussi && mode){
+        var f = ficheFondateur();
+        if(f){ appliquerRemunFondateur(f, mode, montant); }
+        sauver(['gerants']);
+      }
+      return r;
+    };
+  });
+  return a && b;
+}
+
+/* ============================================================
+   2. ONGLET PERSONNEL : CARTES DES GERANTS ET CO-FONDATEURS
+   ============================================================ */
+function libelleMontant(sel, id){
+  var mt = $('agv32-mt-' + id);
+  if(!mt || !mt.parentNode) return;
+  var l = mt.parentNode.querySelector('label');
+  if(l) l.textContent = (sel.value === 'salaire') ? 'Salaire fixe mensuel (GNF)' : 'Part des bénéfices (%)';
+}
+function habillerCartes(){
+  var vp = $('view-personnel');
+  if(!vp) return;
+  var cartes = vp.querySelectorAll('[id^="agv32-carte-"]');
+  for(var i = 0; i < cartes.length; i++){
+    var c = cartes[i];
+    if(c.getAttribute('data-agv44')) continue;
+    var id = c.id.slice('agv32-carte-'.length);
+    var g = trouver(id);
+    if(!g) continue;
+    c.setAttribute('data-agv44', '1');
+    /* WhatsApp : sert a l'envoi du bulletin, absent de la carte */
+    var bloq = $('agv32-bloq-' + id);
+    var grille = bloq && bloq.parentNode ? bloq.parentNode.parentNode : null;
+    if(grille && !$('agv44-wa-' + id)){
+      var d = document.createElement('div');
+      d.innerHTML = '<label>WhatsApp (avec indicatif)</label><input id="agv44-wa-' + esc(id) + '" type="tel" '
+        + 'placeholder="ex. 224620000000" value="' + esc(g.whatsapp || '') + '">';
+      grille.appendChild(d);
+    }
+    /* mode de remuneration : le montant suit le mode choisi */
+    var sel = $('agv32-remun-' + id);
+    if(sel){
+      libelleMontant(sel, id);
+      (function(sel, id){
+        sel.addEventListener('change', function(){
+          var x = trouver(id), mt = $('agv32-mt-' + id);
+          if(mt && x) mt.value = (sel.value === 'salaire') ? nb(x.salaire) : nb(x.pct);
+          libelleMontant(sel, id);
+        });
+      })(sel, id);
+    }
+  }
+}
+function poserPersonnel(){
+  var a = envelopper('agvPersEnregistrer', function(prev){
+    return function(id){
+      var champ = $('agv44-wa-' + id);
+      var wa = champ ? chiffres(champ.value) : null;
+      var r = prev.apply(this, arguments);
+      var etat = $('agv32-etat-' + id);
+      if(etat && /^\s*✓/.test(etat.textContent || '')){
+        var g = trouver(id);
+        if(g && wa !== null && String(g.whatsapp || '') !== wa){
+          if(wa || !vide(g.whatsapp)) g.whatsapp = wa;
+          API.corrections++;
+        }
+        sauver(['gerants']);
+      }
+      return r;
+    };
+  });
+  var b = envelopper('agvPersSupprimer', function(prev){
+    return function(id){
+      var avant = !!trouver(id);
+      var r = prev.apply(this, arguments);
+      if(avant && !trouver(id)) sauver(['gerants']);
+      return r;
+    };
+  });
+  return a && b;
+}
+
+/* ============================================================
+   3. ANCIEN ECRAN « GERANTS & ACCES »
+   ============================================================ */
+function idExact(id){ var g = trouver(id); return g ? g.id : id; }
+function idEnCours(){ try{ return editGerantId; }catch(e){ return window.editGerantId; } }
+function poserIdEnCours(v){ try{ editGerantId = v; }catch(e){ window.editGerantId = v; } }
+function copie(o){ try{ return JSON.parse(JSON.stringify(o)); }catch(e){ return null; } }
+function refBrut(chemin){
+  try{ if(typeof window._agvRefBrut === 'function') return window._agvRefBrut(chemin); }catch(e){}
+  return (window.db && typeof window.db.ref === 'function') ? window.db.ref(chemin) : null;
+}
+/* un gerant retire ne doit plus pouvoir se connecter (meme regle que
+   l'onglet Personnel : actif:false sur ses comptes, rien n'est efface) */
+function desactiverComptes(id){
+  var u = (window._currentShop || {}).uid;
+  var r = u ? refBrut('gdv_shops/' + u + '/comptes') : null;
+  if(!r) return;
+  try{
+    r.once('value').then(function(s){
+      var c = s.val() || {}, maj = {};
+      Object.keys(c).forEach(function(k){
+        var x = c[k];
+        if(x && !vide(x.gerantId) && memeId(x.gerantId, id) && x.actif !== false) maj[k + '/actif'] = false;
+      });
+      if(Object.keys(maj).length) return r.update(maj);
+    }).catch(function(){});
+  }catch(e){}
+}
+function remplirFormulaire(g){
+  var v = function(id, val){ var e = $(id); if(e) e.value = (val === undefined || val === null) ? '' : val; };
+  v('g-nom', g.nom || '');
+  v('g-code', vide(g.code) ? '' : g.code);
+  v('g-whatsapp', g.whatsapp || '');
+  var sal = remunSalaire(g);
+  var t = $('g-type');
+  if(t) t.value = sal ? 'salaire' : 'pourcentage';
+  v('g-salaire', nb(g.salaire) || '');
+  v('g-pct', nb(g.pct) || '');
+  try{ if(typeof window.toggleSalaryFields === 'function') window.toggleSalaryFields(); }catch(e){}
+}
+var CHAMPS_FORMULAIRE = ['id', 'nom', 'code', 'type', 'salaire', 'pct', 'whatsapp', 'photo', 'bloque',
+                         'permVentes', 'permDep', 'permEdit', 'permDel', 'email', 'permVues'];
+function poserAncienEcran(){
+  var ok = true;
+  ok = envelopper('openEditGerant', function(prev){
+    return function(id){
+      var g = trouver(id);
+      var r = prev.call(this, g ? g.id : id);
+      if(g && memeId(idEnCours(), g.id)){
+        poserIdEnCours(g.id);
+        try{ remplirFormulaire(g); }catch(e){}
+      }
+      return r;
+    };
+  }) && ok;
+  ok = envelopper('saveGerant', function(prev){
+    return function(){
+      var id = idEnCours();
+      var g = (id !== null && id !== undefined) ? trouver(id) : null;
+      if(g) poserIdEnCours(g.id);
+      var ancien = g ? copie(g) : null;
+      var r = prev.apply(this, arguments);
+      if(ancien){
+        var n = trouver(ancien.id);
+        if(n){
+          /* la fiche a ete remplacee par les seuls champs du formulaire :
+             tout le reste de l'ancienne fiche est rendu */
+          Object.keys(ancien).forEach(function(k){
+            if(CHAMPS_FORMULAIRE.indexOf(k) >= 0) return;
+            if(n[k] === undefined) n[k] = ancien[k];
+          });
+          if(n.photo === null && ancien.photo) n.photo = ancien.photo;
+          if(n.permVues === undefined && ancien.permVues !== undefined) n.permVues = ancien.permVues;
+          if(!$('g-email') && n.email === undefined && ancien.email !== undefined) n.email = ancien.email;
+          if(estCofondateur(ancien)){
+            n.type = ancien.type;
+            if(ancien.role !== undefined) n.role = ancien.role;
+            var t = $('g-type');
+            if(t && (t.value === 'salaire' || t.value === 'pourcentage')) n.remun = t.value;
+          }else if(n.type === 'salaire' || n.type === 'pourcentage'){
+            /* le mode choisi ici doit primer : remun est lu avant type */
+            if(ancien.remun !== undefined || n.remun !== undefined) n.remun = n.type;
+          }
+          API.corrections++;
+        }
+      }
+      sauver(['gerants']);
+      /* apres les onglets accordes (module v28, 120 ms) : une liste vide ne
+         peut pas etre gardee par la base — la personne retomberait sur les
+         regles d'origine et verrait tout ; l'ancienne liste est conservee */
+      setTimeout(function(){
+        if(ancien){
+          var n2 = trouver(ancien.id);
+          if(n2 && Array.isArray(n2.permVues) && !n2.permVues.length && tab(ancien.permVues).length){
+            n2.permVues = ancien.permVues;
+            toast('Aucun onglet coché : les onglets accordés auparavant sont conservés');
+          }
+        }
+        sauver(['gerants']);
+      }, 400);
+      return r;
+    };
+  }) && ok;
+  ok = envelopper('deleteGerant', function(prev){
+    return function(){
+      var id = idEnCours();
+      var g = (id !== null && id !== undefined) ? trouver(id) : null;
+      if(g) poserIdEnCours(g.id);
+      var r = prev.apply(this, arguments);
+      if(g && !trouver(g.id)){
+        desactiverComptes(g.id);
+        sauver(['gerants']);
+      }
+      return r;
+    };
+  }) && ok;
+  ['toggleBloque', 'togglePermVentes', 'togglePermDep', 'togglePermEdit', 'togglePermDel'].forEach(function(nom){
+    ok = envelopper(nom, function(prev){
+      return function(id){
+        var g = trouver(id);
+        if(!g){ toast('Fiche introuvable — actualisez la page'); return; }
+        var r = prev.call(this, g.id);
+        sauver(['gerants']);
+        return r;
+      };
+    }) && ok;
+  });
+  ok = envelopper('openBulletin', function(prev){
+    return function(id){
+      var a = [].slice.call(arguments);
+      if(a.length) a[0] = idExact(id);
+      return prev.apply(this, a);
+    };
+  }) && ok;
+  return ok;
+}
+/* identifiant en texte : renderGerants l'ecrit sans guillemets dans onclick */
+function guillemetsListe(){
+  var box = $('gerants-list');
+  if(!box) return;
+  var b = box.querySelectorAll('[onclick]');
+  for(var i = 0; i < b.length; i++){
+    var on = b[i].getAttribute('onclick') || '';
+    var m = /^\s*(openEditGerant|openBulletin|toggleBloque|togglePermVentes|togglePermDep|togglePermEdit|togglePermDel)\(([^'")]*)\)\s*;?\s*$/.exec(on);
+    if(!m) continue;
+    var arg = m[2].trim();
+    if(arg === '' || /^-?\d+(\.\d+)?$/.test(arg)) continue;
+    b[i].setAttribute('onclick', m[1] + '(' + JSON.stringify(arg) + ')');
+  }
+}
+
+/* ============================================================
+   4. VERSEMENTS FAITS PAR LES ANCIENS ECRANS
+   ============================================================ */
+function versementsActifs(){
+  return !!(window.AGV_41 && window.AGV_41.actif !== false && typeof window.agvVersOuvrir === 'function');
+}
+function versementsPermis(){
+  try{ if(typeof window.agvVueAutorisee === 'function' && !window.agvVueAutorisee('versements')) return false; }catch(e){}
+  var n = $('nav-versements');
+  if(n && n.classList.contains('agv-nav-interdit')) return false;
+  return !!$('view-versements');
+}
+function poserVersements(){
+  var ok = true;
+  /* « Regler une dette » : le calcul se fait dans l'onglet Versements */
+  ok = envelopper('openReglerDetteModal', function(prev){
+    return function(fid){
+      if(!versementsActifs() || !versementsPermis()) return prev.apply(this, arguments);
+      try{ window.showView('versements'); }catch(e){}
+      var v = $('view-versements');
+      if(!v || !v.classList.contains('active')) return prev.apply(this, arguments);   /* onglet non accorde */
+      if(!vide(fid)) window.agvVersOuvrir('fournisseur', String(fid));
+      else{
+        setTimeout(function(){
+          var q = $('agv32-vers-q');
+          if(q){ try{ q.focus(); }catch(e){} }
+          toast('Cherchez le fournisseur à régler');
+        }, 250);
+      }
+    };
+  }) && ok;
+
+  function apres(branches){
+    return function(prev){
+      return function(){
+        var r = prev.apply(this, arguments);
+        oublierCaches();
+        sauver(branches);
+        return r;
+      };
+    };
+  }
+  ok = envelopper('savePaiementFournisseur', apres(['commandes', 'dettes'])) && ok;
+  ok = envelopper('savePaiement', apres(['dettes'])) && ok;
+  ok = envelopper('saveReglerDette', apres(['commandes', 'dettes'])) && ok;
+  ok = envelopper('saveVersementClient', function(prev){
+    return function(){
+      var id = ($('versement-cli-fact-id') || {}).value;
+      var r = prev.apply(this, arguments);
+      try{
+        var f = null;
+        tab((function(){ try{ return factureVentes; }catch(e){ return window.factureVentes; } })()).forEach(function(x){
+          if(!f && x && memeId(x.id, id)) f = x;
+        });
+        /* facture sans montant total : le reste se calcule sur ses articles */
+        if(f && !(nb(f.montantTotal) > 0)){
+          var t = !vide(f.totalLignes) ? nb(f.totalLignes)
+                : tab(f.lignes).reduce(function(s, l){ return s + nb(l && l.total); }, 0);
+          t = Math.max(0, t - nb(f.remise) + nb(f.frais));
+          if(t > 0){
+            f.soldeRestant = Math.max(0, Math.round((t - nb(f.montantPaye)) * 100) / 100);
+            f.statut = f.soldeRestant <= 0.5 ? 'paye' : (nb(f.montantPaye) > 0 ? 'partiel' : 'impaye');
+            API.corrections++;
+          }
+        }
+      }catch(e){}
+      oublierCaches();
+      sauver(['factureVentes']);
+      return r;
+    };
+  }) && ok;
+  return ok;
+}
+
+/* ============================================================
+   INSTALLATION
+   ============================================================ */
+function poserTout(){
+  var a = poserFondateurPersonnel();
+  var b = poserParametres();
+  var c = poserPersonnel();
+  var d = poserAncienEcran();
+  var e = poserVersements();
+  return a && b && c && d && e;
+}
+poserTout();
+/* d'autres modules enveloppent ces fonctions apres coup : la notre est
+   remise au-dessus (un seul passage grace au temoin « dedans ») */
+var tours = 0;
+var horloge = setInterval(function(){
+  tours++;
+  try{ poserTout(); }catch(e){}
+  if(tours > 45){ clearInterval(horloge); setInterval(function(){ try{ poserTout(); }catch(e){} }, 15000); }
+}, 2000);
+
+/* les cartes sont redessinees par l'onglet Personnel : on les complete
+   aussitot, avant l'affichage (rappel synchrone de MutationObserver) */
+function habiller(){
+  if(!API.actif) return;
+  try{ habillerCarteFondateur(); }catch(e){}
+  try{ habillerCartes(); }catch(e){}
+  try{ guillemetsListe(); }catch(e){}
+  try{ if($('fond-pct') && !$('agv44-fond-remun')) remplirParametres(); }catch(e){}
+}
+try{
+  new MutationObserver(function(){ habiller(); })
+    .observe(document.body || document.documentElement, { childList: true, subtree: true });
+}catch(e){ setInterval(habiller, 1000); }
+setTimeout(habiller, 800);
+
+API.etat = function(){
+  var f = ficheFondateur();
+  return {
+    actif: API.actif,
+    fondateur: f ? { nom: f.nom, mode: modeFondateur(f), salaire: nb(f.salaire), pct: f.pct } : null,
+    gerants: lesGerants().length,
+    corrections: API.corrections,
+    enveloppes: ['agvPersFondateurEnregistrer', 'saveFondateurInfo', 'renderParametresBoutique', 'agvPersEnregistrer',
+      'agvPersSupprimer', 'openEditGerant', 'saveGerant', 'deleteGerant', 'openReglerDetteModal',
+      'savePaiementFournisseur', 'saveVersementClient', 'savePaiement', 'saveReglerDette'].filter(function(n){
+        var f2 = window[n];
+        for(var i = 0; f2 && i < 12; i++){ if(f2.__agv44) return true; f2 = f2.__agvOrig; }
+        return false;
+      })
+  };
+};
+API.modeFondateur = function(){ return modeFondateur(ficheFondateur()); };
 })();
 </script>
 
