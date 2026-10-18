@@ -10187,7 +10187,11 @@ function onCmdFournChange(){
       +(fourn.adresse?'<br><span style="color:var(--text3)">📍 '+fourn.adresse+'</span>':'')
       +(fourn.tel?'<br><span style="color:var(--text3)">📞 '+fourn.tel+'</span>':'')
       +'<div style="clear:both"></div>';
-    var solde=commandes.filter(function(c){ return String(c.fournisseurId)===String(fid); })
+    // [DETTE = BILAN] meme calcul que la fiche fournisseur et le bilan :
+    // commandes non soldees + dettes saisies a part, avance deduite
+    var solde;
+    if(typeof window.agvSituationFournisseur==='function') solde=Number(window.agvSituationFournisseur(fourn.id,fourn.nom).total)||0;
+    else solde=commandes.filter(function(c){ return String(c.fournisseurId)===String(fid); })
       .reduce(function(s,c){ return s+(c.soldeRestant||0); }, 0);
     if(alertEl){
       alertEl.style.display = solde>0 ? 'block' : 'none';
@@ -10629,7 +10633,10 @@ function openPaiementFournModal(cmdId){
   var fourn=fournisseurs.find(function(f){ return String(f.id)===String(cmd.fournisseurId); });
   // Calculer la dette totale du fournisseur (toutes commandes)
   var toutesLesCommandes=commandes.filter(function(c){ return String(c.fournisseurId)===String(cmd.fournisseurId); });
-  var detteTotale=toutesLesCommandes.reduce(function(s,c){ return s+(c.soldeRestant||0); },0);
+  // [DETTE = BILAN] dette totale du fournisseur : le meme calcul que sa fiche et son bilan
+  var detteTotale;
+  if(typeof window.agvSituationFournisseur==='function') detteTotale=Number(window.agvSituationFournisseur(cmd.fournisseurId,fourn?fourn.nom:cmd.fournisseurNom).total)||0;
+  else detteTotale=toutesLesCommandes.reduce(function(s,c){ return s+(c.soldeRestant||0); },0);
   var info=document.getElementById('paiement-fourn-info');
   if(info) info.innerHTML=
     '<div style="font-weight:800;font-size:14px;margin-bottom:6px">'+(fourn?fourn.nom:cmd.fournisseurNom)+'</div>'
@@ -20656,7 +20663,10 @@ function poserSituations(){
 
     var s = window.agvSituationFournisseur(cmd.fournisseurId, cmd.fournisseurNom);
     if(s.total <= 0) return;
-    var cette = nb(cmd.soldeRestant);
+    /* [DETTE = BILAN] le reste de cette commande vient du meme calcul que le total
+       (et que le bilan), pas du soldeRestant memorise */
+    var cette = 0;
+    (s.detail || []).forEach(function(x){ if(x.quoi === 'commande' && meme(x.id, cmd.id)) cette = nb(x.montant); });
     var autres = Math.max(0, s.commandes - cette);
 
     var d = document.createElement('div');
@@ -20669,6 +20679,8 @@ function poserSituations(){
         + (autres > 0 ? '<span>Autres commandes : <strong>' + argent(autres) + '</strong></span>' : '')
         + (s.horsCommande > 0 ? '<span>Dettes hors commande : <strong style="color:var(--amber)">'
             + argent(s.horsCommande) + '</strong></span>' : '')
+        + (nb(s.avance) > 0.5 ? '<span>Avance deja versee : <strong style="color:var(--green)">&minus; '
+            + argent(s.avance) + '</strong></span>' : '')
         + '<span>Total du : <strong style="color:var(--red)">' + argent(s.total) + '</strong></span>'
       + '</div>';
     carte.appendChild(d);
@@ -54927,6 +54939,30 @@ API.etat = function(){
         Tableau de bord, Dettes clients, Dettes fournisseurs,
         Versements et Direction affichent les memes montants.
 
+     5. [DETTE = BILAN] LA DETTE D'UN FOURNISSEUR EST CELLE DU BILAN
+        (correctif v1.1, 18/10/2026)
+        La fiche fournisseur (pastille « Du », fenetre « Nouvelle
+        commande ») et le bilan (module 35) ne comptaient pas pareil :
+          - la fiche prenait le « soldeRestant » MEMORISE dans chaque
+            commande ; le bilan recalcule montant - versements. Un
+            solde memorise perime (versement inscrit sans que le solde
+            suive, montant total jamais saisi alors que la marchandise
+            est recue) donnait deux montants differents ;
+          - une avance (commande payee au-dela de son montant) etait
+            ignoree par la fiche (reste ramene a 0) alors que le bilan
+            la deduit, a juste titre, de ce qui reste du.
+        Desormais le reste de chaque piece fournisseur se deduit de la
+        piece elle-meme, avec la regle exacte du bilan :
+          commande = montant (ou, s'il n'est pas saisi, ce qui a ete
+                     recu) - regle (le montant paye enregistre s'il
+                     depasse la somme des versements, sinon cette somme)
+          dette    = montant - versements
+          du au fournisseur = somme de ces restes, avance deduite
+        Le soldeRestant memorise n'est plus lu pour la dette : il
+        n'est ni modifie ni efface. Fiche, nouvelle commande, Versements,
+        Dettes fournisseurs, tableau de bord et bilan affichent le meme
+        montant.
+
      AUCUNE DONNEE MODIFIEE, AUCUNE STRUCTURE TOUCHEE : ce module ne
      fait que lire et afficher. Le seul endroit qui ecrit reste le
      bouton « Enregistrer le versement », exactement comme avant :
@@ -54974,7 +55010,7 @@ API.etat = function(){
 (function(){
 'use strict';
 
-var API = window.AGV_41 = { actif: true, version: '1.0' };
+var API = window.AGV_41 = { actif: true, version: '1.1' };
 
 /* ============================================================
    OUTILS
@@ -55209,6 +55245,21 @@ function resteCommande(c, total){
 }
 function resteDette(d){ return Math.max(nb(d.montant) - sommeP(d.paiements), 0); }
 
+/* [DETTE = BILAN] ce qui est regle sur une piece fournisseur, compte exactement
+   comme le bilan (module 35, pieceCommande / pieceDette) : le montant paye
+   enregistre fait foi s'il depasse la somme des versements, sinon c'est la somme
+   des versements. Le reste « net » peut etre negatif : c'est une avance. */
+function sommeVersee(l){
+  return tab(l).reduce(function(s, p){ var m = nb(p && p.montant); return m > 0 ? s + m : s; }, 0);
+}
+function regleCommande(c){
+  var sp = sommeP(c.paiements);
+  if(!vide(c.montantPaye) && nb(c.montantPaye) > sp + 0.5) return nb(c.montantPaye);
+  return sommeVersee(c.paiements);
+}
+function netCommande(c){ return r2(totalCommande(c) - regleCommande(c)); }
+function netDetteFournisseur(d){ return r2(nb(d.montant) - sommeVersee(d.paiements)); }
+
 function construire(src, enDirect){
   src = src || {};
   var F = tab(src.factureVentes), C = tab(src.commandes), D = tab(src.dettes);
@@ -55266,14 +55317,17 @@ function construire(src, enDirect){
   C.forEach(function(c){
     if(!c || typeof c !== 'object') return;
     var total = totalCommande(c);
-    var reste = resteCommande(c, total);
-    if(total <= 0 && reste <= 0) return;
+    /* les commandes retenues restent les memes qu'avant (donc les memes pieces que le bilan) */
+    if(total <= 0 && resteCommande(c, total) <= 0) return;
+    /* [DETTE = BILAN] le reste se deduit du montant et des versements, pas du soldeRestant memorise */
+    var net = netCommande(c);
+    var reste = Math.max(net, 0);
     var g = retrouver(ixf, c.fournisseurId, c.fournisseurNom, c.fournisseurTel || c.telephone);
     if(!g){ ecarter('fournisseur', c.fournisseurNom, reste); return; }
     g.items.push({ cle: 'C:' + c.id, sorte: 'commande', obj: c, date: c.date || c.createdAt,
                    libelle: 'Commande' + (c.numero ? ' ' + c.numero : ''), montant: total,
                    titre: 'Commande' + (c.numero ? ' ' + c.numero : '') + ' du ' + jour(c.date || c.createdAt),
-                   reste: reste, echeance: c.echeance || '' });
+                   reste: reste, net: net, echeance: c.echeance || '' });
   });
 
   /* --- dettes saisies a part --- */
@@ -55286,8 +55340,11 @@ function construire(src, enDirect){
                  reste: reste, echeance: d.echeance || '' };
     if(d.type === 'fournisseur'){
       if(!vide(d.commandeId)) return;            /* reflet d'une commande : c'est la commande qui compte */
+      /* [DETTE = BILAN] meme regle que le bilan : montant - versements */
+      item.net = netDetteFournisseur(d);
+      item.reste = Math.max(item.net, 0);
       var gf2 = retrouver(ixf, d.fournisseurId, d.nom, d.tel || d.telephone);
-      if(!gf2){ ecarter('fournisseur', d.nom, reste); return; }
+      if(!gf2){ ecarter('fournisseur', d.nom, item.reste); return; }
       gf2.items.push(item);
       return;
     }
@@ -55303,7 +55360,17 @@ function construire(src, enDirect){
   });
 
   function finir(g){
-    g.du = r2(g.items.reduce(function(s, x){ return s + Math.max(x.reste, 0); }, 0));
+    var ouvert = r2(g.items.reduce(function(s, x){ return s + Math.max(x.reste, 0); }, 0));
+    if(g.type === 'fournisseur'){
+      /* [DETTE = BILAN] comme le bilan : une avance versee sur une piece vient en
+         deduction de ce qui reste du sur les autres */
+      var net = r2(g.items.reduce(function(s, x){ return s + (x.net !== undefined ? nb(x.net) : Math.max(x.reste, 0)); }, 0));
+      g.du = Math.max(net, 0);
+      g.avance = r2(ouvert - g.du);              /* avance deja deduite du reste */
+      g.tropVerse = Math.max(r2(-net), 0);       /* avance qui depasse tout ce qui est du */
+    }else{
+      g.du = ouvert;
+    }
     R.parCle[g.cle] = g;
   }
   gc.forEach(finir); listePassages.forEach(finir); gf.forEach(finir);
@@ -55346,6 +55413,7 @@ function empreinte(){
   lm.forEach(function(c){
     h = hS(h, c.id); h = hS(h, c.fournisseurId); h = hS(h, c.fournisseurNom); h = hN(h, c.montantTotal);
     h = hN(h, c.soldeRestant); h = hN(h, sommeP(c.paiements)); h = hN(h, tab(c.paiements).length);
+    h = hN(h, c.montantPaye); h = hN(h, montantRecu(c));     /* [DETTE = BILAN] le reste en depend */
   });
   ld.forEach(function(d){
     h = hS(h, d.id); h = hS(h, d.type); h = hS(h, d.nom); h = hN(h, d.montant); h = hN(h, sommeP(d.paiements));
@@ -55586,6 +55654,12 @@ function rendreFiche(){
           + 'border-bottom:1px solid var(--border)"><span>' + esc(x.libelle) + ' <span style="color:var(--text3)">— '
           + esc(jour(x.date)) + '</span></span><b style="color:var(--red)">' + esc(argent(x.reste)) + '</b></div>';
       }).join('')
+      /* [DETTE = BILAN] l'avance deja versee est deduite, comme dans le bilan */
+      + (!client && g.avance > 0.5
+          ? '<div style="display:flex;justify-content:space-between;gap:10px;padding:5px 0;border-bottom:1px solid var(--border)">'
+            + '<span>Avance deja versee <span style="color:var(--text3)">— deduite du reste</span></span>'
+            + '<b style="color:var(--green)">&minus; ' + esc(argent(g.avance)) + '</b></div>'
+          : '')
       + '<div style="display:flex;justify-content:space-between;padding:7px 0 0;font-weight:800">'
       + '<span>' + (client ? 'Total que le client doit' : 'Total a lui regler') + '</span>'
       + '<span style="color:var(--red)">' + esc(argent(g.du)) + '</span></div></div>'
@@ -55978,7 +56052,13 @@ function htmlGroupe(g){
     + '<div style="margin-top:8px">' + ouverts.map(function(x){
         return '<div class="agv41-it"><span>' + esc(x.libelle) + ' <span class="agv41-mut">— ' + esc(jour(x.date)) + '</span>'
           + badgeEcheance(x.echeance) + '</span><b>' + esc(argent(x.reste)) + '</b></div>';
-      }).join('') + '</div>'
+      }).join('')
+      /* [DETTE = BILAN] l'avance deja versee est deduite, comme dans le bilan */
+      + (!client && g.avance > 0.5
+          ? '<div class="agv41-it"><span>Avance deja versee <span class="agv41-mut">— deduite du reste</span></span>'
+            + '<b style="color:var(--green,#16a34a)">&minus; ' + esc(argent(g.avance)) + '</b></div>'
+          : '')
+      + '</div>'
     + (vers.length
       ? '<details class="agv41-hist"><summary>Versements enregistres (' + vers.length + ')</summary>'
         + vers.slice(0, 40).map(function(v){
@@ -56338,7 +56418,9 @@ function situationFournisseur(fid, nom){
     if(x.sorte === 'commande'){ cmd += x.reste; detail.push({ quoi: 'commande', id: x.obj.id, date: x.obj.date, montant: x.reste }); }
     else{ hors += x.reste; detail.push({ quoi: 'dette', id: x.obj.id, date: x.obj.date, montant: x.reste, desc: x.obj.desc || '' }); }
   });
-  return { commandes: r2(cmd), horsCommande: r2(hors), total: r2(cmd + hors), detail: detail };
+  /* [DETTE = BILAN] total = reste du du groupe, avance deduite (le montant du bilan) */
+  return { commandes: r2(cmd), horsCommande: r2(hors), avance: r2(g.avance || 0), tropVerse: r2(g.tropVerse || 0),
+           total: r2(g.du), detail: detail };
 }
 function chiffresDettes(data){
   var R = construire(data || {}, false);
