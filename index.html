@@ -38547,7 +38547,8 @@ window.agvFactureImprimer = function(id){
   var totalHT = lignes.reduce(function(a, l){ return a + nb(l.total); }, 0);
   var remise = lignes.reduce(function(a, l){ return a + nb(l.remise); }, 0);
   var tva = nb(f.tva);
-  var ttc = totalHT - remise + tva;                 /* la dette n'entre PAS dans le TTC */
+  var fraisTr = nb(f.frais);                        /* [AGV-45] frais de transport de la facture */
+  var ttc = totalHT - remise + tva + fraisTr;       /* la dette n'entre PAS dans le TTC */
   var paye = nb(f.montantPaye);
   var reste = Math.max(ttc - paye, 0);
   var avant = soldeAvant(f);
@@ -38628,6 +38629,9 @@ window.agvFactureImprimer = function(id){
         + '<tr><td class="lbl">Prix Total HT</td><td class="val">' + montant(totalHT) + '</td></tr>'
         + '<tr><td class="lbl">TVA</td><td class="val">' + montant(tva) + '</td></tr>'
         + '<tr><td class="lbl">Montant Remise</td><td class="val">' + montant(remise) + '</td></tr>'
+        + (fraisTr > 0 ? '<tr><td class="lbl">Frais de transport'
+            + (f.fraisNote ? '<div class="fnote">' + esc(f.fraisNote) + '</div>' : '')
+            + '</td><td class="val">' + montant(fraisTr) + '</td></tr>' : '')
         + '<tr class="ttc"><td class="lbl">Prix Total TTC</td><td class="val">' + montant(ttc) + '</td></tr>'
       + '</table></div>'
 
@@ -38683,6 +38687,7 @@ window.agvFactureImprimer = function(id){
     + 'table.tot .lbl{text-align:right;color:#222}'
     + 'table.tot .val{text-align:right;font-weight:700;width:46%}'
     + 'table.tot .ttc td{font-weight:700;font-size:11px}'
+    + 'table.tot .fnote{font-size:8.5px;font-weight:400;color:#555;margin-top:1px}'
     + '.paye{margin-top:11px;background:' + vert + ';color:#fff;font-weight:700;font-size:11.5px;'
       + 'padding:6px 14px;display:inline-block;min-width:42%}'
     + '.regl{font-size:10px;margin-top:5px}'
@@ -58346,6 +58351,1449 @@ API.etat = function(){
   };
 };
 API.modeFondateur = function(){ return modeFondateur(ficheFondateur()); };
+})();
+</script>
+
+<!-- ============================================================
+     MODULE 38 — AGV-45 : DETTE INITIALE DES CLIENTS, FRAIS DE
+     TRANSPORT SUR LA FACTURE, DEPENSES PROGRAMMEES
+     ------------------------------------------------------------
+     1. DETTE INITIALE D'UN CLIENT
+        La fiche client (Nouveau client / Modifier) recoit un cadre
+        « Dette initiale » : montant, date et motif de ce que le
+        client devait deja avant d'etre enregistre. Elle est inscrite
+        comme une dette client ordinaire du tableau « dettes »
+        (type client, rattachee a la fiche par clientId, sans
+        article) : elle entre donc d'elle-meme dans le calcul unique
+        des dettes (tableau de bord, Dettes clients, Versements,
+        Direction, bilan du client) et se regle dans Versements.
+        Elle ne compte ni dans le chiffre d'affaires ni dans le
+        benefice. Sur la carte du client, « Dette en cours » l'inclut
+        (« dont dette initiale »). Modifiable par le fondateur ou un
+        gerant ayant le droit Modifier ; jamais en dessous de ce qui
+        a deja ete verse.
+
+     2. FRAIS DE TRANSPORT (Reglages -> Facturation des clients)
+        Interrupteur reserve au fondateur. Active, l'ecran de facture
+        propose « Frais de transport » : un montant et un commentaire.
+        Le montant est porte par le champ « frais » de la facture,
+        deja lu par tous les calculs de dette (articles - remise +
+        frais - paye) ; le commentaire par le champ ajoute
+        « fraisNote ». Le total, le reste a payer, la dette du client
+        et la facture imprimee en tiennent compte. Un client de
+        passage doit regler aussi le transport. Le transport n'entre
+        pas dans le benefice.
+
+     3. DEPENSES PROGRAMMEES (Reglages -> Depenses)
+        Interrupteur reserve au fondateur. Le fondateur definit, pour
+        chaque lieu de vente, les depenses qui reviennent chaque mois
+        (description, categorie, montant, jour du mois, debut, fin).
+        Chaque nouveau mois, des que le jour choisi est atteint, elles
+        s'ecrivent d'elles-memes dans l'onglet Depenses (une seule
+        fois par mois, meme avec plusieurs appareils ouverts). Ce que
+        la boutique saisit a la main compte comme depense
+        SUPPLEMENTAIRE ; l'onglet Depenses separe les deux totaux.
+
+     STRUCTURE : rien n'est modifie ni deplace. Ajouts facultatifs :
+       - info/reglages/fraisTransport, depensesProgrammees,
+         depensesProgrammeesDepuis (a cote de natureFacture) ;
+       - noeud ajoute <boutique ou bloc>/depensesProgrammees
+         { liste, ecrites } — hors de « data », il suit le bloc ouvert ;
+       - facture.fraisNote ; depense.progId / progMois ;
+         dette.initiale / clientId / note.
+     Verifier : AGV_45.etat()      Desactiver : AGV_45.actif = false
+     ============================================================ -->
+<style>
+#agv45-di .agv45-di-g{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+#agv45-di .agv45-di-info{font-size:11.5px;color:var(--text3,#64748b);margin-top:6px;line-height:1.5}
+#agv45-di .agv45-di-info b{color:var(--text,#e2e8f0)}
+#agv45-di input:disabled{opacity:.6;cursor:not-allowed}
+.agv45-di-c{font-size:10.5px;color:var(--text3,#94a3b8);margin-top:2px;font-weight:600}
+.agv45-di-f{margin-top:6px;padding-top:6px;border-top:1px dashed #bfdbfe;color:#7c2d12}
+#agv38-fact .agv45-aide{font-size:11.5px;color:#64748b;margin-top:7px;line-height:1.5}
+#agv38-fact .agv45-tr-row small{font-size:11px;opacity:.75}
+#agv38-fact .agv45-tr-row span:last-child{white-space:nowrap;padding-left:10px}
+.agv45-b-tr{background:rgba(124,58,237,.13);color:#7c3aed}
+#agv45-dep{border:1px solid var(--border,rgba(37,99,235,.3));border-radius:12px;padding:12px 14px;margin:0 0 14px;
+  background:var(--surface,#0a1628)}
+#agv45-dep .hd{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+#agv45-dep .ti{font-weight:800;font-size:14px;color:var(--text,#e2e8f0)}
+#agv45-dep .et{display:inline-block;margin-left:8px;padding:2px 9px;border-radius:999px;font-size:10.5px;font-weight:800;vertical-align:middle}
+#agv45-dep .agv45-on{background:rgba(22,163,74,.15);color:#16a34a}
+#agv45-dep .agv45-off{background:rgba(148,163,184,.18);color:var(--text3,#94a3b8)}
+#agv45-dep .gr{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;margin-top:10px}
+#agv45-dep .cs{border:1px solid var(--border,rgba(37,99,235,.3));border-radius:10px;padding:9px 11px;background:var(--surface2,#060d24)}
+#agv45-dep .cs .l{font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--text3,#94a3b8);font-weight:700}
+#agv45-dep .cs .v{font-size:16px;font-weight:800;margin-top:3px;color:var(--text,#e2e8f0)}
+#agv45-dep .cs .s{font-size:11px;color:var(--text3,#94a3b8);margin-top:2px}
+#agv45-dep .bt{padding:7px 13px;border-radius:9px;border:1px solid var(--accent,#2563eb);background:transparent;
+  color:var(--accent,#2563eb);font-family:inherit;font-size:12.5px;font-weight:700;cursor:pointer}
+#agv45-dep .pe{font-size:12px;color:var(--text3,#94a3b8);margin-top:9px;line-height:1.5}
+.agv45-pile{display:inline-flex;flex-direction:column;align-items:flex-start;gap:3px;flex-shrink:0}
+.agv45-tag{display:inline-block;padding:1px 6px;border-radius:999px;font-size:9.5px;font-weight:800;white-space:nowrap}
+.agv45-tag-p{background:rgba(37,99,235,.14);color:#3b82f6}
+#agv45-dep-note{font-size:12px;line-height:1.5;padding:9px 11px;margin-bottom:12px;border-radius:9px;
+  background:rgba(37,99,235,.10);border:1px solid rgba(37,99,235,.28);color:var(--text,#e2e8f0)}
+@media(max-width:560px){#agv45-dep .gr{grid-template-columns:1fr}#agv45-di .agv45-di-g{grid-template-columns:1fr}}
+
+#agv45-prog{position:fixed;inset:0;z-index:99996;background:rgba(15,23,42,.62);display:flex;align-items:center;
+  justify-content:center;padding:12px;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+#agv45-prog *{box-sizing:border-box}
+#agv45-prog .box{background:#f1f5f9;color:#0f172a;border-radius:16px;width:100%;max-width:760px;max-height:94vh;
+  display:flex;flex-direction:column;overflow:hidden;box-shadow:0 18px 50px rgba(0,0,0,.35)}
+#agv45-prog .top{background:#0f2b5b;color:#fff;padding:14px 18px;display:flex;justify-content:space-between;align-items:center;gap:12px}
+#agv45-prog .top h2{margin:0;font-size:17px;font-weight:800}
+#agv45-prog .top .s{font-size:12px;opacity:.8;margin-top:2px}
+#agv45-prog .top button{background:rgba(255,255,255,.1);color:#fff;border-color:rgba(255,255,255,.35)}
+#agv45-prog .body{padding:14px 16px;overflow-y:auto;flex:1;-webkit-overflow-scrolling:touch}
+#agv45-prog .sec{background:#fff;border:1px solid #dbe3ec;border-radius:13px;padding:14px;margin-bottom:12px}
+#agv45-prog h3{margin:0 0 10px;font-size:13px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:#1d4ed8}
+#agv45-prog label{display:block;font-size:11.5px;font-weight:600;color:#475569;margin-bottom:4px}
+#agv45-prog input,#agv45-prog select{width:100%;padding:9px 11px;border:1px solid #cbd5e1;border-radius:9px;font-size:14px;
+  font-family:inherit;background:#fff;color:#0f172a}
+#agv45-prog input:focus,#agv45-prog select:focus{outline:none;border-color:#1d4ed8;box-shadow:0 0 0 3px rgba(29,78,216,.12)}
+#agv45-prog .g2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+#agv45-prog .g3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
+#agv45-prog button{font-family:inherit;cursor:pointer;border-radius:9px;font-weight:700;font-size:13px;padding:9px 14px;
+  border:1px solid #cbd5e1;background:#fff;color:#334155}
+#agv45-prog .bp{background:#1d4ed8;border-color:#1d4ed8;color:#fff}
+#agv45-prog .bd{color:#dc2626;border-color:#fecaca}
+#agv45-prog .aide{font-size:11.5px;color:#64748b;margin-top:8px;line-height:1.55}
+#agv45-prog .avert{background:#fffbeb;border:1px solid #fde68a;border-radius:10px;padding:10px 12px;font-size:12.5px;
+  color:#92400e;line-height:1.5;margin-bottom:12px}
+#agv45-prog .okb{background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:10px 12px;font-size:12.5px;
+  color:#166534;line-height:1.5;margin-bottom:12px}
+#agv45-prog .it{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;padding:11px 0;
+  border-top:1px solid #eef2f7;flex-wrap:wrap}
+#agv45-prog .it:first-child{border-top:none}
+#agv45-prog .it .n{font-weight:800;font-size:14px}
+#agv45-prog .it .d{font-size:12px;color:#64748b;margin-top:2px;line-height:1.5}
+#agv45-prog .it .m{font-weight:800;font-size:15px;color:#dc2626;white-space:nowrap;text-align:right}
+#agv45-prog .it .ac{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+#agv45-prog .it .ac button{padding:5px 10px;font-size:12px}
+#agv45-prog .susp{opacity:.55}
+#agv45-prog .tot{display:flex;justify-content:space-between;font-weight:800;padding-top:10px;border-top:2px solid #e2e8f0;margin-top:6px}
+#agv45-prog .vide{font-size:12.5px;color:#64748b;padding:8px 0}
+@media(max-width:600px){#agv45-prog .g2,#agv45-prog .g3{grid-template-columns:1fr}}
+</style>
+<script>
+(function(){
+'use strict';
+if(window.AGV_45) return;
+var API = window.AGV_45 = { actif: true, version: '1.0' };
+
+/* ============================================================
+   OUTILS
+   ============================================================ */
+function nb(v){ var n = parseFloat(v); return isNaN(n) ? 0 : n; }
+function r2(v){ return Math.round(nb(v) * 100) / 100; }
+function vide(v){ return v === undefined || v === null || String(v).trim() === ''; }
+function tab(v){
+  if(!v) return [];
+  if(Array.isArray(v)) return v;
+  try{ return Object.keys(v).map(function(k){ return v[k]; }); }catch(e){ return []; }
+}
+function esc(v){
+  return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+function $(id){ return document.getElementById(id); }
+function val(id){ var e = $(id); return e ? String(e.value == null ? '' : e.value) : ''; }
+function argent(v){
+  try{ if(typeof window.fmtGNF === 'function') return window.fmtGNF(Math.round(nb(v))); }catch(e){}
+  return Math.round(nb(v)).toLocaleString('fr-FR') + ' GNF';
+}
+function toast(m){
+  try{ if(typeof window.showToast === 'function') return window.showToast(m); }catch(e){}
+  try{ console.log('[AGV-45]', m); }catch(e){}
+}
+function meme(a, b){
+  if(a === null || a === undefined || b === null || b === undefined) return false;
+  return String(a) === String(b);
+}
+function journal(a, d){ try{ if(typeof window.agvJournaliser === 'function') window.agvJournaliser(a, d); }catch(e){} }
+function pad(n){ return (n < 10 ? '0' : '') + n; }
+function aujourdhui(){ var d = new Date(); return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); }
+function moisCourant(){ return aujourdhui().slice(0, 7); }
+function libMois(m){
+  try{
+    var d = new Date(+m.slice(0, 4), +m.slice(5, 7) - 1, 1);
+    return d.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
+  }catch(e){ return m; }
+}
+function jourFr(d){ var x = new Date(String(d || '').slice(0, 10) + 'T12:00:00'); return isNaN(x.getTime()) ? (d || '—') : x.toLocaleDateString('fr-FR'); }
+function sommeP(l){ return tab(l).reduce(function(s, p){ return s + nb(p && p.montant); }, 0); }
+
+function uid(){ return (window._currentShop || {}).uid || null; }
+function role(){
+  try{ if(window.currentRole) return window.currentRole; }catch(e){}
+  try{ return currentRole; }catch(e){}
+  return null;
+}
+function gid(){
+  var g = null;
+  try{ g = window.currentGerantId; }catch(e){}
+  try{ if(g === undefined || g === null || g === '') g = currentGerantId; }catch(e){}
+  return (g === undefined || g === null || g === '') ? null : g;
+}
+/* le fondateur en titre (meme regle que l'Administration et les Reglages) */
+function fondateur(){
+  var P = window.AGV_PORTAIL_GERANT;
+  try{ if(P && typeof P.fondateurEnTitre === 'function') return !!P.fondateurEnTitre(); }catch(e){}
+  return role() === 'fondateur' && gid() === null;
+}
+function peut(cle){
+  if(fondateur()) return true;
+  try{ if(typeof window.agvActionPermise === 'function') return !!window.agvActionPermise(cle); }catch(e){}
+  return false;
+}
+function moi(){
+  try{
+    var p = (typeof window.agvPersonneConnectee === 'function') ? window.agvPersonneConnectee() : null;
+    if(p && p.nom) return p.nom;
+  }catch(e){}
+  if(fondateur()) return 'Fondateur';
+  try{
+    var g = (typeof window.getCurrentGerant === 'function') ? window.getCurrentGerant() : null;
+    if(g && g.nom) return g.nom;
+  }catch(e){}
+  return '—';
+}
+function refBrut(p){
+  if(typeof window._agvRefBrut === 'function') return window._agvRefBrut(p);
+  return (window.db && typeof window.db.ref === 'function') ? window.db.ref(p) : null;
+}
+/* les tableaux vivants de l'application (declares en let dans un autre script) */
+function brut(nom){
+  try{
+    switch(nom){
+      case 'clients': return clients;
+      case 'dettes': return dettes;
+      case 'depenses': return depenses;
+      case 'factureVentes': return factureVentes;
+    }
+  }catch(e){}
+  return window[nom];
+}
+function les(nom){ return tab(brut(nom)); }
+function vivant(nom){
+  var v = brut(nom);
+  if(Array.isArray(v)) return v;
+  var t = tab(v);
+  try{
+    switch(nom){
+      case 'dettes': dettes = t; break;
+      case 'depenses': depenses = t; break;
+      default: window[nom] = t;
+    }
+  }catch(e){ window[nom] = t; }
+  return t;
+}
+function oublierCaches(){
+  try{ if(window.AGV_41 && typeof window.AGV_41.oublier === 'function') window.AGV_41.oublier(); }catch(e){}
+  try{ if(window.AGV_39 && typeof window.AGV_39.oublier === 'function') window.AGV_39.oublier(); }catch(e){}
+  try{ if(window.AGV_PERF && typeof window.AGV_PERF.oublierIndex === 'function') window.AGV_PERF.oublierIndex(); }catch(e){}
+}
+/* la sauvegarde part tout de suite (module 34), sinon par le chemin normal */
+function sauver(branches){
+  try{
+    if(window.AGV_41 && typeof window.AGV_41.sauverMaintenant === 'function'){
+      window.AGV_41.sauverMaintenant(branches);
+      return;
+    }
+  }catch(e){}
+  try{ if(typeof window.saveAll === 'function') window.saveAll(); }catch(e){}
+  try{ if(window.AGV_PERF && typeof window.AGV_PERF.viderFileAttente === 'function') window.AGV_PERF.viderFileAttente(); }catch(e){}
+}
+function redessiner(noms){
+  (noms || ['renderFacturesList', 'renderClientsListe', 'renderDashboard']).forEach(function(f){
+    try{ if(typeof window[f] === 'function') window[f](); }catch(e){}
+  });
+  try{ if(typeof window.agvSituationsDettes === 'function') window.agvSituationsDettes(); }catch(e){}
+}
+function lireUneFois(r, cb, delai){
+  if(!r){ cb(null, false); return; }
+  var fini = false;
+  var t = setTimeout(function(){ if(!fini){ fini = true; cb(null, false); } }, delai || 8000);
+  try{
+    r.once('value').then(function(s){
+      if(fini) return; fini = true; clearTimeout(t); cb(s.val(), true);
+    }, function(){ if(!fini){ fini = true; clearTimeout(t); cb(null, false); } });
+  }catch(e){ if(!fini){ fini = true; clearTimeout(t); cb(null, false); } }
+}
+
+/* enveloppe posee AU-DESSUS des autres ; les temoins des autres modules
+   (__agv39, __agv44...) sont recopies pour qu'ils ne se reposent pas en boucle */
+var dedans = {};
+function envelopper(nom, fabrique){
+  var f = window[nom];
+  if(typeof f !== 'function' || f.__agv45) return false;
+  var w = fabrique(f);
+  var g = function(){
+    if(!API.actif || dedans[nom]) return f.apply(this, arguments);
+    dedans[nom] = true;
+    try{ return w.apply(this, arguments); }
+    finally{ dedans[nom] = false; }
+  };
+  try{ Object.keys(f).forEach(function(k){ if(/^_+agv/.test(k) && k !== '__agvOrig') g[k] = f[k]; }); }catch(e){}
+  g.__agv45 = true;
+  g.__agvOrig = f;
+  window[nom] = g;
+  return true;
+}
+
+/* ============================================================
+   0. LES REGLAGES DU FONDATEUR (info/reglages de la boutique
+      d'accueil, comme « nature de l'operation » du module 32)
+   ============================================================ */
+var REG = { valeurs: null, uid: null, le: 0 };
+function accueil(cb){
+  var u = uid();
+  if(!u){ cb(null); return; }
+  var G = window.AGV_GERANTS;
+  if(G && typeof G.accueilDe === 'function'){ try{ G.accueilDe(u, function(h){ cb(h || u); }); return; }catch(e){} }
+  cb(u);
+}
+function reglagesConnus(){
+  if(REG.valeurs && REG.uid === uid()) return REG.valeurs;
+  var s = window._currentShop || {};
+  return (s.reglages && typeof s.reglages === 'object') ? s.reglages : {};
+}
+function reglage(cle){ return !!reglagesConnus()[cle]; }
+function lireReglages(cb){
+  accueil(function(h){
+    var r = h ? refBrut('gdv_shops/' + h + '/info/reglages') : null;
+    lireUneFois(r, function(v, ok){
+      if(ok){
+        REG.valeurs = v || {}; REG.uid = uid(); REG.le = Date.now();
+        try{ var sh = window._currentShop; if(sh) sh.reglages = REG.valeurs; }catch(e){}
+      }
+      cb && cb(reglagesConnus());
+    });
+  });
+}
+API.lireReglages = lireReglages;
+function ecrireReglages(maj, verif, cb){
+  if(!fondateur()){ cb && cb('Reserve au fondateur'); return; }
+  accueil(function(h){
+    var r = h ? refBrut('gdv_shops/' + h + '/info/reglages') : null;
+    if(!r){ cb && cb('Base indisponible'); return; }
+    r.update(maj).then(function(){
+      lireReglages(function(v){
+        /* le module 32 garde sa propre copie : on la rafraichit aussi */
+        try{ if(window.AGV_39 && typeof window.AGV_39.lireReglages === 'function') window.AGV_39.lireReglages(function(){}); }catch(e){}
+        cb && cb(verif(v) ? null : 'non confirme par la base');
+      });
+    }, function(e){ cb && cb(e && e.message ? e.message : 'echec'); });
+  });
+}
+
+/* ------------------------------------------------------------
+   LES DEUX CARTES DE LA PAGE « REGLAGES »
+   ------------------------------------------------------------ */
+function cartesReglages(){
+  var page = $('agv39-reg');
+  if(!page || !API.actif || $('agv45-c-tr')) return;
+  var wrap = page.querySelector('.wrap');
+  if(!wrap) return;
+  var c1 = document.createElement('div');
+  c1.className = 'carte';
+  c1.id = 'agv45-c-tr';
+  c1.innerHTML = '<h3>Facturation des clients — frais de transport</h3>'
+    + '<p>Activee, chaque facture propose un cadre <b>Frais de transport</b> : un montant et un commentaire '
+    + '(ex : « livraison a Kindia »). Le montant s\'ajoute au total de la facture, au reste a payer et, s\'il n\'est '
+    + 'pas regle, a la dette du client ; il apparait sur la facture imprimee. Il ne compte pas dans le benefice.</p>'
+    + '<div class="ligne"><b id="agv45-tr-t">Lecture...</b>'
+    + '<label class="interr"><input type="checkbox" id="agv45-tr-cb" onchange="agv45ReglageTransport(this.checked)" disabled><span></span></label></div>'
+    + '<div class="etat" id="agv45-tr-etat"></div>';
+  var c2 = document.createElement('div');
+  c2.className = 'carte';
+  c2.id = 'agv45-c-dp';
+  c2.innerHTML = '<h3>Depenses — depenses programmees</h3>'
+    + '<p>Activees, les depenses qui reviennent chaque mois (loyer, electricite, gardiennage...) <b>s\'ecrivent '
+    + 'd\'elles-memes</b> dans l\'onglet Depenses a chaque nouveau mois, au jour choisi. Ce que la boutique saisit '
+    + 'ensuite a la main compte comme <b>depenses supplementaires</b>. Chaque lieu de vente a sa propre liste.</p>'
+    + '<div class="ligne"><b id="agv45-dp-t">Lecture...</b>'
+    + '<label class="interr"><input type="checkbox" id="agv45-dp-cb" onchange="agv45ReglageDepProg(this.checked)" disabled><span></span></label></div>'
+    + '<div class="etat" id="agv45-dp-etat"></div>'
+    + '<div class="ligne"><span id="agv45-dp-resume" style="font-size:12.5px;color:#475569"></span>'
+    + '<button class="btn39" onclick="agvDepProgOuvrir()">Gerer les depenses programmees</button></div>';
+  var cartes = wrap.querySelectorAll('.carte');
+  var apres = cartes.length ? cartes[0].nextSibling : null;
+  wrap.insertBefore(c1, apres);
+  wrap.insertBefore(c2, c1.nextSibling);
+  suivreProg();
+  majCartes();
+  lireReglages(majCartes);
+}
+function majCartes(){
+  var v = reglagesConnus();
+  var a = $('agv45-tr-cb'), at = $('agv45-tr-t');
+  if(a && !a.__agv45occupe){ a.checked = !!v.fraisTransport; a.disabled = false; }
+  if(at) at.textContent = v.fraisTransport ? 'Activee' : 'Desactivee';
+  var b = $('agv45-dp-cb'), bt = $('agv45-dp-t');
+  if(b && !b.__agv45occupe){ b.checked = !!v.depensesProgrammees; b.disabled = false; }
+  if(bt) bt.textContent = v.depensesProgrammees ? 'Activees' : 'Desactivees';
+  var rs = $('agv45-dp-resume');
+  if(rs){
+    var l = listeProgs().filter(function(p){ return p.actif !== false; });
+    rs.textContent = DP.lu
+      ? (l.length ? l.length + ' depense(s) programmee(s) ici — ' + argent(totalMensuel(l)) + ' par mois'
+                  : 'Aucune depense programmee pour ce lieu de vente.')
+      : '';
+  }
+}
+function basculer(idCb, idEtat, idT, maj, verif, txtOn, txtOff, apres){
+  var cb = $(idCb), e = $(idEtat);
+  if(!cb) return;
+  var on = cb.checked;
+  if(!fondateur()){ cb.checked = !on; return toast('Les reglages sont reserves au fondateur'); }
+  cb.disabled = true; cb.__agv45occupe = true;
+  if(e){ e.style.color = '#64748b'; e.textContent = 'Enregistrement...'; }
+  ecrireReglages(maj(on), function(v){ return verif(v, on); }, function(err){
+    cb.disabled = false; cb.__agv45occupe = false;
+    var t = $(idT);
+    if(err){
+      cb.checked = !on;
+      if(e){ e.style.color = '#dc2626'; e.textContent = 'Non enregistre : ' + err; }
+      return;
+    }
+    if(t) t.textContent = on ? txtOn : txtOff;
+    if(e){ e.style.color = '#15803d'; e.textContent = (on ? txtOn : txtOff) + ' — confirme dans la base.'; }
+    apres && apres(on);
+  });
+}
+window.agv45ReglageTransport = function(){
+  basculer('agv45-tr-cb', 'agv45-tr-etat', 'agv45-tr-t',
+    function(on){ return { fraisTransport: on ? true : null }; },
+    function(v, on){ return !!v.fraisTransport === on; },
+    'Activee', 'Desactivee',
+    function(on){
+      journal('Reglage modifie', 'frais de transport : ' + (on ? 'active' : 'desactive') + ' — par ' + moi());
+      if($('agv38-fact')) poserTransport();
+    });
+};
+window.agv45ReglageDepProg = function(){
+  basculer('agv45-dp-cb', 'agv45-dp-etat', 'agv45-dp-t',
+    function(on){
+      return on ? { depensesProgrammees: true, depensesProgrammeesDepuis: moisCourant() }
+                : { depensesProgrammees: null, depensesProgrammeesDepuis: null };
+    },
+    function(v, on){ return !!v.depensesProgrammees === on; },
+    'Activees', 'Desactivees',
+    function(on){
+      journal('Reglage modifie', 'depenses programmees : ' + (on ? 'activees' : 'desactivees') + ' — par ' + moi());
+      majCartes();
+      rafraichirProg();
+      if(on) setTimeout(tick, 600);
+    });
+};
+/* la page Reglages est ajoutee directement au document : on la complete des son arrivee */
+try{
+  new MutationObserver(function(){ try{ cartesReglages(); }catch(e){} })
+    .observe(document.body || document.documentElement, { childList: true });
+}catch(e){}
+setInterval(function(){ try{ cartesReglages(); }catch(e){} }, 1000);
+
+/* ============================================================
+   1. LA DETTE INITIALE D'UN CLIENT
+   ============================================================ */
+function estInitiale(d){ return !!(d && d.type === 'client' && d.initiale === true); }
+function detteInitiale(clientId){
+  if(vide(clientId)) return null;
+  var t = null;
+  les('dettes').forEach(function(d){ if(!t && estInitiale(d) && meme(d.clientId, clientId)) t = d; });
+  return t;
+}
+function resteInitiale(clientId){
+  var d = detteInitiale(clientId);
+  return d ? Math.max(0, r2(nb(d.montant) - sommeP(d.paiements))) : 0;
+}
+API.resteInitiale = resteInitiale;
+function libelleDI(note){ return 'Dette initiale' + (note ? ' — ' + note : ''); }
+function nouvelIdDette(){
+  var vus = {};
+  les('dettes').forEach(function(d){ if(d) vus[String(d.id)] = true; });
+  var id = Date.now();
+  while(vus[String(id)]) id++;
+  return id;
+}
+
+function poserChampsDI(){
+  if($('agv45-di')) return true;
+  var notes = $('cli-mgr-notes');
+  var ancre = notes ? (notes.closest ? notes.closest('.form-group') : notes.parentNode) : null;
+  if(!ancre){
+    var em = $('cli-mgr-email');
+    ancre = em ? (em.closest ? em.closest('.form-group') : em.parentNode) : null;
+  }
+  if(!ancre || !ancre.parentNode) return false;
+  var b = document.createElement('div');
+  b.className = 'form-group';
+  b.id = 'agv45-di';
+  b.innerHTML = '<label class="form-label">Dette initiale <span style="font-weight:400;text-transform:none">(facultatif)</span></label>'
+    + '<div class="agv45-di-g">'
+      + '<input class="form-input" id="agv45-di-mt" type="number" min="0" step="1" placeholder="Montant deja du (GNF)">'
+      + '<input class="form-input" id="agv45-di-date" type="date" title="Date de la dette">'
+    + '</div>'
+    + '<input class="form-input" id="agv45-di-note" maxlength="120" style="margin-top:8px" '
+      + 'placeholder="Motif (ex : reste du cahier de credit)">'
+    + '<div class="agv45-di-info" id="agv45-di-info"></div>';
+  ancre.parentNode.insertBefore(b, ancre.nextSibling);
+  return true;
+}
+(function attendreFormulaire(n){
+  n = n || 0;
+  if(poserChampsDI() || n > 200) return;
+  setTimeout(function(){ attendreFormulaire(n + 1); }, 400);
+})();
+
+function remplirDI(id){
+  if(!poserChampsDI()) return;
+  var ex = id ? detteInitiale(id) : null;
+  var mt = $('agv45-di-mt'), dt = $('agv45-di-date'), no = $('agv45-di-note'), info = $('agv45-di-info');
+  var bloc = $('agv45-di');
+  if(bloc) bloc.style.display = API.actif ? '' : 'none';
+  mt.value = ex ? Math.round(nb(ex.montant)) : '';
+  dt.value = ex ? String(ex.date || '').slice(0, 10) : aujourdhui();
+  no.value = ex ? (ex.note || '') : '';
+  var modifiable = !id || peut('permEdit');
+  [mt, dt, no].forEach(function(e){ e.disabled = !modifiable; });
+  var paye = ex ? sommeP(ex.paiements) : 0;
+  mt.min = paye > 0 ? String(Math.round(paye)) : '0';
+  if(ex){
+    info.innerHTML = 'Inscrite le ' + esc(jourFr(ex.date)) + ' : <b>' + esc(argent(ex.montant)) + '</b>'
+      + ' — deja verse <b>' + esc(argent(paye)) + '</b> — reste <b>' + esc(argent(Math.max(0, nb(ex.montant) - paye))) + '</b>.'
+      + ' Elle se regle dans Versements.'
+      + (modifiable ? (paye > 0 ? ' Le montant ne peut pas descendre sous ce qui a deja ete verse.' : ' Videz le montant pour la retirer.')
+                    : ' Seul le fondateur (ou un gerant ayant le droit Modifier) peut la changer.');
+  }else{
+    info.innerHTML = modifiable
+      ? 'Ce que ce client devait deja avant d\'etre enregistre (cahier de credit, ancien systeme...). '
+        + 'Laissez vide s\'il ne doit rien. Elle s\'ajoute a ses dettes, se regle dans Versements et ne compte '
+        + 'ni dans le chiffre d\'affaires ni dans le benefice.'
+      : 'Aucune dette initiale. Seul le fondateur (ou un gerant ayant le droit Modifier) peut en inscrire une.';
+  }
+}
+function lireDI(){
+  if(!$('agv45-di-mt')) return null;
+  return {
+    montant: Math.max(0, Math.round(nb(val('agv45-di-mt')))),
+    date: val('agv45-di-date').slice(0, 10) || aujourdhui(),
+    note: val('agv45-di-note').trim()
+  };
+}
+
+function appliquerDI(client, champs){
+  var D = vivant('dettes');
+  var ex = null, idx = -1;
+  D.forEach(function(d, i){ if(idx < 0 && estInitiale(d) && meme(d.clientId, client.id)){ ex = d; idx = i; } });
+  var change = false, action = '', montantJournal = champs.montant;
+  if(champs.montant > 0){
+    if(ex){
+      if(nb(ex.montant) !== champs.montant || String(ex.date || '').slice(0, 10) !== champs.date || String(ex.note || '') !== champs.note){
+        action = 'Dette initiale modifiee';
+        ex.montant = champs.montant;
+        ex.date = champs.date;
+        ex.note = champs.note;
+        ex.desc = libelleDI(champs.note);
+        ex.modifieLe = new Date().toISOString();
+        ex.modifiePar = moi();
+        change = true;
+      }
+    }else{
+      D.unshift({
+        id: nouvelIdDette(), type: 'client', initiale: true,
+        clientId: client.id, nom: client.nom || '', tel: client.tel || '',
+        date: champs.date, desc: libelleDI(champs.note), note: champs.note,
+        montant: champs.montant, lignes: [], paiements: [],
+        gerant: moi(), creeLe: new Date().toISOString()
+      });
+      action = 'Dette initiale inscrite';
+      change = true;
+    }
+  }else if(ex && sommeP(ex.paiements) <= 0.5){
+    montantJournal = nb(ex.montant);
+    D.splice(idx, 1);
+    ex = null;
+    action = 'Dette initiale retiree';
+    change = true;
+  }
+  /* la dette suit le nom et le numero de la fiche */
+  if(ex && (ex.nom !== (client.nom || '') || (ex.tel || '') !== (client.tel || ''))){
+    ex.nom = client.nom || '';
+    ex.tel = client.tel || '';
+    change = true;
+  }
+  if(!change) return false;
+  oublierCaches();
+  sauver(['dettes']);
+  redessiner(['renderClientsListe', 'renderDashboard', 'renderDettes']);
+  if(action) journal(action, (client.nom || 'client') + ' — ' + argent(montantJournal) + ' — par ' + moi());
+  setTimeout(decorerCartesClients, 80);
+  return true;
+}
+
+function brancherClient(){
+  envelopper('openClientMgrModal', function(prev){
+    return function(id){
+      var r = prev.apply(this, arguments);
+      setTimeout(function(){ try{ remplirDI(id); }catch(e){ console.warn('[AGV-45] fiche client', e); } }, 90);
+      return r;
+    };
+  });
+  envelopper('saveClientMgr', function(prev){
+    return function(){
+      var champs = lireDI();
+      var nom = val('cli-mgr-nom').trim();
+      if(!champs || !nom) return prev.apply(this, arguments);
+      var idAvant = val('cli-mgr-edit-id');
+      var ex = idAvant ? detteInitiale(idAvant) : null;
+      var modifiable = !idAvant || peut('permEdit');
+      if(modifiable){
+        if(ex){
+          var paye = sommeP(ex.paiements);
+          if(champs.montant < paye - 0.5){
+            toast('La dette initiale ne peut pas etre inferieure a ce qui a deja ete verse (' + argent(paye) + ')');
+            return;
+          }
+          if(!(champs.montant > 0) && !confirm('Retirer la dette initiale de ' + argent(ex.montant) + ' ?')){
+            $('agv45-di-mt').value = Math.round(nb(ex.montant));
+            return;
+          }
+        }
+      }
+      var avant = {};
+      les('clients').forEach(function(c){ if(c) avant[String(c.id)] = true; });
+      var r = prev.apply(this, arguments);
+      if(!modifiable) return r;
+      try{
+        var cible = null;
+        if(idAvant){
+          les('clients').forEach(function(c){ if(!cible && c && meme(c.id, idAvant)) cible = c; });
+        }else{
+          les('clients').forEach(function(c){ if(!cible && c && !avant[String(c.id)] && String(c.nom || '').trim() === nom) cible = c; });
+          if(!cible) les('clients').forEach(function(c){ if(!cible && c && !avant[String(c.id)]) cible = c; });
+        }
+        if(cible) appliquerDI(cible, champs);
+      }catch(e){ console.warn('[AGV-45] dette initiale', e); }
+      return r;
+    };
+  });
+}
+
+/* la carte du client : « Dette en cours » comprend la dette initiale */
+function decorerCartesClients(){
+  var liste = $('clients-mgr-list');
+  if(!liste || !API.actif) return;
+  Array.prototype.forEach.call(liste.querySelectorAll('[onclick^="openClientMgrModal("]'), function(b){
+    var m = /openClientMgrModal\('([^']*)'\)/.exec(b.getAttribute('onclick') || '');
+    if(!m) return;
+    var carte = b.closest ? b.closest('.card') : null;
+    if(!carte || carte.querySelector('.agv45-di-c')) return;
+    var reste = resteInitiale(m[1]);
+    if(!(reste > 0.5)) return;
+    var lib = null;
+    Array.prototype.forEach.call(carte.querySelectorAll('div'), function(x){
+      if(!lib && x.children.length === 0 && String(x.textContent).trim().toLowerCase() === 'dette en cours') lib = x;
+    });
+    var v = lib ? lib.nextElementSibling : null;
+    if(!v) return;
+    var factures = 0;
+    try{ factures = nb(window.getSoldeClient(m[1])); }catch(e){}
+    v.textContent = argent(factures + reste);
+    v.style.color = 'var(--red)';
+    var d = document.createElement('div');
+    d.className = 'agv45-di-c';
+    d.textContent = 'dont dette initiale : ' + argent(reste);
+    v.parentNode.appendChild(d);
+  });
+}
+
+/* ============================================================
+   2. LES FRAIS DE TRANSPORT SUR LA FACTURE
+   ============================================================ */
+var TR = { editId: null, ancien: null };
+function factureParId(id){
+  var t = null;
+  les('factureVentes').forEach(function(f){ if(!t && f && meme(f.id, id)) t = f; });
+  return t;
+}
+function lignesF(){ try{ return (typeof window.agvFactureLignes === 'function') ? (window.agvFactureLignes() || []) : []; }catch(e){ return []; } }
+function totalLignes(){ return r2(lignesF().reduce(function(s, l){ return s + nb(l && l.total); }, 0)); }
+/* la dette anterieure, exactement comme l'ecran de facture (v38) la calcule */
+function detteAnterieure(cid){
+  if(TR.editId && TR.ancien) return nb(TR.ancien.dettePrecedente);
+  if(!cid) return 0;
+  try{
+    if(typeof window.agvDuFacturesClient === 'function'){
+      var j = window.agvDuFacturesClient(cid);
+      if(j !== null && j !== undefined) return nb(j);
+    }
+  }catch(e){}
+  return les('factureVentes').filter(function(f){ return f && meme(f.clientId, cid); })
+    .reduce(function(s, f){ return s + nb(f.soldeRestant); }, 0);
+}
+function fraisSaisis(){
+  if(!$('agv45-tr')) return null;
+  return { montant: Math.max(0, Math.round(nb(val('agv45-tr-mt')))), note: val('agv45-tr-note').trim() };
+}
+function poserTransport(){
+  var box = $('agv38-fact');
+  if(!box) return;
+  var montrer = API.actif && (reglage('fraisTransport') || !!(TR.ancien && nb(TR.ancien.frais) > 0));
+  var sec = $('agv45-tr');
+  if(!montrer){
+    if(sec){ sec.remove(); try{ window.agvFactureMaj(); }catch(e){} }
+    return;
+  }
+  if(sec) return;
+  var verse = $('agv38-verse');
+  var regl = verse && verse.closest ? verse.closest('.sec') : null;
+  if(!regl || !regl.parentNode) return;
+  sec = document.createElement('div');
+  sec.className = 'sec';
+  sec.id = 'agv45-tr';
+  sec.innerHTML = '<h3>Frais de transport</h3>'
+    + '<div class="g2">'
+      + '<div><label>Montant du transport</label>'
+        + '<input type="number" min="0" step="1" id="agv45-tr-mt" placeholder="0" oninput="agvFactureMaj()"></div>'
+      + '<div><label>Commentaire <span style="font-weight:400;color:#94a3b8">(facultatif)</span></label>'
+        + '<input id="agv45-tr-note" maxlength="120" placeholder="ex : livraison a Kindia" oninput="agvFactureMaj()"></div>'
+    + '</div>'
+    + '<div class="agv45-aide">Le montant s\'ajoute au total de la facture et au reste a payer ; le commentaire '
+      + 'figure sur la facture imprimee. Laissez 0 s\'il n\'y a pas de transport.</div>';
+  regl.parentNode.insertBefore(sec, regl);
+  if(TR.ancien){
+    $('agv45-tr-mt').value = nb(TR.ancien.frais) > 0 ? Math.round(nb(TR.ancien.frais)) : '';
+    $('agv45-tr-note').value = TR.ancien.fraisNote || '';
+  }
+  try{ window.agvFactureMaj(); }catch(e){}
+}
+/* la dette initiale du client, rappelee sur l'ecran de facture */
+function rappelDI(){
+  var info = $('agv38-cli-info');
+  var cid = val('agv38-cli');
+  if(!info || !cid || info.querySelector('.agv45-di-f')) return;
+  var reste = resteInitiale(cid);
+  if(!(reste > 0.5)) return;
+  var cadre = info.firstElementChild || info;
+  var d = document.createElement('div');
+  d.className = 'agv45-di-f';
+  d.innerHTML = 'Dette initiale (d\'avant son enregistrement) : <b>' + esc(argent(reste))
+    + '</b> — suivie a part, elle se regle dans Versements.';
+  cadre.appendChild(d);
+}
+function apresMaj(){
+  try{ rappelDI(); }catch(e){}
+  var f = fraisSaisis();
+  if(!f || !(f.montant > 0)) return;
+  var cid = val('agv38-cli');
+  var enr = !!cid;
+  var L = lignesF();
+  var net = r2(totalLignes() + detteAnterieure(cid) + f.montant);
+  var verse = nb(val('agv38-verse'));
+  var reste = Math.max(0, r2(net - verse));
+  var t = $('agv38-totaux');
+  if(t){
+    var tot = t.querySelector('.tot'), big = t.querySelector('.tr.big');
+    if(tot && big && !t.querySelector('.agv45-tr-row')){
+      var row = document.createElement('div');
+      row.className = 'tr agv45-tr-row';
+      row.innerHTML = '<span>Frais de transport' + (f.note ? ' <small>(' + esc(f.note) + ')</small>' : '') + '</span>'
+        + '<span>' + esc(argent(f.montant)) + '</span>';
+      tot.insertBefore(row, big);
+    }
+    if(big && big.lastElementChild) big.lastElementChild.textContent = argent(net);
+    var trs = t.querySelectorAll('.tr');
+    var der = trs.length ? trs[trs.length - 1] : null;
+    if(der && der !== big && der.lastElementChild){
+      der.lastElementChild.textContent = argent(reste);
+      der.lastElementChild.style.color = reste > 0 ? '#fca5a5' : '#86efac';
+    }
+  }
+  var bloque = !enr && reste > 0;
+  var a = $('agv38-alerte'), b = $('agv38-valider');
+  if(a && bloque){
+    a.innerHTML = '<div class="warn"><b>Facture non validable en l\'etat.</b><br>'
+      + 'Le client n\'est pas enregistre et il reste ' + esc(argent(reste))
+      + ' a payer (frais de transport compris). Sans nom au dossier, cette dette ne serait rattachee a personne. '
+      + 'Enregistrez le client, ou encaissez le montant net complet.</div>';
+  }
+  if(b && L.length){
+    b.disabled = bloque;
+    b.style.opacity = bloque ? '.5' : '1';
+    b.style.cursor = bloque ? 'not-allowed' : 'pointer';
+    b.textContent = bloque ? 'Reglement complet requis' : (reste > 0 ? 'Valider (vente a credit)' : 'Valider la facture');
+  }
+}
+function appliquerFrais(fact, f){
+  var mt = f.montant > 0 ? f.montant : 0;
+  if(mt > 0){
+    fact.frais = mt;
+    if(f.note) fact.fraisNote = f.note; else delete fact.fraisNote;
+  }else{
+    delete fact.frais;
+    delete fact.fraisNote;
+  }
+  /* l'ecran v38 a pose montantTotal = articles + dette anterieure : le transport s'y ajoute */
+  fact.montantTotal = r2(nb(fact.montantTotal) + mt);
+  fact.soldeRestant = Math.max(0, r2(fact.montantTotal - nb(fact.montantPaye)));
+  fact.statut = fact.soldeRestant <= 0.5 ? 'paye' : (nb(fact.montantPaye) > 0 ? 'partiel' : 'impaye');
+  return mt;
+}
+function brancherFacture(){
+  envelopper('agvFactureOuvrir', function(prev){
+    return function(id){
+      TR.editId = id || null;
+      TR.ancien = id ? factureParId(id) : null;
+      var r = prev.apply(this, arguments);
+      try{
+        poserTransport();
+        lireReglages(function(){ if($('agv38-fact')) poserTransport(); });
+      }catch(e){ console.warn('[AGV-45] facture', e); }
+      return r;
+    };
+  });
+  envelopper('agvFactureMaj', function(prev){
+    return function(){
+      var r = prev.apply(this, arguments);
+      try{ apresMaj(); }catch(e){ console.warn('[AGV-45] totaux', e); }
+      return r;
+    };
+  });
+  envelopper('agvFactureValider', function(prev){
+    return function(){
+      var f = fraisSaisis();
+      if(!f) return prev.apply(this, arguments);
+      var cid = val('agv38-cli');
+      if(!cid && f.montant > 0 && lignesF().length){
+        var du = r2(totalLignes() + f.montant - nb(val('agv38-verse')));
+        if(du > 0.5){
+          toast('Client non enregistre : le montant net, frais de transport compris, doit etre entierement regle');
+          try{ apresMaj(); }catch(e){}
+          return;
+        }
+      }
+      var editId = TR.editId;
+      var ancien = editId ? factureParId(editId) : null;
+      var avant = {};
+      les('factureVentes').forEach(function(x){ if(x) avant[String(x.id)] = true; });
+      var r = prev.apply(this, arguments);
+      try{
+        var fact = null;
+        if(editId){
+          var f2 = factureParId(editId);
+          if(f2 && f2 !== ancien) fact = f2;
+        }else{
+          les('factureVentes').forEach(function(x){ if(!fact && x && !avant[String(x.id)]) fact = x; });
+        }
+        if(fact){
+          var mt = appliquerFrais(fact, f);
+          oublierCaches();
+          sauver(['factureVentes']);
+          redessiner();
+          if(mt > 0){
+            journal('Frais de transport', (fact.clientNom || 'client') + ' — ' + argent(mt)
+              + (f.note ? ' (' + f.note + ')' : '') + ' — par ' + moi());
+            var reste = nb(fact.soldeRestant);
+            setTimeout(function(){
+              toast(reste > 0.5 ? 'Facture validee (transport ' + argent(mt) + ' compris) — reste ' + argent(reste)
+                                : 'Facture validee et soldee (transport ' + argent(mt) + ' compris)');
+            }, 60);
+          }
+        }
+      }catch(e){ console.warn('[AGV-45] validation', e); }
+      return r;
+    };
+  });
+}
+
+/* le transport, signale dans la liste des factures */
+function badgesFactures(){
+  var zone = $('factures-mgr-list');
+  if(!zone || !API.actif) return;
+  Array.prototype.forEach.call(zone.querySelectorAll('[onclick^="deleteFacture("]'), function(b){
+    var m = /deleteFacture\('([^']*)'\)/.exec(b.getAttribute('onclick') || '');
+    if(!m) return;
+    var carte = b.closest ? b.closest('.card') : null;
+    if(!carte || carte.querySelector('.agv45-b-tr')) return;
+    var f = factureParId(m[1]);
+    if(!f || !(nb(f.frais) > 0)) return;
+    var s = document.createElement('span');
+    s.className = 'agv39-badge agv45-b-tr';
+    s.textContent = 'Transport ' + argent(f.frais) + (f.fraisNote ? ' — ' + f.fraisNote : '');
+    var tete = carte.firstElementChild && carte.firstElementChild.firstElementChild;
+    if(tete) tete.appendChild(s); else carte.insertBefore(s, carte.firstChild);
+  });
+}
+
+/* ============================================================
+   3. LES DEPENSES PROGRAMMEES
+   ============================================================ */
+var DP = { cle: null, ref: null, ecoute: null, liste: {}, ecrites: {}, lu: false };
+/* le noeud suit le bloc ouvert : on part du chemin des donnees tel que la
+   redirection des blocs (module v26) le donne, et on prend son voisin */
+function refProg(){
+  var u = uid();
+  if(!u || !window.db || typeof window.db.ref !== 'function') return null;
+  try{
+    var r = window.db.ref('gdv_shops/' + u + '/data');
+    return (r && r.parent) ? r.parent.child('depensesProgrammees') : null;
+  }catch(e){ return null; }
+}
+function suivreProg(){
+  var r = refProg();
+  if(!r){
+    if(DP.ref && DP.ecoute){ try{ DP.ref.off('value', DP.ecoute); }catch(e){} }
+    DP.cle = null; DP.ref = null; DP.ecoute = null; DP.lu = false; DP.liste = {}; DP.ecrites = {};
+    return;
+  }
+  var cle = String(r.toString());
+  if(DP.cle === cle) return;
+  if(DP.ref && DP.ecoute){ try{ DP.ref.off('value', DP.ecoute); }catch(e){} }
+  DP.cle = cle; DP.ref = r; DP.lu = false; DP.liste = {}; DP.ecrites = {};
+  var premier = true;
+  DP.ecoute = function(s){
+    var v = s.val() || {};
+    DP.liste = (v.liste && typeof v.liste === 'object') ? v.liste : {};
+    DP.ecrites = (v.ecrites && typeof v.ecrites === 'object') ? v.ecrites : {};
+    DP.lu = true;
+    rafraichirProg();
+    if(premier){ premier = false; setTimeout(tick, 5000); }
+  };
+  try{ r.on('value', DP.ecoute, function(){}); }catch(e){}
+}
+function listeProgs(){
+  return Object.keys(DP.liste || {}).map(function(k){
+    var p = DP.liste[k];
+    if(!p || typeof p !== 'object') return null;
+    if(vide(p.id)) p.id = k;
+    return p;
+  }).filter(Boolean).sort(function(a, b){
+    return (nb(a.jour) - nb(b.jour)) || String(a.desc || '').localeCompare(String(b.desc || ''));
+  });
+}
+function totalMensuel(l){ return l.reduce(function(s, p){ return s + nb(p.montant); }, 0); }
+function moisValide(m){ return /^\d{4}-\d{2}$/.test(String(m || '')); }
+function moisListe(de, a){
+  var out = [];
+  if(!moisValide(de) || !moisValide(a)) return out;
+  var y = +de.slice(0, 4), m = +de.slice(5, 7), Y = +a.slice(0, 4), M = +a.slice(5, 7);
+  while((y < Y || (y === Y && m <= M)) && out.length < 36){
+    out.push(y + '-' + pad(m));
+    m++; if(m > 12){ m = 1; y++; }
+  }
+  return out;
+}
+function moisPlus(m, k){
+  var y = +m.slice(0, 4), mm = +m.slice(5, 7) - 1 + k;
+  y += Math.floor(mm / 12); mm = ((mm % 12) + 12) % 12;
+  return y + '-' + pad(mm + 1);
+}
+function jourDu(mois, jour){
+  var y = +mois.slice(0, 4), m = +mois.slice(5, 7);
+  var fin = new Date(y, m, 0).getDate();
+  var j = Math.min(Math.max(1, parseInt(jour, 10) || 1), fin);
+  return mois + '-' + pad(j);
+}
+function estProgrammee(d){ return !!(d && !vide(d.progId) && moisValide(d.progMois)); }
+function ecriteLe(id, m){ return !!(DP.ecrites && DP.ecrites[m] && DP.ecrites[m][String(id)]); }
+function derniereEcriture(id){
+  var t = null;
+  Object.keys(DP.ecrites || {}).forEach(function(m){ if(ecriteLe(id, m) && (!t || m > t)) t = m; });
+  return t;
+}
+/* les occurrences dues et pas encore ecrites */
+function aEcrire(){
+  var auj = aujourdhui(), mc = auj.slice(0, 7);
+  var depuis = reglagesConnus().depensesProgrammeesDepuis;
+  if(!moisValide(depuis)) depuis = mc;
+  var enMem = {};
+  les('depenses').forEach(function(d){ if(estProgrammee(d)) enMem[String(d.progId) + '|' + d.progMois] = d; });
+  var out = [];
+  listeProgs().forEach(function(p){
+    if(p.actif === false || !(nb(p.montant) > 0) || vide(p.desc)) return;
+    var debut = moisValide(p.debut) ? p.debut : mc;
+    if(debut < depuis) debut = depuis;
+    if(moisValide(p.reprise) && debut < p.reprise) debut = p.reprise;
+    var fin = moisValide(p.fin) ? p.fin : null;
+    moisListe(debut, mc).forEach(function(m){
+      if(fin && m > fin) return;
+      var date = jourDu(m, p.jour);
+      if(date > auj) return;
+      var id = String(p.id);
+      if(ecriteLe(id, m)) return;
+      out.push({ p: p, id: id, mois: m, date: date, enMemoire: enMem[id + '|' + m] || null });
+    });
+  });
+  return out;
+}
+var dernierIdDep = 0;
+function nouvelIdDepense(){
+  var vus = {};
+  les('depenses').forEach(function(d){ if(d) vus[String(d.id)] = true; });
+  var id = Math.max(Date.now(), dernierIdDep + 1);
+  while(vus[String(id)]) id++;
+  dernierIdDep = id;
+  return id;
+}
+var verrou = false, relance = null, essais = 0;
+function executer(){
+  if(!API.actif || verrou) return;
+  if(!uid() || !window._AGV_READY || window._boutiqueLoggedOut) return;
+  if(!reglage('depensesProgrammees') || !DP.lu || !DP.ref) return;
+  var todo = aEcrire();
+  if(!todo.length) return;
+  verrou = true;
+  var refDep = null;
+  try{ refDep = window.db.ref('gdv_shops/' + uid() + '/data/depenses'); }catch(e){}
+  /* on relit les depenses dans la base : une memoire en retard sur la base
+     (copie locale pas encore remplacee) ne doit jamais etre renvoyee */
+  lireUneFois(refDep, function(nuage, ok){
+    if(!ok){ verrou = false; relancer(); return; }
+    var memIds = {};
+    les('depenses').forEach(function(d){ if(d) memIds[String(d.id)] = true; });
+    var enRetard = tab(nuage).some(function(d){ return d && !vide(d.id) && !memIds[String(d.id)]; });
+    if(enRetard){ verrou = false; relancer(); return; }
+    var dansNuage = {};
+    tab(nuage).forEach(function(d){ if(estProgrammee(d)) dansNuage[String(d.progId) + '|' + d.progMois] = d; });
+    var file = todo.slice(), ajoutees = [];
+    function suivant(){
+      if(!file.length){ terminer(); return; }
+      var t = file.shift();
+      var deja = dansNuage[t.id + '|' + t.mois] || t.enMemoire;
+      var idDep = deja ? deja.id : nouvelIdDepense();
+      var ref = DP.ref ? DP.ref.child('ecrites/' + t.mois + '/' + t.id) : null;
+      if(!ref){ suivant(); return; }
+      /* une seule ecriture par mois, meme si plusieurs appareils sont ouverts */
+      ref.transaction(function(cur){
+        if(cur) return;
+        return { le: Date.now(), par: moi(), depenseId: idDep, date: t.date, montant: Math.round(nb(t.p.montant)) };
+      }).then(function(res){
+        if(res && res.committed && !deja){
+          var encore = false;
+          les('depenses').forEach(function(d){ if(estProgrammee(d) && meme(d.progId, t.id) && d.progMois === t.mois) encore = true; });
+          if(!encore){
+            var dep = { id: idDep, desc: String(t.p.desc), cat: String(t.p.cat || 'Divers'),
+                        montant: Math.round(nb(t.p.montant)), date: t.date, gerant: 'Automatique',
+                        progId: t.id, progMois: t.mois };
+            vivant('depenses').unshift(dep);
+            ajoutees.push(dep);
+          }
+        }
+        suivant();
+      }, function(){ suivant(); });
+    }
+    function terminer(){
+      verrou = false;
+      essais = 0;
+      if(!ajoutees.length) return;
+      sauver(['depenses']);
+      try{ if(typeof window.buildMonthFilters === 'function') window.buildMonthFilters(); }catch(e){}
+      try{ if(typeof window.renderDepenses === 'function') window.renderDepenses(); }catch(e){}
+      try{ if(typeof window.renderDashboard === 'function') window.renderDashboard(); }catch(e){}
+      var total = ajoutees.reduce(function(s, d){ return s + nb(d.montant); }, 0);
+      journal('Depenses programmees ecrites', ajoutees.length + ' depense(s) — ' + argent(total) + ' : '
+        + ajoutees.map(function(d){ return d.desc + ' (' + libMois(d.progMois) + ')'; }).join(', '));
+      var vue = $('view-depenses');
+      if(vue && vue.classList.contains('active')){
+        toast(ajoutees.length + ' depense(s) programmee(s) ecrite(s) — ' + argent(total));
+      }
+    }
+    suivant();
+  });
+}
+/* nouvel essai quand la memoire a rattrape la base (20 s, 40 s, 80 s... 5 min au plus) */
+function relancer(){
+  if(relance) return;
+  var delai = Math.min(300000, 20000 * Math.pow(2, Math.min(essais, 4)));
+  essais++;
+  relance = setTimeout(function(){ relance = null; tick(); }, delai);
+}
+function tick(){
+  if(!API.actif || !uid()) return;
+  suivreProg();
+  lireReglages(function(){
+    try{ rafraichirProg(); }catch(e){}
+    try{ executer(); }catch(e){ verrou = false; console.warn('[AGV-45] depenses programmees', e); }
+  });
+}
+API.tick = tick;
+
+/* ------------------------------------------------------------
+   L'ONGLET DEPENSES : programmees / supplementaires
+   ------------------------------------------------------------ */
+function depensesAffichees(){
+  var l = les('depenses');
+  var mk = val('dep-month-filter');
+  var yr = parseInt(val('dep-year-filter'), 10) || 0;
+  try{
+    if(mk) return l.filter(function(d){ return d && window.getMonthKey(d.date) === mk; });
+    if(yr) return l.filter(function(d){ return d && new Date(d.date).getFullYear() === yr; });
+  }catch(e){ return null; }
+  return l;
+}
+function panneauDepenses(){
+  var stats = $('dep-stats');
+  if(!stats || !stats.parentNode) return;
+  var p = $('agv45-dep');
+  var actif = API.actif && reglage('depensesProgrammees');
+  var l = depensesAffichees() || [];
+  var prog = l.filter(estProgrammee), supp = l.filter(function(d){ return d && !estProgrammee(d); });
+  if(!actif && !prog.length){ if(p) p.remove(); return; }
+  if(!p){
+    p = document.createElement('div');
+    p.id = 'agv45-dep';
+    stats.parentNode.insertBefore(p, stats.nextSibling);
+  }
+  var periode = val('dep-month-filter') ? libMois(val('dep-month-filter')) : (val('dep-year-filter') || 'la periode');
+  var progs = listeProgs().filter(function(x){ return x.actif !== false; });
+  var mc = moisCourant();
+  var ecritesMc = progs.filter(function(x){ return ecriteLe(x.id, mc); }).length;
+  var sp = prog.reduce(function(s, d){ return s + nb(d.montant); }, 0);
+  var ss = supp.reduce(function(s, d){ return s + nb(d.montant); }, 0);
+  var html = '<div class="hd"><div class="ti">Depenses programmees'
+      + '<span class="et ' + (actif ? 'agv45-on' : 'agv45-off') + '">' + (actif ? 'activees' : 'desactivees') + '</span></div>'
+      + (fondateur() ? '<button class="bt" onclick="agvDepProgOuvrir()">Gerer</button>' : '') + '</div>'
+    + '<div class="gr">'
+      + '<div class="cs"><div class="l">Programmees — ' + esc(periode) + '</div><div class="v">' + esc(argent(sp)) + '</div>'
+        + '<div class="s">' + prog.length + ' ecrite(s) automatiquement</div></div>'
+      + '<div class="cs"><div class="l">Supplementaires — ' + esc(periode) + '</div><div class="v">' + esc(argent(ss)) + '</div>'
+        + '<div class="s">' + supp.length + ' saisie(s) par la boutique</div></div>'
+    + '</div>';
+  if(actif){
+    html += '<div class="pe">' + (DP.lu
+      ? (progs.length
+          ? progs.length + ' depense(s) programmee(s) : ' + esc(argent(totalMensuel(progs))) + ' par mois — '
+            + ecritesMc + '/' + progs.length + ' ecrite(s) pour ' + esc(libMois(mc)) + '.'
+          : 'Aucune depense programmee pour ce lieu de vente' + (fondateur() ? ' — touchez « Gerer » pour en ajouter.' : '.'))
+      : 'Lecture des depenses programmees...') + '</div>';
+  }
+  if(p.innerHTML !== html) p.innerHTML = html;
+}
+function etiquettesDepenses(){
+  var box = $('dep-list');
+  if(!box || !API.actif) return;
+  var items = box.querySelectorAll('.dep-item');
+  if(!items.length) return;
+  var l = depensesAffichees();
+  if(!l || l.length !== items.length) return;
+  /* seules les depenses programmees sont marquees ; le reste est, par
+     definition, saisi par la boutique (les « supplementaires » du panneau).
+     La marque se range SOUS la categorie : la ligne ne s'elargit pas. */
+  Array.prototype.forEach.call(items, function(it, i){
+    if(it.querySelector('.agv45-tag')) return;
+    var d = l[i];
+    if(!d || !estProgrammee(d)) return;
+    var desc = it.querySelector('.dep-desc');
+    if(desc && String(desc.textContent) !== String(d.desc)) return;
+    var s = document.createElement('span');
+    s.className = 'agv45-tag agv45-tag-p';
+    s.textContent = 'Programmee';
+    s.title = 'Ecrite automatiquement pour ' + libMois(d.progMois);
+    var pile = document.createElement('span');
+    pile.className = 'agv45-pile';
+    var cat = it.querySelector('.dep-cat-badge');
+    if(cat && cat.parentNode === it){ it.insertBefore(pile, cat); pile.appendChild(cat); }
+    else it.insertBefore(pile, desc || it.firstChild);
+    pile.appendChild(s);
+  });
+}
+function noteModalDepense(){
+  var ov = $('dep-overlay');
+  var corps = ov ? ov.querySelector('.modal-body') : null;
+  if(!corps) return;
+  var n = $('agv45-dep-note');
+  var actif = API.actif && reglage('depensesProgrammees');
+  if(!actif){ if(n) n.style.display = 'none'; return; }
+  if(!n){
+    n = document.createElement('div');
+    n.id = 'agv45-dep-note';
+    corps.insertBefore(n, corps.firstChild);
+  }
+  var k = listeProgs().filter(function(x){ return x.actif !== false; }).length;
+  n.style.display = '';
+  var t = 'Depense <b>supplementaire</b> : les ' + (k ? k + ' ' : '') + 'depenses programmees s\'ecrivent '
+    + 'd\'elles-memes chaque mois — ne les saisissez pas ici.';
+  if(n.innerHTML !== t) n.innerHTML = t;
+}
+function rafraichirProg(){
+  try{ panneauDepenses(); }catch(e){}
+  try{ etiquettesDepenses(); }catch(e){}
+  try{ noteModalDepense(); }catch(e){}
+  try{ majCartes(); }catch(e){}
+  try{ if($('agv45-prog')) rendreListeProg(); }catch(e){}
+}
+
+/* ------------------------------------------------------------
+   LA FENETRE « DEPENSES PROGRAMMEES » (fondateur)
+   ------------------------------------------------------------ */
+var CATS = ['Loyer', 'Electricite', 'Eau', 'Gardiennage', 'Communication', 'Transport', 'Maintenance', 'Divers'];
+function nomLieu(){
+  var s = window._currentShop || {};
+  var b = 'A';
+  try{ if(typeof window.agvBlocActif === 'function') b = window.agvBlocActif(); }catch(e){}
+  return (s.entreprise || 'Ma boutique') + (b && b !== 'A' ? ' — bloc ' + b : '');
+}
+function optionsMois(debut, n, choisi, avecSansFin){
+  var out = avecSansFin ? ['<option value="">Sans fin</option>'] : [];
+  var vus = {};
+  if(moisValide(choisi) && choisi < debut){
+    out.push('<option value="' + choisi + '" selected>' + esc(libMois(choisi)) + '</option>');
+    vus[choisi] = true;
+  }
+  for(var i = 0; i < n; i++){
+    var m = moisPlus(debut, i);
+    if(vus[m]) continue;
+    out.push('<option value="' + m + '"' + (m === choisi ? ' selected' : '') + '>' + esc(libMois(m)) + '</option>');
+  }
+  return out.join('');
+}
+function optionsJour(choisi){
+  var out = [];
+  for(var j = 1; j <= 31; j++){
+    out.push('<option value="' + j + '"' + (j === choisi ? ' selected' : '') + '>'
+      + (j === 1 ? 'le 1er' : 'le ' + j) + (j > 28 ? ' (ou dernier jour)' : '') + '</option>');
+  }
+  return out.join('');
+}
+window.agvDepProgFermer = function(){ var o = $('agv45-prog'); if(o) o.remove(); };
+window.agvDepProgOuvrir = function(){
+  if(!API.actif) return;
+  if(!fondateur()) return toast('Les depenses programmees sont gerees par le fondateur');
+  if(!uid()) return toast('Ouvrez d\'abord la boutique');
+  suivreProg();
+  window.agvDepProgFermer();
+  var cats = {};
+  CATS.forEach(function(c){ cats[c] = true; });
+  les('depenses').forEach(function(d){ if(d && !vide(d.cat)) cats[String(d.cat)] = true; });
+  var ov = document.createElement('div');
+  ov.id = 'agv45-prog';
+  ov.innerHTML = '<div class="box">'
+    + '<div class="top"><div><h2>Depenses programmees</h2><div class="s">' + esc(nomLieu())
+      + ' — elles s\'ecrivent seules chaque mois</div></div>'
+      + '<button onclick="agvDepProgFermer()">Fermer</button></div>'
+    + '<div class="body">'
+      + '<div id="agv45-p-etat"></div>'
+      + '<div class="sec"><h3 id="agv45-p-ft">Nouvelle depense programmee</h3>'
+        + '<div class="g2">'
+          + '<div><label>Description *</label><input id="agv45-p-desc" maxlength="80" placeholder="ex : Loyer de la boutique"></div>'
+          + '<div><label>Categorie</label><input id="agv45-p-cat" list="agv45-p-cats" maxlength="40" placeholder="ex : Loyer">'
+            + '<datalist id="agv45-p-cats">' + Object.keys(cats).map(function(c){ return '<option value="' + esc(c) + '">'; }).join('')
+            + '</datalist></div>'
+        + '</div>'
+        + '<div class="g3" style="margin-top:10px">'
+          + '<div><label>Montant mensuel (GNF) *</label><input type="number" min="0" step="1" id="agv45-p-mt" placeholder="0"></div>'
+          + '<div><label>Jour du mois</label><select id="agv45-p-jour">' + optionsJour(1) + '</select></div>'
+          + '<div><label>A partir de</label><select id="agv45-p-debut">' + optionsMois(moisCourant(), 13, moisCourant(), false) + '</select></div>'
+        + '</div>'
+        + '<div class="g2" style="margin-top:10px">'
+          + '<div><label>Jusqu\'a</label><select id="agv45-p-fin">' + optionsMois(moisCourant(), 37, '', true) + '</select></div>'
+          + '<div style="display:flex;align-items:flex-end;gap:8px">'
+            + '<button class="bp" id="agv45-p-ok" onclick="agvDepProgEnregistrer()" style="flex:1">Ajouter</button>'
+            + '<button id="agv45-p-annul" onclick="agvDepProgVider()" style="display:none">Annuler</button></div>'
+        + '</div>'
+        + '<input type="hidden" id="agv45-p-id" value="">'
+        + '<div class="aide">Chaque mois, des que le jour choisi est atteint, la depense s\'ecrit une seule fois dans '
+          + 'l\'onglet Depenses de ce lieu de vente (meme si plusieurs appareils sont ouverts). Si ce jour est deja passe '
+          + 'ce mois-ci, la depense du mois s\'ecrit tout de suite : choisissez le mois prochain si elle est deja payee '
+          + 'ou deja saisie. Une depense deja ecrite reste modifiable ou supprimable comme les autres.</div>'
+      + '</div>'
+      + '<div class="sec"><h3>Liste</h3><div id="agv45-p-liste"></div></div>'
+    + '</div></div>';
+  ov.onclick = function(e){ if(e.target === ov) window.agvDepProgFermer(); };
+  document.body.appendChild(ov);
+  rendreListeProg();
+  lireReglages(function(){ rendreListeProg(); });
+};
+function rendreListeProg(){
+  var z = $('agv45-p-liste'), et = $('agv45-p-etat');
+  if(et){
+    var actif = reglage('depensesProgrammees');
+    var h = actif
+      ? '<div class="okb"><b>Activees.</b> Les depenses de cette liste s\'ecrivent d\'elles-memes chaque mois.</div>'
+      : '<div class="avert"><b>Desactivees dans les Reglages.</b> Vous pouvez preparer la liste, mais rien ne '
+        + 's\'ecrit tant que l\'interrupteur « Depenses programmees » des Reglages n\'est pas active.</div>';
+    if(et.innerHTML !== h) et.innerHTML = h;
+  }
+  if(!z) return;
+  if(!DP.lu){ z.innerHTML = '<div class="vide">Lecture...</div>'; return; }
+  var l = listeProgs();
+  if(!l.length){ z.innerHTML = '<div class="vide">Aucune depense programmee pour ce lieu de vente.</div>'; return; }
+  var mc = moisCourant();
+  var actives = l.filter(function(p){ return p.actif !== false; });
+  z.innerHTML = l.map(function(p){
+    var der = derniereEcriture(p.id);
+    var suspendue = p.actif === false;
+    var prochaine = '';
+    if(!suspendue){
+      var m = ecriteLe(p.id, mc) ? moisPlus(mc, 1) : mc;
+      if(moisValide(p.debut) && p.debut > m) m = p.debut;
+      if(moisValide(p.fin) && m > p.fin) prochaine = 'terminee';
+      else{
+        var dt = jourDu(m, p.jour);
+        prochaine = dt <= aujourdhui() ? 'en attente d\'ecriture (' + jourFr(dt) + ')' : 'prochaine : ' + jourFr(dt);
+      }
+    }
+    return '<div class="it' + (suspendue ? ' susp' : '') + '"><div style="flex:1;min-width:200px">'
+      + '<div class="n">' + esc(p.desc) + '</div>'
+      + '<div class="d">' + esc(p.cat || 'Divers') + ' · chaque mois, ' + (nb(p.jour) <= 1 ? 'le 1er' : 'le ' + nb(p.jour))
+        + ' · depuis ' + esc(libMois(p.debut || mc)) + (moisValide(p.fin) ? ' jusqu\'a ' + esc(libMois(p.fin)) : ', sans fin') + '</div>'
+      + '<div class="d">' + (suspendue ? '<b>Suspendue</b>' : esc(prochaine))
+        + (der ? ' · derniere ecriture : ' + esc(libMois(der)) : ' · pas encore ecrite') + '</div>'
+      + '<div class="ac">'
+        + '<button onclick="agvDepProgModifier(\'' + esc(String(p.id)) + '\')">Modifier</button>'
+        + '<button onclick="agvDepProgSuspendre(\'' + esc(String(p.id)) + '\')">' + (suspendue ? 'Reprendre' : 'Suspendre') + '</button>'
+        + '<button class="bd" onclick="agvDepProgSupprimer(\'' + esc(String(p.id)) + '\')">Supprimer</button>'
+      + '</div></div>'
+      + '<div class="m">' + esc(argent(p.montant)) + '<div style="font-size:11px;color:#64748b;font-weight:600">par mois</div></div></div>';
+  }).join('')
+  + '<div class="tot"><span>Total mensuel (actives)</span><span>' + esc(argent(totalMensuel(actives))) + '</span></div>';
+}
+window.agvDepProgVider = function(){
+  ['agv45-p-desc', 'agv45-p-cat', 'agv45-p-mt', 'agv45-p-id'].forEach(function(i){ var e = $(i); if(e) e.value = ''; });
+  var j = $('agv45-p-jour'); if(j) j.value = '1';
+  var d = $('agv45-p-debut'); if(d) d.innerHTML = optionsMois(moisCourant(), 13, moisCourant(), false);
+  var f = $('agv45-p-fin'); if(f) f.innerHTML = optionsMois(moisCourant(), 37, '', true);
+  var t = $('agv45-p-ft'); if(t) t.textContent = 'Nouvelle depense programmee';
+  var ok = $('agv45-p-ok'); if(ok) ok.textContent = 'Ajouter';
+  var an = $('agv45-p-annul'); if(an) an.style.display = 'none';
+};
+window.agvDepProgModifier = function(id){
+  var p = DP.liste[id];
+  if(!p) return;
+  $('agv45-p-id').value = String(id);
+  $('agv45-p-desc').value = p.desc || '';
+  $('agv45-p-cat').value = p.cat || '';
+  $('agv45-p-mt').value = Math.round(nb(p.montant)) || '';
+  $('agv45-p-jour').value = String(Math.min(31, Math.max(1, parseInt(p.jour, 10) || 1)));
+  $('agv45-p-debut').innerHTML = optionsMois(moisCourant(), 13, moisValide(p.debut) ? p.debut : moisCourant(), false);
+  $('agv45-p-fin').innerHTML = optionsMois(moisCourant(), 37, moisValide(p.fin) ? p.fin : '', true);
+  $('agv45-p-ft').textContent = 'Modifier — ' + (p.desc || '');
+  $('agv45-p-ok').textContent = 'Enregistrer la modification';
+  $('agv45-p-annul').style.display = '';
+  try{ $('agv45-p-desc').focus(); $('agv45-p-desc').scrollIntoView({ block: 'center' }); }catch(e){}
+};
+window.agvDepProgEnregistrer = function(){
+  if(!fondateur()) return toast('Reserve au fondateur');
+  if(!DP.ref) return toast('Base indisponible');
+  var desc = val('agv45-p-desc').trim();
+  var cat = val('agv45-p-cat').trim() || 'Divers';
+  var mt = Math.round(nb(val('agv45-p-mt')));
+  var jour = Math.min(31, Math.max(1, parseInt(val('agv45-p-jour'), 10) || 1));
+  var debut = val('agv45-p-debut') || moisCourant();
+  var fin = val('agv45-p-fin');
+  if(!desc) return toast('La description est obligatoire');
+  if(!(mt > 0)) return toast('Le montant mensuel est obligatoire');
+  if(fin && fin < debut) return toast('Le mois de fin precede le mois de debut');
+  var id = val('agv45-p-id');
+  var ancien = id ? DP.liste[id] : null;
+  var p = {
+    id: id || String(Date.now()), desc: desc, cat: cat, montant: mt, jour: jour, debut: debut,
+    actif: ancien ? ancien.actif !== false : true,
+    creeLe: ancien && ancien.creeLe ? ancien.creeLe : new Date().toISOString(),
+    creePar: ancien && ancien.creePar ? ancien.creePar : moi()
+  };
+  if(fin) p.fin = fin;
+  if(ancien && moisValide(ancien.reprise)) p.reprise = ancien.reprise;
+  if(ancien){ p.modifieLe = new Date().toISOString(); p.modifiePar = moi(); }
+  var ok = $('agv45-p-ok');
+  if(ok){ ok.disabled = true; }
+  DP.ref.child('liste/' + p.id).set(p).then(function(){
+    if(ok) ok.disabled = false;
+    journal(ancien ? 'Depense programmee modifiee' : 'Depense programmee ajoutee',
+      desc + ' — ' + argent(mt) + ' par mois, le ' + jour + ' — par ' + moi());
+    toast(ancien ? 'Depense programmee modifiee' : 'Depense programmee ajoutee');
+    window.agvDepProgVider();
+    setTimeout(tick, 700);
+  }, function(e){
+    if(ok) ok.disabled = false;
+    toast('Non enregistre : ' + (e && e.message ? e.message : 'echec'));
+  });
+};
+window.agvDepProgSuspendre = function(id){
+  if(!fondateur()) return toast('Reserve au fondateur');
+  var p = DP.liste[id];
+  if(!p || !DP.ref) return;
+  var reprendre = p.actif === false;
+  /* a la reprise, les mois de suspension ne sont pas rattrapes */
+  var maj = reprendre ? { actif: true, reprise: moisCourant() } : { actif: false };
+  DP.ref.child('liste/' + id).update(maj).then(function(){
+    journal(reprendre ? 'Depense programmee reprise' : 'Depense programmee suspendue', (p.desc || '') + ' — par ' + moi());
+    toast(reprendre ? 'Depense programmee reprise' : 'Depense programmee suspendue');
+    if(reprendre) setTimeout(tick, 700);
+  }, function(e){ toast('Non enregistre : ' + (e && e.message ? e.message : 'echec')); });
+};
+window.agvDepProgSupprimer = function(id){
+  if(!fondateur()) return toast('Reserve au fondateur');
+  var p = DP.liste[id];
+  if(!p || !DP.ref) return;
+  if(!confirm('Supprimer la depense programmee « ' + (p.desc || '') + ' » ?\n'
+    + 'Elle ne s\'ecrira plus. Les depenses deja ecrites restent dans l\'onglet Depenses.')) return;
+  DP.ref.child('liste/' + id).remove().then(function(){
+    journal('Depense programmee supprimee', (p.desc || '') + ' — ' + argent(p.montant) + ' — par ' + moi());
+    toast('Depense programmee supprimee');
+    if(val('agv45-p-id') === String(id)) window.agvDepProgVider();
+  }, function(e){ toast('Non supprimee : ' + (e && e.message ? e.message : 'echec')); });
+};
+
+/* ============================================================
+   MISE EN PLACE
+   ============================================================ */
+function observer(id, fn){
+  var el = $(id);
+  if(!el || el.__agv45obs) return;
+  try{
+    new MutationObserver(function(){ try{ fn(); }catch(e){} }).observe(el, { childList: true });
+    el.__agv45obs = true;
+  }catch(e){}
+}
+function poserTout(){
+  if(!API.actif) return;
+  try{ brancherClient(); }catch(e){}
+  try{ brancherFacture(); }catch(e){}
+  try{ poserChampsDI(); }catch(e){}
+  observer('clients-mgr-list', decorerCartesClients);
+  observer('dep-list', function(){ panneauDepenses(); etiquettesDepenses(); });
+  observer('factures-mgr-list', badgesFactures);
+  try{ decorerCartesClients(); }catch(e){}
+  try{ badgesFactures(); }catch(e){}
+  try{ suivreProg(); }catch(e){}
+}
+poserTout();
+setInterval(function(){ try{ poserTout(); }catch(e){} }, 3000);
+setInterval(function(){ try{ rafraichirProg(); }catch(e){} }, 4000);
+setTimeout(tick, 8000);
+setInterval(tick, 5 * 60 * 1000);
+document.addEventListener('visibilitychange', function(){
+  if(document.visibilityState === 'visible') setTimeout(tick, 1500);
+});
+
+/* ============================================================
+   VERIFICATION
+   ============================================================ */
+API.etat = function(){
+  var r = reglagesConnus(), mc = moisCourant();
+  var o = {
+    actif: API.actif, version: API.version,
+    fraisTransport: !!r.fraisTransport,
+    depensesProgrammees: !!r.depensesProgrammees,
+    depensesProgrammeesDepuis: r.depensesProgrammeesDepuis || null,
+    listeLue: DP.lu, chemin: DP.cle,
+    programmees: listeProgs().length,
+    ecritesCeMois: DP.ecrites && DP.ecrites[mc] ? Object.keys(DP.ecrites[mc]).length : 0,
+    enAttente: DP.lu ? aEcrire().length : null,
+    dettesInitiales: les('dettes').filter(estInitiale).length,
+    facturesAvecTransport: les('factureVentes').filter(function(f){ return f && nb(f.frais) > 0; }).length,
+    enveloppes: ['openClientMgrModal', 'saveClientMgr', 'agvFactureOuvrir', 'agvFactureMaj', 'agvFactureValider']
+      .filter(function(n){ return window[n] && window[n].__agv45; })
+  };
+  try{ console.log('[AGV-45]', o); }catch(e){}
+  return o;
+};
+try{ console.log('[AGV-45] module actif — v' + API.version); }catch(e){}
+
 })();
 </script>
 
