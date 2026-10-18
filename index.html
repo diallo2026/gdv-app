@@ -55320,6 +55320,10 @@ function construire(src, enDirect){
   return R;
 }
 API.construire = construire;
+API.outils = { retrouver: retrouver, cleNom: cleNom, cleTel: cleTel, telDuNom: telDuNom, tab: tab, vide: vide,
+               sommeP: sommeP, montantRecu: montantRecu, totalCommande: totalCommande, resteDette: resteDette,
+               registre39: registre39, entree39: entree39, resteFacture: resteFacture, etiquette: etiquette,
+               classeTag: classeTag, brut: brut, encoder: encoder };
 
 /* registre des donnees vivantes, refait seulement quand elles changent */
 function hS(h, s){
@@ -55514,7 +55518,10 @@ function rendreFiche(){
     : '';
 
   zone.innerHTML = '<div data-agv41="1"><div class="card" style="margin-bottom:14px">'
-    + '<div class="card-title">' + esc(g.nom) + ' — ' + esc(etiquette(g)) + '</div>'
+    + '<div class="card-title" style="justify-content:space-between;flex-wrap:wrap">'
+      + '<span>' + esc(g.nom) + ' — ' + esc(etiquette(g)) + '</span>'
+      + '<button class="btn btn-ghost btn-sm" onclick="agvBilan(\'' + g.type + '\',decodeURIComponent(\'' + encoder(g.cle) + '\'))">'
+      + '&#128196; Bilan PDF</button></div>'
     + regroupe
     + (ouverts.length
       ? detail
@@ -55750,7 +55757,9 @@ function htmlGroupe(g){
         + (client ? 'reste a payer' : 'reste a regler') + '</div>'
         + '<div class="agv41-gd">' + esc(argent(g.du)) + '</div>'
         + '<button class="agv41-btn" onclick="agvVersOuvrir(\'' + g.type + '\',decodeURIComponent(\'' + encoder(g.cle) + '\'))">'
-        + 'Versement</button></div>'
+        + 'Versement</button>'
+        + '<button class="agv41-btn" style="margin-left:6px;background:transparent;color:var(--accent,#2563eb);border:1px solid var(--accent,#2563eb)" '
+        + 'onclick="agvBilan(\'' + g.type + '\',decodeURIComponent(\'' + encoder(g.cle) + '\'))">Bilan</button></div>'
     + '</div>'
     + '<div style="margin-top:8px">' + ouverts.map(function(x){
         return '<div class="agv41-it"><span>' + esc(x.libelle) + ' <span class="agv41-mut">— ' + esc(jour(x.date)) + '</span>'
@@ -56190,15 +56199,26 @@ window.agvVersOuvrir = function(type, cle){
 
 /* les redessins venus d'ailleurs sont repris aussitot */
 var surveilles = {};
-function surveiller(id, opts, action){
+/* immediat = true : la correction est faite dans la meme image que le redessin
+   (avant que l'ecran ne soit repeint) — l'ancien montant n'apparait jamais,
+   la carte ne « clignote » plus entre deux valeurs */
+function surveiller(id, opts, action, immediat){
   var el = document.getElementById(id);
   var s = surveilles[id];
   if(s && s.el === el) return;
   if(s && s.obs){ try{ s.obs.disconnect(); }catch(e){} }
   if(!el){ surveilles[id] = null; return; }
-  var prevu = false;
+  var prevu = false, enCours = false;
   var obs = new MutationObserver(function(){
-    if(prevu || !API.actif) return;
+    if(!API.actif) return;
+    if(immediat){
+      if(enCours) return;
+      enCours = true;
+      try{ action(el); }catch(e){ console.warn('[AGV-41] ' + id, e); }
+      enCours = false;
+      return;
+    }
+    if(prevu) return;
     prevu = true;
     setTimeout(function(){ prevu = false; try{ action(el); }catch(e){ console.warn('[AGV-41] ' + id, e); } }, 30);
   });
@@ -56215,10 +56235,10 @@ function brancherSurveillance(){
   surveiller('agv38-client-dettes', ENFANTS, function(el){ if(!el.querySelector('[data-agv41]')) rendreBloc('client'); });
   surveiller('fourn-list', ENFANTS, function(){ noterDoublons('fourn-list', 'openFournisseurModal', 'fournisseur'); appliquerFiltreFourn(); });
   surveiller('clients-mgr-list', ENFANTS, function(){ noterDoublons('clients-mgr-list', 'openClientMgrModal', 'client'); });
-  surveiller('stats-cards', ENFANTS, majCarteDettes);
-  surveiller('dash-fourn-widget', ENFANTS, majWidgetFourn);
-  surveiller('dettes-stats', ENFANTS, majStatsDettes);
-  surveiller('nb-dettes', { childList: true, characterData: true, subtree: true }, majBadgeDettes);
+  surveiller('stats-cards', ENFANTS, majCarteDettes, true);
+  surveiller('dash-fourn-widget', ENFANTS, majWidgetFourn, true);
+  surveiller('dettes-stats', ENFANTS, majStatsDettes, true);
+  surveiller('nb-dettes', { childList: true, characterData: true, subtree: true }, majBadgeDettes, true);
 }
 
 (function brancherVues(){
@@ -56295,6 +56315,788 @@ API.etat = function(){
   return { clients: R.totalClients, fournisseurs: R.totalFournisseurs, perso: R.totalPerso, ecartes: R.ecartes };
 };
 try{ console.log('[AGV-41] module actif — v' + API.version); }catch(e){}
+
+})();
+</script>
+
+<!-- ============================================================
+     MODULE 35 — AGV-42 : BILAN PRECIS DE CHAQUE CLIENT ET DE
+     CHAQUE FOURNISSEUR, LIGNE « TOTAL » DES RAPPORTS IMPRIMES
+     ------------------------------------------------------------
+     1. LE BILAN D'UN CLIENT OU D'UN FOURNISSEUR (PDF A4)
+        Bouton « Bilan » sur chaque fiche client et fournisseur,
+        dans les blocs « Dettes ... — situation » et dans la fiche
+        de Versements. Les boutons « Imprimer bilan » / « PDF
+        Bilan » d'un seul client ou d'un seul fournisseur (onglet
+        Situation & Tri) ouvrent desormais ce bilan.
+        Le document reprend, pour la periode choisie (tout
+        l'historique, ce mois, cette annee ou du ... au ...) :
+          - l'identite de la boutique et du partenaire ;
+          - les chiffres cles : facture / achete, verse / regle,
+            reste du, nombre de factures et de versements, dates
+            de la derniere facture et du dernier versement ;
+          - le RELEVE CHRONOLOGIQUE : chaque facture (commande,
+            dette) a sa DATE DE FACTURATION et chaque versement a
+            sa DATE DE VERSEMENT, avec le mode, la caisse, la
+            personne qui a encaisse, et le solde progressif ;
+            le solde anterieur est reporte en tete si une periode
+            est choisie ;
+          - le DETAIL PAR FACTURE : articles, montant, puis chaque
+            versement date de cette facture et le reste du.
+        Les montants sont ceux du calcul unique (module 34) : la
+        dette reprise d'une facture a l'autre n'est pas comptee
+        deux fois, un versement inscrit en double n'est pas repris.
+
+     2. LIGNE « TOTAL » DES RAPPORTS IMPRIMES
+        Dans le rapport journalier (bouton « Jour » des Ventes) et
+        les bilans globaux clients / fournisseurs, la regle des
+        lignes alternees (fond gris clair une ligne sur deux)
+        l'emportait sur celle de la ligne TOTAL quand celle-ci
+        tombait sur une ligne paire : texte blanc sur fond gris
+        clair, la ligne « TOTAL VENTES » disparaissait a
+        l'impression. La ligne TOTAL garde maintenant son fond et
+        sa couleur dans tous les cas. Rien d'autre n'est change
+        dans ces documents.
+
+     LECTURE SEULE : aucune donnee ecrite, aucune structure modifiee.
+     Verifier : AGV_42.etat()
+     ============================================================ -->
+<style>
+#agv42-dlg{position:fixed;inset:0;z-index:99995;background:rgba(15,23,42,.6);display:flex;align-items:center;
+  justify-content:center;padding:14px;font-family:inherit}
+#agv42-dlg .box{background:var(--surface,#fff);color:var(--text,#111);border:1px solid var(--border,#e2e8f0);
+  border-radius:15px;width:100%;max-width:460px;max-height:92vh;overflow-y:auto;padding:18px 20px;
+  box-shadow:0 18px 50px rgba(0,0,0,.35)}
+#agv42-dlg h3{margin:0;font-size:16px;font-weight:800}
+#agv42-dlg .sous{font-size:12px;color:var(--text3,#64748b);margin-top:3px}
+#agv42-dlg .per{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin:14px 0 10px}
+#agv42-dlg .per button{padding:10px 8px;border:1px solid var(--border,#cbd5e1);border-radius:9px;background:var(--surface2,#f8fafc);
+  color:var(--text,#111);font-family:inherit;font-size:12.5px;font-weight:700;cursor:pointer}
+#agv42-dlg .per button.on{border-color:var(--accent,#2563eb);background:var(--accent,#2563eb);color:#fff}
+#agv42-dlg .dates{display:none;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px}
+#agv42-dlg .dates.on{display:grid}
+#agv42-dlg label{display:block;font-size:11px;font-weight:700;color:var(--text3,#64748b);margin-bottom:3px}
+#agv42-dlg input[type=date]{width:100%;padding:8px 10px;border:1px solid var(--border,#cbd5e1);border-radius:8px;
+  background:var(--surface2,#fff);color:var(--text,#111);font-family:inherit;font-size:13px;box-sizing:border-box}
+#agv42-dlg .opt{display:flex;align-items:center;gap:8px;font-size:12.5px;margin:4px 0 2px;cursor:pointer}
+#agv42-dlg .opt input{width:17px;height:17px}
+#agv42-dlg .pied{display:flex;gap:8px;margin-top:16px}
+#agv42-dlg .pied button{flex:1;padding:11px;border-radius:10px;font-family:inherit;font-size:13.5px;font-weight:700;cursor:pointer}
+#agv42-dlg .pied .x{border:1px solid var(--border,#cbd5e1);background:transparent;color:var(--text,#111)}
+#agv42-dlg .pied .go{border:none;background:var(--accent,#2563eb);color:#fff}
+.agv42-btn-carte{padding:5px 9px;border:1px solid var(--accent,#2563eb);border-radius:6px;background:transparent;
+  color:var(--accent,#2563eb);font-family:inherit;font-size:11px;font-weight:700;cursor:pointer}
+</style>
+<script>
+(function(){
+'use strict';
+
+var API = window.AGV_42 = { actif: true, version: '1.0' };
+
+/* ============================================================
+   OUTILS
+   ============================================================ */
+function nb(v){ var n = parseFloat(v); return isNaN(n) ? 0 : n; }
+function r2(v){ return Math.round(nb(v) * 100) / 100; }
+function esc(v){
+  if(v === null || v === undefined) return '';
+  return String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+                  .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+function argent(n){
+  try{ if(typeof window.fmtGNF === 'function') return window.fmtGNF(Math.round(nb(n))); }catch(e){}
+  return Math.round(nb(n)).toLocaleString('fr-FR') + ' GNF';
+}
+function toast(t){ try{ if(typeof window.showToast === 'function') window.showToast(t); }catch(e){} }
+function tab(v){
+  if(!v) return [];
+  if(Array.isArray(v)) return v.filter(Boolean);
+  try{ return Object.keys(v).map(function(k){ return v[k]; }).filter(Boolean); }catch(e){ return []; }
+}
+function vide(v){ return v === undefined || v === null || String(v).trim() === ''; }
+function sommeP(l){ return tab(l).reduce(function(s, p){ return s + nb(p && p.montant); }, 0); }
+/* « 2026-09-01 » quel que soit le format enregistre (texte, nombre, date) */
+function jourIso(v){
+  if(vide(v)) return '';
+  if(typeof v === 'string' && /^\d{4}-\d{2}-\d{2}/.test(v)) return v.slice(0, 10);
+  var d = new Date(typeof v === 'string' && /^\d+$/.test(v) ? parseInt(v, 10) : v);
+  return isNaN(d.getTime()) ? '' : d.toISOString().slice(0, 10);
+}
+function idDate(o){
+  var n = parseFloat(String((o && o.id) === undefined ? '' : o.id).replace(/^\D+/, ''));
+  return (!isNaN(n) && n > 1e12) ? jourIso(n) : '';
+}
+function jourFr(iso){
+  if(!iso) return '—';
+  var p = iso.split('-');
+  return p.length === 3 ? p[2] + '/' + p[1] + '/' + p[0] : iso;
+}
+function aujourdHui(){ return new Date().toISOString().slice(0, 10); }
+function boutique(){ return window._currentShop || window._shopLoginData || {}; }
+function auteur(){
+  try{
+    var p = (typeof window.agvPersonneConnectee === 'function') ? window.agvPersonneConnectee() : null;
+    if(p && p.nom) return p.nom;
+  }catch(e){}
+  var r = window.currentRole; try{ if(!r) r = currentRole; }catch(e){}
+  if(r === 'fondateur') return 'Fondateur';
+  try{
+    var g = (typeof window.getCurrentGerant === 'function') ? window.getCurrentGerant() : null;
+    if(g && g.nom) return g.nom;
+  }catch(e){}
+  return '';
+}
+function nomMoyen(id){
+  if(vide(id)) return '';
+  try{ if(typeof window.agvNomMoyen === 'function') return window.agvNomMoyen(id) || String(id); }catch(e){}
+  return String(id);
+}
+function A41(){ return window.AGV_41 && window.AGV_41.outils && typeof window.AGV_41.registre === 'function' ? window.AGV_41 : null; }
+
+/* ============================================================
+   1. LE PARTENAIRE ET SES PIECES
+   ============================================================ */
+function groupeDe(type, x){
+  var A = A41();
+  if(!A) return null;
+  var R = A.registre(), O = A.outils;
+  if(R.parCle[String(x)]) return R.parCle[String(x)];
+  var ix = (type === 'fournisseur') ? R.ixf : R.ixc;
+  var g = ix.parId[String(x)] || O.retrouver(ix, null, x, O.telDuNom(x));
+  if(!g && type === 'client'){
+    var nk = O.cleNom(x);
+    R.passages.forEach(function(p){ if(!g && p.noms.indexOf(nk) >= 0) g = p; });
+  }
+  return g || null;
+}
+
+/* les versements d'une piece, ramenes au montant paye qui fait foi :
+   un versement inscrit deux fois n'est pas repris, un paiement fait a la
+   facturation sans ligne de versement est rendu visible */
+function versementsDe(liste, paye, dateDefaut, libelleInitial){
+  var l = tab(liste).map(function(p, i){
+    return { p: p, i: i, jour: jourIso(p.date || p.ts) || dateDefaut };
+  }).sort(function(a, b){ return (a.jour < b.jour ? -1 : a.jour > b.jour ? 1 : 0) || (a.i - b.i); });
+  var somme = 0, garde = [], ignores = 0;
+  l.forEach(function(x){
+    var m = nb(x.p.montant);
+    if(m <= 0) return;
+    if(paye !== null && somme + m > paye + 0.5){
+      var part = r2(paye - somme);
+      if(part > 0.5){ garde.push({ p: x.p, i: x.i, jour: x.jour, montant: part }); somme += part; }
+      ignores++;
+      return;
+    }
+    garde.push({ p: x.p, i: x.i, jour: x.jour, montant: m });
+    somme += m;
+  });
+  if(paye !== null && paye - somme > 0.5){
+    garde.unshift({ p: { note: libelleInitial, synth: true }, i: -1, jour: dateDefaut, montant: r2(paye - somme) });
+  }
+  return { liste: garde, ignores: ignores };
+}
+function resume(lignes, champNom){
+  var l = tab(lignes).map(function(x){
+    var n = x.produit || x.designation || x.nom || x.name || '';
+    var q = (x.qteRecue !== undefined && x.statut !== undefined) ? nb(x.qteRecue) || nb(x.qte) : nb(x.qte || x.qty);
+    return n ? n + (q ? ' ×' + q : '') : '';
+  }).filter(Boolean);
+  if(!l.length) return '';
+  var t = l.slice(0, 4).join(', ');
+  return l.length > 4 ? t + ' … (+' + (l.length - 4) + ')' : t;
+}
+
+function piecesDe(g){
+  var A = A41(), O = A.outils, R = A.registre();
+  var R39 = O.registre39(null, true);
+  var out = [];
+  var itemsParCle = {};
+  g.items.forEach(function(x){ itemsParCle[x.cle] = x; });
+
+  if(g.type === 'client'){
+    O.tab(O.brut('factureVentes')).forEach(function(f){
+      if(!f || typeof f !== 'object') return;
+      var e = O.entree39(R39, f);
+      if((e && e.doublon) || !vide(f.doublonDe)) return;
+      var cible = O.retrouver(R.ixc, f.clientId, f.clientNom, f.clientTel || f.tel);
+      if(!cible && vide(f.clientId)){
+        var nk = O.cleNom(f.clientNom);
+        R.passages.forEach(function(p){ if(!cible && p.noms[0] === nk) cible = p; });
+      }
+      if(cible !== g) return;
+      out.push(pieceFacture(f, e, O, R39));
+    });
+  }else{
+    g.items.forEach(function(x){ if(x.sorte === 'commande') out.push(pieceCommande(x.obj, x)); });
+  }
+  g.items.forEach(function(x){ if(x.sorte === 'dette') out.push(pieceDette(x.obj, g.type, x)); });
+  out.sort(function(a, b){ return (a.jour < b.jour ? -1 : a.jour > b.jour ? 1 : 0); });
+  return out;
+}
+
+function pieceFacture(f, e, O, R39){
+  var jour = jourIso(f.date || f.createdAt || f.dateSaisie) || idDate(f);
+  var lignes = tab(f.lignes);
+  var base = !vide(f.totalLignes) ? nb(f.totalLignes) : lignes.reduce(function(s, l){ return s + nb(l && l.total); }, 0);
+  base = r2(base - nb(f.remise) + nb(f.frais));
+  var rep = nb(f.dettePrecedente) > 0.5 && Math.abs(nb(f.montantTotal) - base) > 0.5;
+  var propre = e ? nb(e.propre) : (vide(f.montantTotal) ? base : (rep ? r2(nb(f.montantTotal) - nb(f.dettePrecedente)) : nb(f.montantTotal)));
+  var paye = e ? nb(e.paye) : (!vide(f.montantPaye) && !isNaN(parseFloat(f.montantPaye)) ? nb(f.montantPaye) : sommeP(f.paiements));
+  var v = versementsDe(f.paiements, paye, jour, 'Payé à la facturation');
+  var reste = O.resteFacture(f, R39);
+  var num = f.numero || f.no || '';
+  return {
+    sorte: 'facture', cle: 'F:' + f.id, jour: jour, titre: 'Facture' + (num ? ' ' + num : ''), num: num,
+    debits: [{ jour: jour, montant: propre, libelle: 'Facture' + (num ? ' ' + num : ''), detail: resume(lignes) }],
+    montant: propre, lignes: lignes, remise: nb(f.remise), frais: nb(f.frais),
+    versements: v.liste, ignores: v.ignores, reste: reste, echeance: jourIso(f.echeance),
+    reprise: (e && e.rep) ? nb(e.porte) : (rep ? nb(f.dettePrecedente) : 0),
+    absorbee: !!(e && e.absorbee), vers: (e && e.vers) ? (e.vers.numero || e.vers.no || '') : '',
+    statut: f.statut || ''
+  };
+}
+function pieceCommande(c, item){
+  var A = A41(), O = A.outils;
+  var jour = jourIso(c.date || c.createdAt) || idDate(c);
+  var total = O.totalCommande(c);
+  var sp = sommeP(c.paiements);
+  var paye = (!vide(c.montantPaye) && nb(c.montantPaye) > sp + 0.5) ? nb(c.montantPaye) : null;
+  var v = versementsDe(c.paiements, paye, jour, 'Payé à la commande');
+  return {
+    sorte: 'commande', cle: 'C:' + c.id, jour: jour, titre: 'Commande' + (c.numero ? ' ' + c.numero : '') + ' du ' + jourFr(jour),
+    num: c.numero || '',
+    debits: [{ jour: jour, montant: total, libelle: 'Commande' + (c.numero ? ' ' + c.numero : ''), detail: resume(c.lignes) }],
+    montant: total, lignes: tab(c.lignes), versements: v.liste, ignores: v.ignores,
+    reste: item ? item.reste : Math.max(total - sp, 0), echeance: jourIso(c.echeance), statut: c.statut || ''
+  };
+}
+function pieceDette(d, type, item){
+  var jour = jourIso(d.date) || idDate(d);
+  var nature = (d.nature === 'fonds' || /^fonds recus/i.test(String(d.desc || '')));
+  var lib = d.desc ? String(d.desc) : (type === 'client' ? 'Dette (achat à crédit)' : (nature ? 'Fonds reçus' : 'Dette saisie'));
+  var debits = [];
+  var h = tab(d.historique).filter(function(x){ return nb(x.montant) > 0; });
+  var sh = h.reduce(function(s, x){ return s + nb(x.montant); }, 0);
+  if(h.length > 1 && Math.abs(sh - nb(d.montant)) <= 0.5){
+    h.forEach(function(x, i){
+      debits.push({ jour: jourIso(x.date) || jour, montant: nb(x.montant),
+                    libelle: i === 0 ? lib : 'Ajout à la dette', detail: x.desc || '' });
+    });
+  }else{
+    debits.push({ jour: jour, montant: nb(d.montant), libelle: lib, detail: resume(d.lignes) });
+  }
+  var v = versementsDe(d.paiements, null, jour, '');
+  return {
+    sorte: 'dette', cle: 'D:' + d.id, jour: jour, titre: lib + ' du ' + jourFr(jour), num: '',
+    debits: debits, montant: nb(d.montant), lignes: tab(d.lignes), versements: v.liste, ignores: 0,
+    reste: item ? item.reste : Math.max(nb(d.montant) - sommeP(d.paiements), 0),
+    echeance: jourIso(d.echeance), statut: ''
+  };
+}
+
+/* ============================================================
+   2. LE BILAN : releve chronologique, chiffres, detail
+   ============================================================ */
+function construireBilan(g, du, au){
+  var pieces = piecesDe(g);
+  var ops = [];
+  pieces.forEach(function(pc, k){
+    pc.debits.forEach(function(d){
+      ops.push({ jour: d.jour, sens: 'debit', ordre: k, piece: pc, montant: d.montant, libelle: d.libelle, detail: d.detail });
+    });
+    pc.versements.forEach(function(v){
+      var p = v.p;
+      var mode = p.modeNom || nomMoyen(p.mode);
+      var bits = [];
+      bits.push('sur ' + (pc.sorte === 'facture' ? 'la facture' + (pc.num ? ' ' + pc.num : '') : (pc.sorte === 'commande' ? 'la commande' + (pc.num ? ' ' + pc.num : '') : 'la dette')) + ' du ' + jourFr(pc.jour));
+      if(mode) bits.push(mode);
+      if(p.caisseNom && p.caisseNom !== mode) bits.push('caisse ' + p.caisseNom);
+      if(p.par) bits.push('par ' + p.par);
+      if(p.note && !p.synth && !/^versement$/i.test(String(p.note)) && !/^paiement initial$/i.test(String(p.note))) bits.push(String(p.note));
+      ops.push({ jour: v.jour, sens: 'credit', ordre: k, piece: pc, montant: v.montant,
+                 libelle: p.synth ? p.note : (/^paiement initial$/i.test(String(p.note || '')) ? 'Paiement initial'
+                          : (g.type === 'client' ? 'Versement' : 'Règlement')),
+                 detail: bits.join(' — ') });
+    });
+  });
+  ops.sort(function(a, b){
+    if(a.jour !== b.jour) return a.jour < b.jour ? -1 : 1;
+    if(a.sens !== b.sens) return a.sens === 'debit' ? -1 : 1;
+    return a.ordre - b.ordre;
+  });
+
+  var report = 0, lignes = [], tD = 0, tC = 0, nbF = 0, nbV = 0, derF = '', derV = '';
+  ops.forEach(function(o){
+    if(du && o.jour && o.jour < du){ report += (o.sens === 'debit' ? o.montant : -o.montant); return; }
+    if(au && o.jour && o.jour > au) return;
+    lignes.push(o);
+    if(o.sens === 'debit'){ tD += o.montant; nbF++; if(o.jour > derF) derF = o.jour; }
+    else{ tC += o.montant; nbV++; if(o.jour > derV) derV = o.jour; }
+  });
+  var solde = r2(report + tD - tC);
+  var cumul = report;
+  lignes.forEach(function(o){ cumul += (o.sens === 'debit' ? o.montant : -o.montant); o.solde = r2(cumul); });
+
+  /* pieces a detailler : celles de la periode, et les plus anciennes encore ouvertes
+     ou reglees pendant la periode */
+  var detail = pieces.filter(function(pc){
+    if(au && pc.jour && pc.jour > au) return false;
+    if(!du || !pc.jour || pc.jour >= du) return true;
+    if(pc.reste > 0.5) return true;
+    return pc.versements.some(function(v){ return v.jour >= du && (!au || v.jour <= au); });
+  });
+
+  return { g: g, du: du, au: au, pieces: pieces, detail: detail, lignes: lignes, report: r2(report),
+           totalDebit: r2(tD), totalCredit: r2(tC), solde: solde, nbF: nbF, nbV: nbV, derF: derF, derV: derV,
+           ignores: pieces.reduce(function(s, p){ return s + (p.ignores || 0); }, 0) };
+}
+
+/* ============================================================
+   3. LE DOCUMENT A4
+   ============================================================ */
+var CSS = [
+  '@page{size:A4 portrait;margin:12mm 11mm}',
+  '*{margin:0;padding:0;box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact}',
+  'body{font-family:Arial,Helvetica,sans-serif;font-size:10.5px;color:#1a1a1a;line-height:1.45;background:#fff}',
+  '.hd{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;padding-bottom:10px;border-bottom:3px solid #1e3a5f;margin-bottom:12px}',
+  '.hd-l{display:flex;gap:10px;align-items:flex-start}',
+  '.logo{width:54px;height:54px;object-fit:contain;border-radius:8px}',
+  '.logo-t{width:54px;height:54px;border-radius:8px;background:#1e3a5f;color:#fff;display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:800}',
+  '.sn{font-size:16px;font-weight:800;color:#1e3a5f}',
+  '.ss{font-size:9.5px;color:#555;margin-top:1px}',
+  '.hd-r{text-align:right}',
+  '.doc{display:inline-block;background:#1e3a5f;color:#fff;font-size:12px;font-weight:800;letter-spacing:.08em;padding:5px 12px;border-radius:5px;text-transform:uppercase}',
+  '.meta{font-size:9.5px;color:#555;margin-top:4px}',
+  '.part{display:flex;gap:10px;margin-bottom:12px}',
+  '.bx{flex:1;border:1px solid #d5dde8;border-radius:7px;padding:9px 11px}',
+  '.bx h4{font-size:8.5px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:#4a5b70;margin:0 0 5px}',
+  '.pn{font-size:14px;font-weight:800;color:#111;margin-bottom:2px}',
+  '.kv{display:flex;justify-content:space-between;gap:8px;font-size:10px;padding:1.5px 0}',
+  '.kv span{color:#555}',
+  '.kpis{display:flex;gap:7px;margin-bottom:6px}',
+  '.kpi{flex:1;background:#f0f3f7;border:1px solid #d5dde8;border-radius:7px;padding:8px 8px;text-align:center}',
+  '.kpi .l{font-size:8.3px;text-transform:uppercase;letter-spacing:.05em;color:#555}',
+  '.kpi .v{font-size:13.5px;font-weight:800;color:#1e3a5f;margin-top:2px;white-space:nowrap}',
+  '.kpi.du .v{color:#b91c1c}.kpi.ok .v{color:#15803d}.kpi.vv .v{color:#15803d}',
+  '.dates{display:flex;gap:14px;flex-wrap:wrap;font-size:9.5px;color:#444;margin:2px 0 4px}',
+  '.dates b{color:#111}',
+  '.st{font-size:10.5px;font-weight:800;color:#1e3a5f;text-transform:uppercase;letter-spacing:.06em;margin:14px 0 6px;padding:5px 9px;background:#f0f3f7;border-left:4px solid #1e3a5f}',
+  'table{width:100%;border-collapse:collapse;font-size:9.6px;margin-bottom:4px}',
+  'thead{display:table-header-group}',
+  'th{background:#1e3a5f;color:#fff;font-weight:700;text-align:left;padding:5px 6px;font-size:8.6px;text-transform:uppercase;letter-spacing:.04em;white-space:normal;vertical-align:bottom}',
+  'td{padding:4px 6px;border-bottom:1px solid #e3e8ef;vertical-align:top;font-size:9.6px;line-height:1.4}',
+  'tr{page-break-inside:avoid}',
+  '.n{text-align:right;white-space:nowrap}',
+  '.dt{white-space:nowrap}',
+  'tr.cr td{background:#f2faf4}',
+  'tr.rp td{background:#fff8e6;font-style:italic}',
+  'tr.tt td{background:#1e3a5f;color:#fff;font-weight:800;border-bottom:none}',
+  '.of{color:#1e3a5f;font-weight:700;white-space:nowrap}.ov{color:#15803d;font-weight:700}',
+  '.mut{color:#666;font-size:8.8px}',
+  '.rg{color:#b91c1c;font-weight:700}.vt{color:#15803d;font-weight:700}',
+  '.bdg{display:inline-block;padding:1px 6px;border-radius:9px;font-size:8.3px;font-weight:700;white-space:nowrap}',
+  '.b-ok{background:#dcfce7;color:#15803d}.b-pa{background:#fef3c7;color:#92400e}.b-no{background:#fee2e2;color:#b91c1c}.b-rp{background:#e0e7ff;color:#3730a3}',
+  '.pc{border:1px solid #d5dde8;border-radius:7px;margin-bottom:8px;page-break-inside:avoid;overflow:hidden}',
+  '.pc-h{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 9px;background:#f0f3f7;font-size:10.5px}',
+  '.pc-h b{color:#1e3a5f}',
+  '.pc table{margin:0}.pc th{background:#4a5b70;font-size:8.2px;padding:4px 6px}',
+  '.pc-f{display:flex;justify-content:flex-end;gap:16px;padding:5px 9px;font-size:10px;border-top:1px solid #d5dde8}',
+  '.sous{font-size:8.6px;text-transform:uppercase;letter-spacing:.05em;color:#4a5b70;font-weight:700;padding:5px 9px 2px}',
+  '.nt{font-size:9px;color:#5b4a14;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:6px 8px;margin:8px 0}',
+  '.sig{display:flex;justify-content:space-between;gap:30px;margin-top:24px;page-break-inside:avoid}',
+  '.sig div{flex:1;border-top:1px solid #888;padding-top:5px;font-size:9px;color:#555;text-align:center}',
+  '.ft{margin-top:14px;padding-top:6px;border-top:1px solid #e0e0e0;font-size:8.5px;color:#888;text-align:center}'
+].join('');
+
+function periodeTexte(du, au){
+  if(!du && !au) return 'Tout l\'historique';
+  if(du && au) return 'Du ' + jourFr(du) + ' au ' + jourFr(au);
+  if(du) return 'Depuis le ' + jourFr(du);
+  return 'Jusqu\'au ' + jourFr(au);
+}
+function badgeStatut(pc){
+  if(pc.absorbee) return '<span class="bdg b-rp">reportée' + (pc.vers ? ' sur ' + esc(pc.vers) : '') + '</span>';
+  if(pc.reste <= 0.5) return '<span class="bdg b-ok">' + (pc.sorte === 'commande' || pc.sorte === 'dette' ? 'réglée' : 'payée') + '</span>';
+  var verse = pc.versements.reduce(function(s, v){ return s + v.montant; }, 0);
+  return verse > 0.5 ? '<span class="bdg b-pa">partielle</span>' : '<span class="bdg b-no">impayée</span>';
+}
+
+function htmlBilan(B, avecDetail){
+  var g = B.g, s = boutique(), client = g.type === 'client';
+  var f = g.principale || {};
+  var nomS = s.entreprise || 'Ma Boutique';
+  var lieu = [s.adresse, s.ville].filter(function(x){ return !vide(x); }).join(', ');
+  var maintenant = new Date();
+  var edite = maintenant.toLocaleDateString('fr-FR') + ' à ' + maintenant.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+  var parQui = auteur();
+  var titreDoc = client ? 'Bilan client' : (g.nature === 'fonds' ? 'Bilan fournisseur de fonds' : 'Bilan fournisseur');
+  var lD = client ? 'Facturé' : (g.nature === 'fonds' ? 'Reçu / dû' : 'Acheté / dû');
+  var lC = client ? 'Versé' : 'Réglé';
+  var lS = client ? 'Reste à payer' : 'Reste à régler';
+
+  var h = '';
+  /* en-tete */
+  h += '<div class="hd"><div class="hd-l">'
+    + (s.logo ? '<img class="logo" src="' + esc(s.logo) + '">' : '<div class="logo-t">' + esc(nomS.charAt(0).toUpperCase()) + '</div>')
+    + '<div><div class="sn">' + esc(nomS) + '</div>'
+    + (lieu ? '<div class="ss">' + esc(lieu) + '</div>' : '')
+    + (s.tel ? '<div class="ss">Tel : ' + esc(s.tel) + '</div>' : '')
+    + (s.email ? '<div class="ss">' + esc(s.email) + '</div>' : '')
+    + '</div></div>'
+    + '<div class="hd-r"><div class="doc">' + esc(titreDoc) + '</div>'
+    + '<div class="meta"><b>Période :</b> ' + esc(periodeTexte(B.du, B.au)) + '</div>'
+    + '<div class="meta">Édité le ' + esc(edite) + (parQui ? ' par ' + esc(parQui) : '') + '</div></div></div>';
+
+  /* partenaire + chiffres */
+  var telsP = [];
+  [f.tel, f.whatsapp && f.whatsapp !== f.tel ? f.whatsapp : ''].forEach(function(t){ if(!vide(t)) telsP.push(String(t)); });
+  if(!telsP.length && g.tel) telsP.push(String(g.tel));
+  var depuis = jourIso(f.createdAt || f.dateCreation) || idDate(f) || (B.pieces[0] ? B.pieces[0].jour : '');
+  var plafond = nb(f.limiteCredit || f.plafondCredit || f.plafond || f.creditMax);
+  h += '<div class="part"><div class="bx"><h4>' + (client ? 'Client' : 'Fournisseur') + '</h4>'
+    + '<div class="pn">' + esc(g.nom) + '</div>'
+    + (telsP.length ? '<div class="kv"><span>Téléphone</span><b>' + esc(telsP.join(' / ')) + '</b></div>' : '')
+    + (!vide(f.adresse) ? '<div class="kv"><span>Adresse</span><b>' + esc(f.adresse) + '</b></div>' : '')
+    + (!vide(f.email) ? '<div class="kv"><span>Email</span><b>' + esc(f.email) + '</b></div>' : '')
+    + (depuis ? '<div class="kv"><span>' + (client ? 'Client depuis' : 'Fournisseur depuis') + '</span><b>' + esc(jourFr(depuis)) + '</b></div>' : '')
+    + (client && plafond > 0 ? '<div class="kv"><span>Plafond de crédit</span><b>' + esc(argent(plafond)) + '</b></div>' : '')
+    + (g.passage ? '<div class="kv"><span>Statut</span><b>client de passage (sans fiche)</b></div>' : '')
+    + (g.fiches.length > 1 ? '<div class="kv"><span>Fiches regroupées</span><b>' + g.fiches.length + '</b></div>' : '')
+    + '</div>'
+    + '<div class="bx"><h4>Situation ' + (B.du || B.au ? 'sur la période' : 'à ce jour') + '</h4>'
+    + (B.du ? '<div class="kv"><span>Solde au ' + esc(jourFr(B.du)) + '</span><b>' + esc(argent(B.report)) + '</b></div>' : '')
+    + '<div class="kv"><span>' + esc(lD) + '</span><b>' + esc(argent(B.totalDebit)) + '</b></div>'
+    + '<div class="kv"><span>' + esc(lC) + '</span><b class="vt">' + esc(argent(B.totalCredit)) + '</b></div>'
+    + '<div class="kv" style="border-top:1px solid #d5dde8;margin-top:3px;padding-top:4px"><span><b style="color:#111">' + esc(lS)
+      + (B.au ? ' au ' + esc(jourFr(B.au)) : '') + '</b></span><b class="' + (B.solde > 0.5 ? 'rg' : 'vt') + '">'
+      + esc(argent(Math.max(B.solde, 0))) + '</b></div>'
+    + (B.solde < -0.5 ? '<div class="kv"><span>Avance / trop-perçu</span><b class="vt">' + esc(argent(-B.solde)) + '</b></div>' : '')
+    + '</div></div>';
+
+  h += '<div class="kpis">'
+    + '<div class="kpi"><div class="l">' + esc(lD) + '</div><div class="v">' + esc(argent(B.totalDebit)) + '</div></div>'
+    + '<div class="kpi vv"><div class="l">' + esc(lC) + '</div><div class="v">' + esc(argent(B.totalCredit)) + '</div></div>'
+    + '<div class="kpi ' + (B.solde > 0.5 ? 'du' : 'ok') + '"><div class="l">' + esc(lS) + '</div><div class="v">'
+      + esc(argent(Math.max(B.solde, 0))) + '</div></div>'
+    + '<div class="kpi"><div class="l">' + (client ? 'Factures / versements' : 'Pièces / règlements') + '</div><div class="v">'
+      + B.nbF + ' / ' + B.nbV + '</div></div>'
+    + '</div>'
+    + '<div class="dates">'
+    + '<span>' + (client ? 'Dernière facturation' : 'Dernier achat') + ' : <b>' + esc(B.derF ? jourFr(B.derF) : '—') + '</b></span>'
+    + '<span>' + (client ? 'Dernier versement' : 'Dernier règlement') + ' : <b>' + esc(B.derV ? jourFr(B.derV) : '—') + '</b></span>'
+    + '</div>';
+
+  /* releve chronologique */
+  h += '<div class="st">Relevé chronologique — dates de ' + (client ? 'facturation et de versement' : 'commande et de règlement') + '</div>';
+  h += '<table><thead><tr><th style="width:62px">Date</th><th style="width:122px">Opération</th><th>Détail</th>'
+    + '<th class="n" style="width:78px">' + esc(lD) + '</th><th class="n" style="width:78px">' + esc(lC) + '</th>'
+    + '<th class="n" style="width:84px">Solde</th></tr></thead><tbody>';
+  if(B.du){
+    h += '<tr class="rp"><td class="dt">' + esc(jourFr(B.du)) + '</td><td colspan="2">Solde antérieur reporté (opérations avant le '
+      + esc(jourFr(B.du)) + ')</td><td class="n"></td><td class="n"></td><td class="n"><b>' + esc(argent(B.report)) + '</b></td></tr>';
+  }
+  if(!B.lignes.length){
+    h += '<tr><td colspan="6" style="text-align:center;color:#888;padding:14px">Aucune opération sur cette période.</td></tr>';
+  }
+  B.lignes.forEach(function(o){
+    var deb = o.sens === 'debit';
+    h += '<tr' + (deb ? '' : ' class="cr"') + '><td class="dt">' + esc(jourFr(o.jour)) + '</td>'
+      + '<td class="' + (deb ? 'of' : 'ov') + '">' + esc(o.libelle) + '</td>'
+      + '<td>' + esc(o.detail || '') + '</td>'
+      + '<td class="n">' + (deb ? esc(argent(o.montant)) : '') + '</td>'
+      + '<td class="n vt">' + (deb ? '' : esc(argent(o.montant))) + '</td>'
+      + '<td class="n ' + (o.solde > 0.5 ? 'rg' : 'vt') + '">' + esc(argent(o.solde)) + '</td></tr>';
+  });
+  h += '<tr class="tt"><td colspan="3">TOTAL ' + (B.du || B.au ? 'DE LA PÉRIODE' : '') + '</td>'
+    + '<td class="n">' + esc(argent(B.totalDebit)) + '</td><td class="n">' + esc(argent(B.totalCredit)) + '</td>'
+    + '<td class="n">' + esc(argent(B.solde)) + '</td></tr></tbody></table>';
+
+  /* detail par facture / commande / dette */
+  if(avecDetail && B.detail.length){
+    h += '<div class="st">Détail par ' + (client ? 'facture' : 'commande') + ' — articles et versements datés</div>';
+    B.detail.forEach(function(pc){
+      var verse = pc.versements.reduce(function(s, v){ return s + v.montant; }, 0);
+      h += '<div class="pc"><div class="pc-h"><span><b>' + esc(pc.titre.replace(/ du \d{2}\/\d{2}\/\d{4}$/, '')) + '</b> — '
+        + (pc.sorte === 'facture' ? 'facturée le ' : (pc.sorte === 'commande' ? 'commandée le ' : 'saisie le '))
+        + '<b>' + esc(jourFr(pc.jour)) + '</b>'
+        + (pc.echeance ? ' <span class="mut">· échéance ' + esc(jourFr(pc.echeance)) + '</span>' : '') + '</span>'
+        + '<span>' + badgeStatut(pc) + '</span></div>';
+      if(pc.lignes.length){
+        h += '<table><thead><tr><th>Article</th><th class="n" style="width:56px">Qte</th><th class="n" style="width:84px">Prix unit.</th>'
+          + '<th class="n" style="width:90px">Montant</th></tr></thead><tbody>'
+          + pc.lignes.map(function(l){
+              var q = (pc.sorte === 'commande') ? (nb(l.qteRecue) || nb(l.qte)) : nb(l.qte || l.qty);
+              var pu = nb(l.prixU || l.prix || l.prixUnitaire);
+              var tot = nb(l.total) || q * pu;
+              return '<tr><td>' + esc(l.produit || l.designation || l.nom || '—')
+                + (pc.sorte === 'commande' && l.qteRecue !== undefined && nb(l.qte) && nb(l.qteRecue) !== nb(l.qte)
+                    ? ' <span class="mut">(reçu ' + nb(l.qteRecue) + ' / ' + nb(l.qte) + ')</span>' : '')
+                + (nb(l.remise) ? ' <span class="mut">remise ' + esc(argent(l.remise)) + '</span>' : '') + '</td>'
+                + '<td class="n">' + esc(q || '') + '</td><td class="n">' + (pu ? esc(argent(pu)) : '') + '</td>'
+                + '<td class="n">' + esc(argent(tot)) + '</td></tr>';
+            }).join('')
+          + '</tbody></table>';
+      }
+      if(pc.reprise > 0.5){
+        h += '<div class="nt" style="margin:6px 9px">Cette facture a aussi repris une dette antérieure de ' + esc(argent(pc.reprise))
+          + ' : elle reste comptée sur les factures d\'origine, pas une seconde fois ici.</div>';
+      }
+      h += '<div class="sous">' + (client ? 'Versements' : 'Règlements') + ' (' + pc.versements.length + ')</div>';
+      if(pc.versements.length){
+        h += '<table><thead><tr><th style="width:62px">Date</th><th class="n" style="width:90px">Montant</th><th>Mode</th>'
+          + '<th>Caisse</th><th>Encaissé par</th><th>Note</th></tr></thead><tbody>'
+          + pc.versements.map(function(v){
+              var p = v.p;
+              var mode = p.modeNom || nomMoyen(p.mode);
+              return '<tr class="cr"><td class="dt">' + esc(jourFr(v.jour)) + '</td><td class="n vt">' + esc(argent(v.montant)) + '</td>'
+                + '<td>' + esc(mode || (p.synth ? '—' : 'non précisé')) + '</td><td>' + esc(p.caisseNom || '') + '</td>'
+                + '<td>' + esc(p.par || '') + '</td><td>' + esc(p.synth ? p.note : (p.note || '')) + '</td></tr>';
+            }).join('')
+          + '</tbody></table>';
+      }else{
+        h += '<div class="mut" style="padding:2px 9px 6px">Aucun versement enregistré.</div>';
+      }
+      h += '<div class="pc-f"><span>Montant : <b>' + esc(argent(pc.montant)) + '</b></span>'
+        + '<span>' + esc(lC) + ' : <b class="vt">' + esc(argent(verse)) + '</b></span>'
+        + '<span>Reste : <b class="' + (pc.reste > 0.5 ? 'rg' : 'vt') + '">' + esc(argent(pc.reste)) + '</b></span></div>'
+        + '</div>';
+    });
+  }
+
+  /* remarques */
+  var notes = [];
+  if(B.ignores) notes.push(B.ignores + ' versement(s) inscrit(s) en double lors d\'une modification n\'ont pas été repris : le montant payé enregistré fait foi.');
+  if(!B.au || B.au >= aujourdHui()){
+    if(Math.abs(Math.max(B.solde, 0) - g.du) > 1){
+      notes.push('Écart de ' + argent(Math.abs(Math.max(B.solde, 0) - g.du)) + ' avec le reste dû affiché dans l\'application ('
+        + argent(g.du) + ') : une pièce n\'est pas à jour — le bouton « Harmoniser les dettes » la recale.');
+    }
+  }
+  if(notes.length) h += '<div class="nt">' + notes.map(esc).join('<br>') + '</div>';
+
+  h += '<div class="sig"><div>Signature ' + (client ? 'du client' : 'du fournisseur') + '<br><b>' + esc(g.nom) + '</b></div>'
+    + '<div>Cachet et signature<br><b>' + esc(nomS) + '</b></div></div>';
+  h += '<div class="ft">Bilan généré par App AGV — ' + esc(nomS) + ' — ' + esc(edite) + '</div>';
+  return h;
+}
+
+/* ============================================================
+   4. LA FENETRE DE CHOIX ET L'IMPRESSION
+   ============================================================ */
+var choix = { per: 'tout', du: '', au: '', detail: true };
+function bornes(){
+  var now = new Date(), y = now.getFullYear(), m = ('0' + (now.getMonth() + 1)).slice(-2);
+  if(choix.per === 'mois') return { du: y + '-' + m + '-01', au: aujourdHui() };
+  if(choix.per === 'annee') return { du: y + '-01-01', au: aujourdHui() };
+  if(choix.per === 'choix') return { du: choix.du || '', au: choix.au || '' };
+  return { du: '', au: '' };
+}
+function imprimer(g){
+  var b = bornes();
+  if(b.du && b.au && b.du > b.au){ var t = b.du; b.du = b.au; b.au = t; }
+  var B = construireBilan(g, b.du, b.au);
+  var corps = htmlBilan(B, choix.detail);
+  var titre = 'Bilan ' + (g.type === 'client' ? 'client' : 'fournisseur') + ' - ' + g.nom;
+  try{ if(typeof window.agvJournaliser === 'function') window.agvJournaliser('Bilan imprimé', g.nom + ' — ' + periodeTexte(b.du, b.au)); }catch(e){}
+  if(typeof window.agvBlobPrint === 'function'){ window.agvBlobPrint(CSS, corps, titre); return; }
+  var html = '<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><title>' + esc(titre) + '</title><style>' + CSS
+    + '</style></head><body>' + corps + '</body></html>';
+  if(typeof window.agvOpenPrintOptions === 'function'){ window.agvOpenPrintOptions(html, titre); return; }
+  var w = window.open('', '_blank');
+  if(w){ w.document.write(html); w.document.close(); }
+  else toast('Autorisez les fenêtres pour imprimer le bilan');
+}
+
+window.agvBilan = function(type, x){
+  if(!API.actif) return;
+  if(!A41()) return toast('Bilan indisponible pour le moment — réessayez');
+  var g = groupeDe(type, x);
+  if(!g) return toast('Ce ' + (type === 'fournisseur' ? 'fournisseur' : 'client') + ' n\'existe plus');
+  var vieux = document.getElementById('agv42-dlg');
+  if(vieux) vieux.remove();
+  var ov = document.createElement('div');
+  ov.id = 'agv42-dlg';
+  var A = A41();
+  ov.innerHTML = '<div class="box">'
+    + '<h3>&#128196; Bilan — ' + esc(g.nom) + '</h3>'
+    + '<div class="sous">' + esc(A.outils.etiquette(g)) + (g.tel ? ' · ' + esc(g.tel) : '')
+      + ' · reste dû : <b>' + esc(argent(g.du)) + '</b></div>'
+    + '<div class="per">'
+      + '<button data-p="tout">Tout l\'historique</button>'
+      + '<button data-p="mois">Ce mois-ci</button>'
+      + '<button data-p="annee">Cette année</button>'
+      + '<button data-p="choix">Période choisie</button>'
+    + '</div>'
+    + '<div class="dates" id="agv42-dates"><div><label>Du</label><input type="date" id="agv42-du"></div>'
+      + '<div><label>Au</label><input type="date" id="agv42-au"></div></div>'
+    + '<label class="opt"><input type="checkbox" id="agv42-det"> Détail par ' + (g.type === 'client' ? 'facture' : 'commande')
+      + ' : articles et versements datés</label>'
+    + '<div class="pied"><button class="x" id="agv42-x">Annuler</button>'
+      + '<button class="go" id="agv42-go">Afficher / imprimer (A4)</button></div>'
+    + '</div>';
+  document.body.appendChild(ov);
+  function maj(){
+    Array.prototype.forEach.call(ov.querySelectorAll('.per button'), function(b){
+      b.className = b.getAttribute('data-p') === choix.per ? 'on' : '';
+    });
+    var d = ov.querySelector('#agv42-dates');
+    if(d) d.className = 'dates' + (choix.per === 'choix' ? ' on' : '');
+  }
+  Array.prototype.forEach.call(ov.querySelectorAll('.per button'), function(b){
+    b.onclick = function(){ choix.per = b.getAttribute('data-p'); maj(); };
+  });
+  var iDu = ov.querySelector('#agv42-du'), iAu = ov.querySelector('#agv42-au'), iDet = ov.querySelector('#agv42-det');
+  iDu.value = choix.du || ''; iAu.value = choix.au || aujourdHui(); iDet.checked = choix.detail !== false;
+  iDu.onchange = function(){ choix.du = iDu.value; };
+  iAu.onchange = function(){ choix.au = iAu.value; };
+  iDet.onchange = function(){ choix.detail = iDet.checked; };
+  ov.querySelector('#agv42-x').onclick = function(){ ov.remove(); };
+  ov.onclick = function(e){ if(e.target === ov) ov.remove(); };
+  ov.querySelector('#agv42-go').onclick = function(){
+    choix.du = iDu.value; choix.au = iAu.value; choix.detail = iDet.checked;
+    if(choix.per === 'choix' && !choix.du && !choix.au) return toast('Choisissez au moins une date');
+    ov.remove();
+    var g2 = groupeDe(type, g.cle) || g;
+    imprimer(g2);
+  };
+  maj();
+};
+/* pour verifier sans imprimer */
+API.bilan = function(type, x, du, au){
+  var g = groupeDe(type, x);
+  return g ? construireBilan(g, du || '', au || '') : null;
+};
+API.html = function(type, x, du, au, detail){
+  var g = groupeDe(type, x);
+  return g ? { css: CSS, corps: htmlBilan(construireBilan(g, du || '', au || ''), detail !== false) } : null;
+};
+
+/* ============================================================
+   5. LES BOUTONS « BILAN »
+   ============================================================ */
+function idDe(el, fn){
+  var m = new RegExp(fn + "\\(\\s*['\"]?([^'\")]+)['\"]?").exec(el.getAttribute('onclick') || '');
+  return m ? m[1] : null;
+}
+function poserBoutons(listeId, fnModif, fnSuppr, type){
+  var liste = document.getElementById(listeId);
+  if(!liste) return;
+  Array.prototype.forEach.call(liste.querySelectorAll('[onclick^="' + fnModif + '("]'), function(b){
+    var id = idDe(b, fnModif);
+    var carte = b.closest ? b.closest('.card') : null;
+    if(!carte || !id || carte.querySelector('.agv42-btn-carte')) return;
+    var bouton = document.createElement('button');
+    bouton.className = 'agv42-btn-carte';
+    bouton.type = 'button';
+    bouton.innerHTML = '&#128196; Bilan';
+    bouton.title = 'Bilan détaillé : dates de facturation et de versement, imprimable en PDF A4';
+    bouton.setAttribute('onclick', 'event.stopPropagation();agvBilan(\'' + type + '\',decodeURIComponent(\'' + encodeURIComponent(id).replace(/'/g, '%27') + '\'))');
+    var suppr = carte.querySelector('[onclick^="' + fnSuppr + '("]');
+    if(suppr && suppr.parentNode) suppr.parentNode.insertBefore(bouton, suppr);
+    else b.parentNode.appendChild(bouton);
+  });
+}
+function poserTousLesBoutons(){
+  if(!API.actif) return;
+  poserBoutons('fourn-list', 'openFournisseurModal', 'deleteFournisseur', 'fournisseur');
+  poserBoutons('clients-mgr-list', 'openClientMgrModal', 'deleteClientMgr', 'client');
+}
+var observes = {};
+function observer(id){
+  var el = document.getElementById(id);
+  if(!el || observes[id] === el || typeof MutationObserver === 'undefined') return;
+  observes[id] = el;
+  new MutationObserver(function(){ try{ poserTousLesBoutons(); }catch(e){} }).observe(el, { childList: true });
+  poserTousLesBoutons();
+}
+setInterval(function(){
+  try{
+    if(!API.actif) return;
+    observer('fourn-list');
+    observer('clients-mgr-list');
+    poserTousLesBoutons();
+  }catch(e){}
+}, 1500);
+
+/* les bilans individuels existants ouvrent le bilan precis */
+(function rediriger(){
+  function poser(){
+    var bc = window.imprimerBilanClient;
+    if(typeof bc === 'function' && !bc.__agv42){
+      var n = function(id){
+        if(!API.actif || vide(id) || String(id) === 'undefined') return bc.apply(this, arguments);
+        if(!groupeDe('client', id)) return bc.apply(this, arguments);
+        return window.agvBilan('client', id);
+      };
+      n.__agv42 = true; n.__agvOrig = bc;
+      window.imprimerBilanClient = n;
+    }
+    var pp = window.agvPrintPDF;
+    if(typeof pp === 'function' && !pp.__agv42){
+      var m = function(type, extra){
+        if(API.actif && type === 'bilan-fournisseur-detail' && !vide(extra) && String(extra) !== 'undefined'
+           && groupeDe('fournisseur', extra)){
+          return window.agvBilan('fournisseur', extra);
+        }
+        return pp.apply(this, arguments);
+      };
+      m.__agv42 = true; m.__agvOrig = pp;
+      window.agvPrintPDF = m;
+    }
+  }
+  poser();
+  setInterval(poser, 3000);
+})();
+
+/* ============================================================
+   6. LA LIGNE « TOTAL » DES DOCUMENTS IMPRIMES
+   Une regle « .tot{...} » perdait contre « tbody tr:nth-child(even) »
+   (fond gris clair, texte blanc) : on lui donne la priorite, avec ses
+   propres couleurs, sans rien changer d'autre au document.
+   ============================================================ */
+var RX_TOT = /(^|\})(\s*)\.tot\s*\{([^{}]*background[^{}]*)\}/g;
+function corrigerTotal(txt){
+  if(typeof txt !== 'string' || txt.indexOf('.tot') < 0) return txt;
+  return txt.replace(RX_TOT, function(m, a, sp, decl){
+    return a + sp + '.tot,tbody tr.tot:nth-child(n),tbody tr.tot:nth-child(n) td{' + decl + '}';
+  });
+}
+API.corrigerTotal = corrigerTotal;
+(function envelopperImpressions(){
+  function poser(){
+    var bp = window.agvBlobPrint;
+    if(typeof bp === 'function' && !bp.__agv42){
+      var n = function(css, body, titre){
+        var c = css;
+        try{ if(API.actif) c = corrigerTotal(css); }catch(e){}
+        return bp.call(this, c, body, titre);
+      };
+      n.__agv42 = true; n.__agvOrig = bp; n.__agv46 = bp.__agv46; n.__agvFacture = bp.__agvFacture;
+      window.agvBlobPrint = n;
+    }
+    var op = window.agvOpenPrintOptions;
+    if(typeof op === 'function' && !op.__agv42){
+      var o = function(html, titre){
+        var h = html;
+        try{ if(API.actif) h = corrigerTotal(html); }catch(e){}
+        return op.call(this, h, titre);
+      };
+      o.__agv42 = true; o.__agvOrig = op; o.__agv46 = op.__agv46;
+      window.agvOpenPrintOptions = o;
+    }
+  }
+  poser();
+  setInterval(poser, 1500);
+})();
+
+API.etat = function(){
+  var A = A41();
+  console.log('[AGV-42] bilan : ' + (A ? 'pret' : 'en attente du module 34')
+    + ' | impression : ' + (window.agvBlobPrint && window.agvBlobPrint.__agv42 ? 'ligne TOTAL protegee' : 'pas encore branchee'));
+  console.log('[AGV-42] essai : AGV_42.bilan(\'client\', \'Nom du client\')');
+  return !!A;
+};
+try{ console.log('[AGV-42] module actif — v' + API.version); }catch(e){}
 
 })();
 </script>
