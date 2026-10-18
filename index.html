@@ -57101,4 +57101,282 @@ try{ console.log('[AGV-42] module actif — v' + API.version); }catch(e){}
 })();
 </script>
 
+<!-- ============================================================
+     MODULE 36 — AGV-43 : LE NOM COMPLET DU FONDATEUR A LA PLACE
+     DE « FONDATEUR »
+     ------------------------------------------------------------
+     Quand le fondateur agit (vente, depense, entree, versement,
+     facture, reglement, validation, edition d'un document...),
+     l'application inscrivait le mot « Fondateur » comme auteur.
+     Desormais, partout ou ce mot designe la PERSONNE qui a agi,
+     c'est son nom complet qui s'affiche et s'imprime :
+       - sur tous les documents (factures, recus de versement,
+         rapports journaliers, mensuels, annuels, bilans, bulletins,
+         journal d'audit, listes imprimees, telechargements et
+         images), par les trois portes de sortie de l'impression :
+         agvBlobPrint, agvOpenPrintOptions et les fenetres ouvertes
+         par window.open ;
+       - a l'ecran : colonnes « Gerant / Vendeur / Saisi par /
+         Encaisse par », historiques, journal, versements, dettes
+         personnelles, carte du role en haut du menu.
+     Les actions passees en beneficient aussi : la correction est
+     faite a l'affichage, la base n'est pas modifiee.
+
+     LE NOM : celui que le fondateur a donne dans « Nom du
+     Fondateur » (fiche du fondateur) ou, a defaut, le prenom et le
+     nom saisis a la creation de la boutique — le plus complet des
+     deux quand l'un prolonge l'autre.
+
+     CE QUI RESTE « FONDATEUR » : les mots qui designent le ROLE et
+     non une personne — « Reserve au Fondateur », « Signature du
+     Fondateur », « Code fondateur », l'ecran de connexion, et
+     l'etiquette placee a cote d'un nom deja ecrit.
+
+     AUCUNE DONNEE ECRITE, AUCUNE STRUCTURE MODIFIEE.
+     Verifier : AGV_43.etat()      Desactiver : AGV_43.actif = false
+     ============================================================ -->
+<script>
+(function(){
+'use strict';
+
+var API = window.AGV_43 = { actif: true, version: '1.0', remplaces: 0 };
+
+function tab(v){
+  if(!v) return [];
+  if(Array.isArray(v)) return v.filter(Boolean);
+  try{ return Object.keys(v).map(function(k){ return v[k]; }).filter(Boolean); }catch(e){ return []; }
+}
+function escHtml(v){
+  return String(v == null ? '' : v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+function propre(v){
+  var s = String(v == null ? '' : v).replace(/\s+/g, ' ').trim();
+  if(!s || /^(fondateur|—|-|\?)$/i.test(s)) return '';
+  return s;
+}
+function mots(s){
+  var t = String(s || '').toLowerCase();
+  try{ t = t.normalize('NFD').replace(/[̀-ͯ]/g, ''); }catch(e){}
+  return t.split(/[^a-z0-9]+/).filter(Boolean);
+}
+function contientTous(grand, petit){
+  var g = mots(grand);
+  return mots(petit).every(function(m){ return g.indexOf(m) >= 0; });
+}
+
+/* ============================================================
+   1. LE NOM COMPLET DU FONDATEUR
+   ============================================================ */
+function ficheFondateur(){
+  var l;
+  try{ l = gerants; }catch(e){ l = window.gerants; }
+  var f = null;
+  tab(l).forEach(function(g){
+    if(f || !g) return;
+    try{
+      if(typeof window.agvFicheEstFondateur === 'function' ? window.agvFicheEstFondateur(g)
+         : (String(g.id) === '1' || g.role === 'fondateur')) f = g;
+    }catch(e){}
+  });
+  return f;
+}
+function nomFondateur(){
+  var s = window._currentShop || {};
+  var fiche = propre((ficheFondateur() || {}).nom);
+  var info = propre(s.nom) || propre([s.prenom, s.nomFamille].filter(Boolean).join(' '));
+  if(fiche && info){
+    if(contientTous(info, fiche)) return info;     /* « Mamadou » -> « Mamadou Diallo » */
+    return fiche;                                  /* nom choisi dans « Nom du Fondateur » */
+  }
+  return fiche || info || '';
+}
+window.agvNomFondateur = function(){ return nomFondateur(); };
+
+/* ============================================================
+   2. DANS LES DOCUMENTS (texte HTML)
+   ============================================================ */
+var SEP = '(?=\\s*(?:<|$|[\\u2014\\u2013\\u00b7,|)\\]]))';
+var RX_CELLULE = />(\s*)Fondateur(\s*)</g;
+var RX_COURONNE = /(👑\s*)Fondateur(?![A-Za-zÀ-ÿ])/g;
+var RX_PAR = /(\b[Pp]ar\s*:?\s*)Fondateur(?![A-Za-zÀ-ÿ])/g;
+var RX_DEUXPOINTS = new RegExp('(:\\s*)Fondateur' + SEP, 'g');
+var RX_TIRET = new RegExp('([\\u2014\\u2013]\\s*)Fondateur' + SEP, 'g');
+
+function remplacerHtml(html){
+  if(!API.actif || typeof html !== 'string' || html.indexOf('Fondateur') < 0) return html;
+  var nom = nomFondateur();
+  if(!nom) return html;
+  var N = escHtml(nom);
+  var avant = html;
+  html = html.replace(RX_CELLULE, function(m, a, b, pos, tout){
+    /* une etiquette « Fondateur » placee a cote d'un nom deja ecrit reste telle quelle */
+    var debut = Math.max(0, pos - 220);
+    var seg = tout.slice(debut, pos);
+    var k = Math.max(seg.lastIndexOf('<td'), seg.lastIndexOf('<th'), seg.lastIndexOf('<li'),
+                     seg.lastIndexOf('<tr'), seg.lastIndexOf('<p'), seg.lastIndexOf('<div'));
+    if(k > 0) seg = seg.slice(k);
+    if(seg.indexOf('👑') >= 0 || seg.indexOf(N) >= 0 || /signature|cachet|code|r[ée]serv/i.test(seg.replace(/<[^>]*>/g, ''))) return m;
+    return '>' + a + N + b + '<';
+  });
+  html = html.replace(RX_COURONNE, function(m, a){ return a + N; });
+  html = html.replace(RX_PAR, function(m, a){ return a + N; });
+  html = html.replace(RX_DEUXPOINTS, function(m, a){ return a + N; });
+  html = html.replace(RX_TIRET, function(m, a){ return a + N; });
+  if(html !== avant) API.remplaces++;
+  return html;
+}
+API.remplacerHtml = remplacerHtml;
+
+(function envelopperImpressions(){
+  function poser(){
+    var bp = window.agvBlobPrint;
+    if(typeof bp === 'function' && !bp.__agv43){
+      var n = function(css, body, titre){
+        var b = body;
+        try{ b = remplacerHtml(body); }catch(e){}
+        return bp.call(this, css, b, titre);
+      };
+      n.__agv43 = true; n.__agvOrig = bp;
+      n.__agv42 = bp.__agv42; n.__agv46 = bp.__agv46; n.__agvFacture = bp.__agvFacture;
+      window.agvBlobPrint = n;
+    }
+    var op = window.agvOpenPrintOptions;
+    if(typeof op === 'function' && !op.__agv43){
+      var o = function(html, titre){
+        var h = html;
+        try{ h = remplacerHtml(html); }catch(e){}
+        return op.call(this, h, titre);
+      };
+      o.__agv43 = true; o.__agvOrig = op; o.__agv42 = op.__agv42; o.__agv46 = op.__agv46;
+      window.agvOpenPrintOptions = o;
+    }
+  }
+  poser();
+  setInterval(poser, 1500);
+})();
+
+/* les documents ecrits directement dans une fenetre ouverte par window.open */
+(function envelopperFenetres(){
+  if(window._agv43Open) return;
+  window._agv43Open = true;
+  var ouvrir = window.open;
+  window.open = function(url){
+    var w = ouvrir.apply(window, arguments);
+    try{
+      var vierge = (!url || url === '' || url === 'about:blank');
+      if(w && vierge && w.document && typeof w.document.write === 'function' && !w.document.__agv43){
+        var d = w.document;
+        var ecrire = d.write, ecrireLn = d.writeln;
+        d.write = function(){
+          var a = Array.prototype.map.call(arguments, function(x){ try{ return remplacerHtml(x); }catch(e){ return x; } });
+          return ecrire.apply(d, a);
+        };
+        if(ecrireLn) d.writeln = function(){
+          var a = Array.prototype.map.call(arguments, function(x){ try{ return remplacerHtml(x); }catch(e){ return x; } });
+          return ecrireLn.apply(d, a);
+        };
+        d.__agv43 = true;
+      }
+    }catch(e){}
+    return w;
+  };
+})();
+
+/* ============================================================
+   3. A L'ECRAN (noeuds de texte)
+   ============================================================ */
+var EXCLUS = ['agv-landing', 'agv-shop-login', 'agv-auth', 'agv-admin'];
+function exclu(el){
+  for(var e = el; e && e !== document.body; e = e.parentElement){
+    var t = e.tagName;
+    if(t === 'SCRIPT' || t === 'STYLE' || t === 'TEXTAREA' || t === 'NOSCRIPT') return true;
+    if(e.isContentEditable) return true;
+    if(e.id && EXCLUS.indexOf(e.id) >= 0) return true;
+  }
+  return false;
+}
+function blocDe(el){
+  for(var e = el; e && e !== document.body; e = e.parentElement){
+    if(/^(TD|TH|LI|P|DIV|TR|LABEL|BUTTON|OPTION)$/.test(e.tagName)) return e;
+  }
+  return el;
+}
+function traiterTexte(n, nom){
+  var v = n.nodeValue;
+  if(!v || v.indexOf('Fondateur') < 0) return;
+  var parent = n.parentElement;
+  if(!parent || exclu(parent)) return;
+  var neuf = v;
+  if(/^\s*Fondateur\s*$/.test(v)){
+    var bloc = blocDe(parent);
+    var autour = String(bloc.textContent || '').replace(v, '');
+    if(autour.indexOf('👑') >= 0 || autour.indexOf(nom) >= 0
+       || /signature|cachet|code|r[ée]serv|acc[eè]s complet|se connecter/i.test(autour)) return;
+    neuf = v.replace('Fondateur', nom);
+  }else{
+    neuf = v.replace(RX_COURONNE, function(m, a){ return a + nom; })
+            .replace(RX_PAR, function(m, a){ return a + nom; })
+            .replace(RX_DEUXPOINTS, function(m, a){ return a + nom; })
+            .replace(RX_TIRET, function(m, a){ return a + nom; });
+  }
+  if(neuf !== v){ n.nodeValue = neuf; API.remplaces++; }
+}
+function parcourir(racine, nom){
+  if(!racine) return;
+  if(racine.nodeType === 3){ traiterTexte(racine, nom); return; }
+  if(racine.nodeType !== 1 && racine.nodeType !== 11) return;
+  if(racine.nodeType === 1 && exclu(racine)) return;
+  if(String(racine.textContent || '').indexOf('Fondateur') < 0) return;
+  var tw = document.createTreeWalker(racine, NodeFilter.SHOW_TEXT, {
+    acceptNode: function(x){ return (x.nodeValue && x.nodeValue.indexOf('Fondateur') >= 0) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT; }
+  });
+  var l = [], x;
+  while((x = tw.nextNode())) l.push(x);
+  l.forEach(function(t){ traiterTexte(t, nom); });
+}
+var dernierNom = null;
+function toutReprendre(){
+  if(!API.actif || !document.body) return;
+  var nom = nomFondateur();
+  if(!nom) return;
+  parcourir(document.body, nom);
+}
+(function observer(){
+  function poser(){
+    if(!document.body || typeof MutationObserver === 'undefined'){ setTimeout(poser, 500); return; }
+    new MutationObserver(function(liste){
+      if(!API.actif) return;
+      var nom = nomFondateur();
+      if(!nom) return;
+      liste.forEach(function(m){
+        if(m.type === 'characterData'){ traiterTexte(m.target, nom); return; }
+        Array.prototype.forEach.call(m.addedNodes || [], function(n){ parcourir(n, nom); });
+      });
+    }).observe(document.body, { childList: true, subtree: true, characterData: true });
+    toutReprendre();
+  }
+  poser();
+  /* le nom devient connu a l'ouverture de la boutique, ou change : tout est repris */
+  setInterval(function(){
+    try{
+      var nom = nomFondateur();
+      if(nom && nom !== dernierNom){ dernierNom = nom; toutReprendre(); }
+    }catch(e){}
+  }, 2000);
+})();
+
+API.etat = function(){
+  var s = window._currentShop || {};
+  var f = ficheFondateur();
+  console.log('[AGV-43] nom affiche a la place de « Fondateur » : ' + (nomFondateur() || '(inconnu — boutique non ouverte)'));
+  console.log('   fiche du fondateur : ' + ((f && f.nom) || '—') + ' | fiche boutique : ' + (s.nom || '—'));
+  console.log('   remplacements effectues : ' + API.remplaces + ' (affichage seulement, aucune donnee modifiee)');
+  return nomFondateur();
+};
+try{ console.log('[AGV-43] module actif — v' + API.version); }catch(e){}
+
+})();
+</script>
+
 </body></html>
