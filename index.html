@@ -11584,6 +11584,7 @@ function envoyerFactureClientWA(factId){
     msg+=(i+1)+'. *'+l.produit+'* × '+l.qte+' = '+fmtGNF(l.total||0)+''+NL;
   });
   msg+='━━━━━━━━━━━━━━━━━'+NL;
+  if(fact.frais>0) msg+='+ Transport'+(fact.fraisNote?' ('+fact.fraisNote+')':'')+': '+fmtGNF(fact.frais)+''+NL; // [AGV-46]
   if(fact.dettePrecedente>0) msg+='+ Report dette: '+fmtGNF(fact.dettePrecedente)+''+NL;
   msg+='💰 *TOTAL : '+fmtGNF(fact.montantTotal||0)+'*'+NL;
   msg+='✅ Payé: '+fmtGNF(fact.montantPaye||0)+''+NL;
@@ -56849,7 +56850,7 @@ function pieceFacture(f, e, O, R39){
   return {
     sorte: 'facture', cle: 'F:' + f.id, jour: jour, titre: 'Facture' + (num ? ' ' + num : ''), num: num,
     debits: [{ jour: jour, montant: propre, libelle: 'Facture' + (num ? ' ' + num : ''), detail: resume(lignes) }],
-    montant: propre, lignes: lignes, remise: nb(f.remise), frais: nb(f.frais),
+    montant: propre, lignes: lignes, remise: nb(f.remise), frais: nb(f.frais), fraisNote: f.fraisNote || '',
     versements: v.liste, ignores: v.ignores, reste: reste, echeance: jourIso(f.echeance),
     reprise: (e && e.rep) ? nb(e.porte) : (rep ? nb(f.dettePrecedente) : 0),
     absorbee: !!(e && e.absorbee), vers: (e && e.vers) ? (e.vers.numero || e.vers.no || '') : '',
@@ -57136,6 +57137,9 @@ function htmlBilan(B, avecDetail){
                 + '<td class="n">' + esc(q || '') + '</td><td class="n">' + (pu ? esc(argent(pu)) : '') + '</td>'
                 + '<td class="n">' + esc(argent(tot)) + '</td></tr>';
             }).join('')
+          + (pc.sorte === 'facture' && nb(pc.frais) > 0          /* [AGV-46] le transport de la facture */
+              ? '<tr><td>Frais de transport' + (pc.fraisNote ? ' <span class="mut">' + esc(pc.fraisNote) + '</span>' : '')
+                + '</td><td class="n"></td><td class="n"></td><td class="n">' + esc(argent(pc.frais)) + '</td></tr>' : '')
           + '</tbody></table>';
       }
       if(pc.reprise > 0.5){
@@ -58401,6 +58405,10 @@ API.modeFondateur = function(){ return modeFondateur(ficheFondateur()); };
          { liste, ecrites } — hors de « data », il suit le bloc ouvert ;
        - facture.fraisNote ; depense.progId / progMois ;
          dette.initiale / clientId / note.
+     v1.1 (19/10/2026) : liste des factures — le transport n'apparait
+     plus deux fois (une seule ligne « transport : +X (motif) ») ; a la
+     validation, plus de message annoncant un reste calcule sans le
+     transport.
      Verifier : AGV_45.etat()      Desactiver : AGV_45.actif = false
      ============================================================ -->
 <style>
@@ -58413,7 +58421,6 @@ API.modeFondateur = function(){ return modeFondateur(ficheFondateur()); };
 #agv38-fact .agv45-aide{font-size:11.5px;color:#64748b;margin-top:7px;line-height:1.5}
 #agv38-fact .agv45-tr-row small{font-size:11px;opacity:.75}
 #agv38-fact .agv45-tr-row span:last-child{white-space:nowrap;padding-left:10px}
-.agv45-b-tr{background:rgba(124,58,237,.13);color:#7c3aed}
 #agv45-dep{border:1px solid var(--border,rgba(37,99,235,.3));border-radius:12px;padding:12px 14px;margin:0 0 14px;
   background:var(--surface,#0a1628)}
 #agv45-dep .hd{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
@@ -58480,7 +58487,7 @@ API.modeFondateur = function(){ return modeFondateur(ficheFondateur()); };
 (function(){
 'use strict';
 if(window.AGV_45) return;
-var API = window.AGV_45 = { actif: true, version: '1.0' };
+var API = window.AGV_45 = { actif: true, version: '1.1' };
 
 /* ============================================================
    OUTILS
@@ -59179,7 +59186,18 @@ function brancherFacture(){
       var ancien = editId ? factureParId(editId) : null;
       var avant = {};
       les('factureVentes').forEach(function(x){ if(x) avant[String(x.id)] = true; });
-      var r = prev.apply(this, arguments);
+      /* [v1.1] l'ecran de facture annonce « Facture validee — reste X » calcule
+         SANS le transport : ce message est retenu, le bon est affiche ensuite */
+      var avecTransport = f.montant > 0, toastAvant = window.showToast, retenus = [];
+      if(avecTransport && typeof toastAvant === 'function'){
+        window.showToast = function(m){
+          if(/^\s*Facture validee/i.test(String(m))){ retenus.push(m); return; }
+          return toastAvant.apply(this, arguments);
+        };
+      }
+      var r;
+      try{ r = prev.apply(this, arguments); }
+      finally{ if(avecTransport && typeof toastAvant === 'function') window.showToast = toastAvant; }
       try{
         var fact = null;
         if(editId){
@@ -59197,19 +59215,24 @@ function brancherFacture(){
             journal('Frais de transport', (fact.clientNom || 'client') + ' — ' + argent(mt)
               + (f.note ? ' (' + f.note + ')' : '') + ' — par ' + moi());
             var reste = nb(fact.soldeRestant);
-            setTimeout(function(){
-              toast(reste > 0.5 ? 'Facture validee (transport ' + argent(mt) + ' compris) — reste ' + argent(reste)
-                                : 'Facture validee et soldee (transport ' + argent(mt) + ' compris)');
-            }, 60);
+            toast(reste > 0.5 ? 'Facture validee (transport ' + argent(mt) + ' compris) — reste ' + argent(reste)
+                                + ' a la charge de ' + (fact.clientNom || 'ce client')
+                              : 'Facture validee et soldee (transport ' + argent(mt) + ' compris)');
+            retenus = [];
           }
         }
+        /* rien n'a ete applique : les messages retenus partent tels quels */
+        retenus.forEach(function(m){ toast(m); });
       }catch(e){ console.warn('[AGV-45] validation', e); }
       return r;
     };
   });
 }
 
-/* le transport, signale dans la liste des factures */
+/* le transport, nomme dans la liste des factures.
+   [v1.1] La carte de la facture affiche deja « frais : +X » : la pastille
+   « Transport X » ajoutee a cote faisait croire a un transport compte deux
+   fois. Il n'y a plus qu'une seule ligne, renommee « transport : +X (motif) ». */
 function badgesFactures(){
   var zone = $('factures-mgr-list');
   if(!zone || !API.actif) return;
@@ -59217,14 +59240,16 @@ function badgesFactures(){
     var m = /deleteFacture\('([^']*)'\)/.exec(b.getAttribute('onclick') || '');
     if(!m) return;
     var carte = b.closest ? b.closest('.card') : null;
-    if(!carte || carte.querySelector('.agv45-b-tr')) return;
+    if(!carte || carte.querySelector('.agv45-tr-l')) return;
     var f = factureParId(m[1]);
     if(!f || !(nb(f.frais) > 0)) return;
-    var s = document.createElement('span');
-    s.className = 'agv39-badge agv45-b-tr';
-    s.textContent = 'Transport ' + argent(f.frais) + (f.fraisNote ? ' — ' + f.fraisNote : '');
-    var tete = carte.firstElementChild && carte.firstElementChild.firstElementChild;
-    if(tete) tete.appendChild(s); else carte.insertBefore(s, carte.firstChild);
+    var ligne = null;
+    Array.prototype.forEach.call(carte.querySelectorAll('div'), function(x){
+      if(!ligne && x.children.length === 0 && /^\s*frais\s*:\s*\+/i.test(x.textContent || '')) ligne = x;
+    });
+    if(!ligne) return;
+    ligne.className = (ligne.className ? ligne.className + ' ' : '') + 'agv45-tr-l';
+    ligne.textContent = 'transport : +' + argent(f.frais) + (f.fraisNote ? ' (' + f.fraisNote + ')' : '');
   });
 }
 
@@ -59793,6 +59818,282 @@ API.etat = function(){
   return o;
 };
 try{ console.log('[AGV-45] module actif — v' + API.version); }catch(e){}
+
+})();
+</script>
+
+<!-- ============================================================
+     MODULE 39 — AGV-46 : POLICE PLUS GRANDE SUR TOUS LES DOCUMENTS
+     IMPRIMES, APERCU LISIBLE SUR TELEPHONE
+     ------------------------------------------------------------
+     1. LA POLICE DES DOCUMENTS
+        Factures, recus, rapports (jour, mois, annee), bilans,
+        bulletins de paie, listes et etats imprimes etaient ecrits
+        en 8 a 11 px : trop petit une fois sur papier. Chaque taille
+        de police est agrandie au moment de l'impression :
+            taille + 30 % (au plus + 3,6 px), jamais moins de 10 px
+            ex. 8,5 -> 11 px · 10 -> 13 px · 11 -> 14,3 px ·
+                16 -> 19,6 px · 22 -> 25,6 px
+        Les trois portes de sortie sont couvertes : l'impression dans
+        la page (agvBlobPrint — Imprimer, Telecharger et Image), la
+        fenetre d'impression (agvOpenPrintOptions) et les documents
+        ecrits dans une fenetre ouverte (window.open). La feuille de
+        style est agrandie EN DERNIER, juste avant l'affichage : les
+        retouches des autres modules (couleurs, soldes, ligne TOTAL,
+        nom du fondateur) s'appliquent avant, comme aujourd'hui.
+
+     2. L'APERCU SUR TELEPHONE
+        Le document A4 est plus large qu'un ecran de telephone : la
+        partie droite de la facture (montants, transport, reste a
+        payer) sortait de l'ecran. A l'ecran seulement, l'apercu est
+        ramene a la largeur du telephone ; l'impression et le PDF
+        gardent le format A4 inchange. L'image (bouton Image) est
+        prise en taille reelle.
+
+     AUCUNE DONNEE, AUCUNE STRUCTURE : ce module ne touche qu'a la
+     mise en forme des documents au moment de les afficher.
+     Verifier : AGV_46.etat()      Desactiver : AGV_46.actif = false
+     ============================================================ -->
+<style>
+@media print{#agv46-doc{zoom:1 !important;width:auto !important}}
+</style>
+<script>
+(function(){
+'use strict';
+if(window.AGV_46) return;
+var API = window.AGV_46 = { actif: true, version: '1.0', taux: 0.30, plafond: 3.6, plancher: 10, documents: 0 };
+
+var MARQUE_CSS = '/*agv46*/';
+var MARQUE_HTML = '<!--agv46-->';
+var RX = /(font-size\s*:\s*)(\d+(?:\.\d+)?)px/gi;
+
+function grossir(v){
+  var px = parseFloat(v);
+  if(!(px > 0)) return v;
+  var n = px + Math.min(px * API.taux, API.plafond);
+  if(px >= 6 && n < API.plancher) n = API.plancher;
+  return String(Math.round(n * 10) / 10);
+}
+function agrandir(txt){
+  if(!API.actif || typeof txt !== 'string' || !txt) return txt;
+  return txt.replace(RX, function(m, a, v){ return a + grossir(v) + 'px'; });
+}
+API.agrandir = agrandir;
+function agrandirCss(css){
+  if(!API.actif || typeof css !== 'string' || css.indexOf(MARQUE_CSS) === 0) return css;
+  return MARQUE_CSS + agrandir(css);
+}
+function agrandirHtml(html){
+  if(!API.actif || typeof html !== 'string' || html.indexOf(MARQUE_HTML) >= 0) return html;
+  API.documents++;
+  return MARQUE_HTML + agrandir(html);
+}
+
+/* ============================================================
+   1. L'IMPRESSION DANS LA PAGE (agvBlobPrint)
+   ------------------------------------------------------------
+   - le contenu (styles en ligne) est agrandi a l'entree ;
+   - la feuille de style est agrandie dans agvScopeCss, que la
+     fonction d'origine appelle au tout dernier moment : toutes
+     les retouches des autres modules sont deja faites.
+   ============================================================ */
+var dernier = { css: null, titre: '' };
+(function poserScope(){
+  var f = window.agvScopeCss;
+  if(typeof f !== 'function' || f.__agv46p) return;
+  var n = function(css, scope){
+    var c = css;
+    try{
+      if(API.actif){ c = agrandirCss(css); dernier.css = c; }
+      else dernier.css = css;
+    }catch(e){ c = css; }
+    return f.call(this, c, scope);
+  };
+  n.__agv46p = true; n.__agvOrig = f;
+  window.agvScopeCss = n;
+})();
+
+function recopierTemoins(de, vers){
+  try{ Object.keys(de).forEach(function(k){ if(/^_+agv/.test(k) && k !== '__agvOrig') vers[k] = de[k]; }); }catch(e){}
+}
+function poserSorties(){
+  var bp = window.agvBlobPrint;
+  if(typeof bp === 'function' && !bp.__agv46p){
+    var n = function(css, body, titre){
+      var b = body;
+      try{
+        if(API.actif && typeof body === 'string' && body.indexOf(MARQUE_HTML) < 0){
+          b = MARQUE_HTML + agrandir(body);
+          API.documents++;
+        }
+        dernier.titre = titre || '';
+      }catch(e){ b = body; }
+      return bp.call(this, css, b, titre);
+    };
+    recopierTemoins(bp, n);
+    n.__agv46p = true; n.__agvOrig = bp;
+    window.agvBlobPrint = n;
+  }
+  var op = window.agvOpenPrintOptions;
+  if(typeof op === 'function' && !op.__agv46p){
+    var o = function(html, titre){
+      var h = html;
+      try{ h = agrandirHtml(html); }catch(e){ h = html; }
+      return op.call(this, h, titre);
+    };
+    recopierTemoins(op, o);
+    o.__agv46p = true; o.__agvOrig = op;
+    window.agvOpenPrintOptions = o;
+  }
+}
+poserSorties();
+setInterval(function(){ try{ poserSorties(); }catch(e){} }, 1500);
+
+/* ============================================================
+   2. LES DOCUMENTS ECRITS DANS UNE FENETRE OUVERTE
+   ============================================================ */
+(function envelopperFenetres(){
+  if(window._agv46Open) return;
+  window._agv46Open = true;
+  var ouvrir = window.open;
+  window.open = function(url){
+    var w = ouvrir.apply(window, arguments);
+    try{
+      var vierge = (!url || url === '' || url === 'about:blank');
+      if(API.actif && w && vierge && w.document && typeof w.document.write === 'function' && !w.document.__agv46){
+        var d = w.document;
+        var ecrire = d.write, ecrireLn = d.writeln;
+        d.write = function(){
+          var a = Array.prototype.map.call(arguments, function(x){ try{ return agrandir(x); }catch(e){ return x; } });
+          return ecrire.apply(d, a);
+        };
+        if(ecrireLn) d.writeln = function(){
+          var a = Array.prototype.map.call(arguments, function(x){ try{ return agrandir(x); }catch(e){ return x; } });
+          return ecrireLn.apply(d, a);
+        };
+        d.__agv46 = true;
+        API.documents++;
+      }
+    }catch(e){}
+    return w;
+  };
+})();
+
+/* ============================================================
+   3. L'APERCU A L'ECRAN : TOUJOURS EN ENTIER SUR LE TELEPHONE
+   ============================================================ */
+/* sur un ecran etroit, le document est mis en page a la largeur utile d'une
+   feuille A4 (environ 720 px) puis reduit pour tenir dans l'ecran : l'apercu
+   est la miniature fidele de la page imprimee */
+var LARGEUR_A4 = 720;
+function ajuster(){
+  var area = document.getElementById('agv-print-area');
+  var doc = document.getElementById('agv46-doc');
+  if(!area || !doc) return;
+  doc.style.zoom = '';
+  doc.style.width = '';
+  if(!API.actif || doc.__agv46image) return;
+  var cs = window.getComputedStyle ? window.getComputedStyle(area) : null;
+  var pad = cs ? (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0) : 24;
+  var dispo = area.clientWidth - pad;
+  if(!(dispo > 0)) return;
+  if(dispo < LARGEUR_A4) doc.style.width = LARGEUR_A4 + 'px';
+  var besoin = Math.max(doc.scrollWidth, doc.offsetWidth);
+  if(besoin > dispo + 2){
+    doc.style.zoom = String(Math.max(0.3, Math.floor(dispo / besoin * 1000) / 1000));
+  }else{
+    doc.style.width = '';
+  }
+}
+function telecharger(area, doc, origine){
+  try{
+    var css = dernier.css;
+    if(typeof css !== 'string'){ if(origine) return origine.call(this); return; }
+    var titre = dernier.titre || 'Rapport';
+    var corps = doc.innerHTML;
+    var full = '<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">'
+      + '<meta name="viewport" content="width=device-width,initial-scale=1">'
+      + '<title>' + titre + '</title><style>' + css
+      + '\n@media screen{body{padding:14px}}'
+      + '</style></head><body>' + corps
+      + '<div class="no-print" style="text-align:center;margin-top:20px">'
+      + '<button onclick="window.print()" style="padding:11px 22px;background:#22c55e;'
+      + 'color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:700">'
+      + 'Imprimer ce rapport</button></div></body></html>';
+    var blob = new Blob([full], { type: 'text/html;charset=utf-8' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = String(titre || 'rapport').replace(/[^a-z0-9]/gi, '_') + '.html';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function(){ URL.revokeObjectURL(url); }, 4000);
+  }catch(e){
+    if(origine){ try{ return origine.call(this); }catch(x){} }
+  }
+}
+function preparerApercu(area){
+  if(!area || area.__agv46) return;
+  area.__agv46 = true;
+  var bar = document.getElementById('agv-print-toolbar');
+  var doc = document.createElement('div');
+  doc.id = 'agv46-doc';
+  var enfants = Array.prototype.slice.call(area.childNodes).filter(function(n){ return n !== bar; });
+  enfants.forEach(function(n){ doc.appendChild(n); });
+  area.appendChild(doc);
+  if(bar){
+    Array.prototype.forEach.call(bar.querySelectorAll('button'), function(b){
+      var t = String(b.textContent || '');
+      /* Telecharger : le fichier garde la police agrandie */
+      if(/telecharger/i.test(t) && API.actif){
+        var origine = b.onclick;
+        b.onclick = function(){ return telecharger.call(this, area, doc, origine); };
+      }
+    });
+    /* Image : la capture se fait en taille reelle, puis l'apercu revient */
+    bar.addEventListener('click', function(e){
+      var b = e.target && e.target.closest ? e.target.closest('button') : null;
+      if(!b || !/image/i.test(String(b.textContent || ''))) return;
+      doc.__agv46image = true;
+      doc.style.zoom = '';
+      doc.style.width = '';
+      setTimeout(function(){ doc.__agv46image = false; ajuster(); }, 7000);
+    }, true);
+  }
+  ajuster();
+  setTimeout(ajuster, 120);
+  setTimeout(ajuster, 600);
+}
+try{
+  new MutationObserver(function(liste){
+    for(var i = 0; i < liste.length; i++){
+      var aj = liste[i].addedNodes || [];
+      for(var j = 0; j < aj.length; j++){
+        if(aj[j] && aj[j].id === 'agv-print-area'){ try{ preparerApercu(aj[j]); }catch(e){} }
+      }
+    }
+  }).observe(document.body || document.documentElement, { childList: true });
+}catch(e){}
+window.addEventListener('resize', function(){ try{ ajuster(); }catch(e){} });
+window.addEventListener('orientationchange', function(){ setTimeout(function(){ try{ ajuster(); }catch(e){} }, 300); });
+
+/* ============================================================
+   VERIFICATION
+   ============================================================ */
+API.etat = function(){
+  var o = {
+    actif: API.actif, version: API.version, documents: API.documents,
+    exemples: { '8.5px': grossir(8.5) + 'px', '10px': grossir(10) + 'px', '12px': grossir(12) + 'px', '16px': grossir(16) + 'px' },
+    sorties: {
+      agvBlobPrint: !!(window.agvBlobPrint && window.agvBlobPrint.__agv46p),
+      agvScopeCss: !!(window.agvScopeCss && window.agvScopeCss.__agv46p),
+      agvOpenPrintOptions: !!(window.agvOpenPrintOptions && window.agvOpenPrintOptions.__agv46p),
+      fenetres: !!window._agv46Open
+    }
+  };
+  try{ console.log('[AGV-46]', o); }catch(e){}
+  return o;
+};
+try{ console.log('[AGV-46] module actif — v' + API.version); }catch(e){}
 
 })();
 </script>
