@@ -60655,4 +60655,911 @@ try{ console.log('[AGV-47] module actif — v' + API.version); }catch(e){}
 })();
 </script>
 
+<!-- ============================================================
+     MODULE 41 — AGV-48 : RAPPORTS — NOMBRE DE VENTES PAR PRODUIT
+     ------------------------------------------------------------
+     Les rapports Journalier, Mensuel et Annuel restent EXACTEMENT
+     tels qu'ils etaient (memes ecrans, memes chiffres, memes PDF).
+     A cote d'eux :
+
+     1. UN QUATRIEME ONGLET « Par produit » dans Rapports
+        Pour chaque produit, sur la periode choisie :
+          - le NOMBRE DE VENTES (combien de fois il a ete vendu),
+          - la QUANTITE vendue, le prix moyen pratique,
+          - le chiffre d'affaires, le benefice, sa part du CA,
+          - la date de sa derniere vente.
+        Periode : un jour, un mois, une annee, du ... au ..., ou
+        tout l'historique. Filtres : categorie, vendeur, recherche
+        par nom ou reference ; tri par nombre de ventes, quantite,
+        chiffre d'affaires, benefice ou nom. Option pour faire
+        apparaitre aussi les produits du catalogue NON vendus sur
+        la periode. Un clic sur un produit deroule le detail de
+        chacune de ses ventes (date, quantite, prix, vendeur, origine).
+        Impression PDF A4 (en-tete de la boutique) et export CSV.
+
+     2. UN RACCOURCI DANS CHAQUE RAPPORT EXISTANT
+        Bouton « Ventes par produit » a cote de « PDF A4 » dans les
+        onglets Journalier, Mensuel et Annuel : il ouvre l'onglet
+        Par produit sur le meme jour / mois / annee. Bouton
+        « Produits PDF » ajoute en haut de la vue.
+
+     3. CE QUI EST COMPTE
+        Les ventes (sorties) du bloc ouvert, comme les rapports
+        existants — les entrees de stock sont exclues. Option cochee
+        par defaut : les factures etablies directement depuis
+        Clients & Factures (qui ne passent pas par une vente) sont
+        ajoutees, ligne par ligne. Les factures engendrees par une
+        vente, les doublons et les prets de fonds sont ecartes :
+        aucune vente n'est comptee deux fois (memes regles que le
+        palmares). Une meme vente ou facture compte pour UNE vente
+        du produit, meme si le produit y figure sur deux lignes.
+
+     LECTURE SEULE : aucune donnee ecrite, aucun noeud cree, aucune
+     structure modifiee. Rien n'est enregistre, ni dans la base ni
+     sur l'appareil.
+     Verifier : AGV_48.etat()      Desactiver : AGV_48.actif = false
+     ============================================================ -->
+<style>
+#rpt-produits .a48-barre{display:flex;gap:8px;align-items:flex-end;margin-bottom:10px;flex-wrap:wrap}
+#rpt-produits .a48-in{padding:6px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);
+  color:var(--text);font-family:inherit;font-size:13px;font-weight:600;max-width:100%;box-sizing:border-box}
+#rpt-produits .a48-barre2{display:flex;gap:10px 16px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
+#rpt-produits .a48-rech{flex:1 1 240px;min-width:0;font-weight:500}
+#rpt-produits .a48-opt{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--text2);cursor:pointer;user-select:none}
+#rpt-produits .a48-opt input{width:16px;height:16px;margin:0;accent-color:var(--accent)}
+#rpt-produits .a48-tw{overflow-x:auto;-webkit-overflow-scrolling:touch}
+#rpt-produits table.a48-t{width:100%;border-collapse:collapse;font-size:12.5px}
+#rpt-produits table.a48-t th{padding:8px 7px;background:var(--surface2);text-align:left;font-size:11.5px;color:var(--text2);
+  font-weight:700;white-space:nowrap}
+#rpt-produits table.a48-t td{padding:7px;border-bottom:1px solid var(--border);vertical-align:top}
+#rpt-produits table.a48-t .n{text-align:right;white-space:nowrap}
+#rpt-produits table.a48-t .c{text-align:center}
+#rpt-produits tr.a48-r{cursor:pointer}
+#rpt-produits tr.a48-r:hover td{background:var(--surface2)}
+#rpt-produits tr.a48-r.ouvert td{background:var(--accent-light)}
+#rpt-produits tr.a48-zero td{opacity:.5}
+#rpt-produits .a48-nom{font-weight:700;color:var(--text)}
+#rpt-produits .a48-sub{font-size:11px;color:var(--text3);margin-top:2px;font-weight:500}
+#rpt-produits .a48-nb{display:inline-block;min-width:30px;padding:2px 8px;border-radius:999px;background:var(--accent);
+  color:#fff;font-weight:800;font-size:12.5px;text-align:center}
+#rpt-produits tr.a48-zero .a48-nb{background:var(--border);color:var(--text2)}
+#rpt-produits .a48-bar{background:var(--surface2);border:1px solid var(--border);border-radius:999px;height:8px;overflow:hidden;min-width:60px}
+#rpt-produits .a48-bar > div{height:100%;background:var(--accent)}
+#rpt-produits tr.a48-tot td{background:var(--surface2);font-weight:800;border-top:2px solid var(--border)}
+#rpt-produits tr.a48-det > td{padding:0 0 10px 0;background:var(--accent-light)}
+#rpt-produits .a48-detbox{margin:0 8px;padding:8px 10px;background:var(--surface);border:1px solid var(--border);border-radius:8px}
+#rpt-produits .a48-detbox table{width:100%;border-collapse:collapse;font-size:11.5px}
+#rpt-produits .a48-detbox th{padding:5px 6px;text-align:left;color:var(--text3);font-weight:700;border-bottom:1px solid var(--border);white-space:nowrap}
+#rpt-produits .a48-detbox td{padding:5px 6px;border-bottom:1px dashed var(--border)}
+#rpt-produits .a48-src{display:inline-block;padding:1px 7px;border-radius:8px;font-size:10.5px;font-weight:700;
+  background:var(--green-bg,#eaf5ef);color:var(--green)}
+#rpt-produits .a48-src.f{background:var(--blue-bg,#eff6ff);color:var(--blue)}
+#rpt-produits .a48-note{font-size:11.5px;color:var(--text3);margin-top:8px}
+#rpt-produits .a48-mob{display:none}
+@media (max-width:640px){
+  #rpt-produits .a48-mob-x{display:none}
+  #rpt-produits .a48-mob{display:inline}
+  #rpt-produits > #a48-contenu > .card{padding:14px 8px}
+  #rpt-produits table.a48-t td.n{font-size:11.5px}
+  #rpt-produits table.a48-t,#rpt-produits .a48-detbox table{min-width:0 !important}
+  #rpt-produits table.a48-t{font-size:12px}
+  #rpt-produits table.a48-t th{white-space:normal;font-size:10.5px;line-height:1.25}
+  #rpt-produits table.a48-t th,#rpt-produits table.a48-t td{padding:7px 4px}
+  #rpt-produits .a48-detbox{margin:0 4px;padding:6px}
+  #rpt-produits .a48-barre > div{flex:1 1 44%}
+  #rpt-produits .a48-barre .a48-in{width:100%}
+  #rpt-produits .a48-detbox .a48-mob-x{display:none}
+}
+</style>
+<script>
+(function(){
+'use strict';
+if(window.AGV_48) return;
+var API = window.AGV_48 = { actif: true, version: '1.0' };
+
+/* ============================================================
+   OUTILS
+   ============================================================ */
+function nb(v){ var n = parseFloat(v); return isFinite(n) ? n : 0; }
+function vide(v){ return v === undefined || v === null || v === ''; }
+function tab(v){
+  if(!v) return [];
+  if(Array.isArray(v)) return v.filter(Boolean);
+  try{ return Object.keys(v).map(function(k){ return v[k]; }).filter(Boolean); }catch(e){ return []; }
+}
+function brut(nom){
+  try{
+    switch(nom){
+      case 'ventes': return ventes;
+      case 'factureVentes': return factureVentes;
+      case 'products': return products;
+    }
+  }catch(e){}
+  return window[nom];
+}
+function les(nom){ return tab(brut(nom)); }
+function norm(t){
+  var s = String(t == null ? '' : t).toLowerCase().trim();
+  try{ s = s.normalize('NFD').replace(/[̀-ͯ]/g, ''); }catch(e){}
+  return s.replace(/œ/g, 'oe').replace(/\s+/g, ' ');
+}
+function esc(v){
+  if(v === null || v === undefined) return '';
+  return String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+                  .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+function argent(n){
+  n = Math.round(nb(n));
+  try{ if(typeof window.fmtGNF === 'function') return window.fmtGNF(n); }catch(e){}
+  return n.toLocaleString('fr-FR') + ' GNF';
+}
+function qte(n){
+  n = nb(n);
+  return n.toLocaleString('fr-FR', { maximumFractionDigits: 2 });
+}
+function toast(t){ try{ if(typeof window.showToast === 'function') window.showToast(t); }catch(e){} }
+function pad(n){ return (n < 10 ? '0' : '') + n; }
+
+/* une date (horodatage, ISO ou « AAAA-MM-JJ ») en millisecondes ; 0 si illisible */
+function ms(v){
+  if(vide(v)) return 0;
+  if(typeof v === 'number') return v > 1e11 ? v : 0;
+  var s = String(v).trim();
+  if(/^\d{12,}$/.test(s)) return Number(s);
+  var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  if(m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 12, 0, 0).getTime();
+  var d = new Date(s).getTime();
+  return isNaN(d) ? 0 : d;
+}
+function cleJour(t){ var d = new Date(t); return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); }
+function aujourdhui(){ return cleJour(Date.now()); }
+function jourFr(t){ return t ? new Date(t).toLocaleDateString('fr-FR') : '—'; }
+function jourHeureFr(t){
+  if(!t) return '—';
+  var d = new Date(t);
+  var h = d.getHours(), mi = d.getMinutes();
+  return d.toLocaleDateString('fr-FR') + ((h === 12 && mi === 0) || (h === 0 && mi === 0) ? '' : ' ' + pad(h) + ':' + pad(mi));
+}
+var MOIS = ['Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
+
+/* ============================================================
+   1. LES DONNEES : chaque ligne vendue, une seule fois
+   ============================================================ */
+function indexProduits(){
+  var parRef = {}, parNom = {}, liste = les('products');
+  liste.forEach(function(p){
+    if(!vide(p.reference)) parRef[String(p.reference)] = p;
+    if(p.designation) parNom[norm(p.designation)] = p;
+  });
+  return { liste: liste, parRef: parRef, parNom: parNom };
+}
+function produitDe(IP, ref, nom){
+  if(!vide(ref) && IP.parRef[String(ref)]) return IP.parRef[String(ref)];
+  if(nom && IP.parNom[norm(nom)]) return IP.parNom[norm(nom)];
+  if(nom && IP.parRef[String(nom).trim()]) return IP.parRef[String(nom).trim()];
+  return null;
+}
+function cleProduit(p){
+  if(!vide(p.reference)) return 'r:' + p.reference;
+  if(!vide(p.id)) return 'i:' + p.id;
+  return 'n:' + norm(p.designation);
+}
+/* prix d'achat en vigueur a la date d'une facture (historique du module v30) */
+function achatAu(p, t){
+  if(!p) return 0;
+  var h = tab(p.histPrix).slice().sort(function(a, b){ return ms(a.ts) - ms(b.ts); });
+  if(!h.length) return nb(p.prix_achat);
+  if(t && t < ms(h[0].ts)) return nb(h[0].achatAvant);
+  var v = h[0];
+  h.forEach(function(x){ if(!t || ms(x.ts) <= t) v = x; });
+  return nb(v.achat);
+}
+
+function lignesVendues(avecFactures){
+  var IP = indexProduits(), out = [];
+  var facturesDeVentes = {};
+  les('ventes').forEach(function(v, i){
+    if(!vide(v.factureId)) facturesDeVentes[String(v.factureId)] = true;
+    if(v.type === 'entree') return;
+    var nom = String(v.name || v.produit || v.product || v.designation || '').trim();
+    var ref = !vide(v.ref) ? v.ref : v.reference;
+    if(ref === '—') ref = '';
+    var q = nb(v.qty) || nb(v.qte) || 1;                       /* meme regle que les rapports */
+    var pu = nb(v.prixU || v.prix_unitaire || v.prix);
+    var ca = nb(v.total);
+    if(!ca && pu) ca = q * pu;
+    var ben = !vide(v.benefice) ? nb(v.benefice)
+            : (!vide(v.prixAchat) ? q * ((pu || ca / q) - nb(v.prixAchat)) : 0);
+    var p = produitDe(IP, ref, nom);
+    out.push({
+      t: ms(v.ts) || ms(v.date), p: p,
+      nom: p ? (p.designation || nom) : (nom || '(produit sans nom)'),
+      ref: p ? (p.reference || '') : (ref || ''),
+      cat: String(v.categorie || (p && p.categorie) || '').trim(),
+      cle: p ? cleProduit(p) : 'n:' + norm(nom),
+      q: q, ca: ca, ben: ben,
+      vendeur: String(v.gerant || '').trim() || '—',
+      client: v.clientNom || '',
+      op: !vide(v.factureId) ? 'f:' + v.factureId : 'v:' + (!vide(v.id) ? v.id : 'i' + i),
+      src: 'vente', piece: ''
+    });
+  });
+  if(!avecFactures) return out;
+
+  var vus = {};
+  les('factureVentes').forEach(function(f){
+    if(vus[String(f.id)]) return;
+    vus[String(f.id)] = true;
+    if(f.nature === 'fonds') return;                                   /* pret de fonds */
+    if(!vide(f.doublonDe)) return;                                     /* doublon */
+    if(!vide(f.venteId)) return;                                       /* engendree par une vente */
+    if(/^V/.test(String(f.id || '')) || f.origine === 'vente') return;
+    if(facturesDeVentes[String(f.id)]) return;                         /* deja dans les ventes */
+    var t = ms(f.dateOp) || ms(f.date) || ms(f.createdAt);
+    tab(f.lignes).forEach(function(l){
+      var nom = String(l.produit || l.designation || l.name || '').trim();
+      if(!nom) return;
+      var q = nb(!vide(l.qte) ? l.qte : l.qty);
+      var pu = nb(l.prixU || l.prix || l.prix_unitaire);
+      var ca = nb(l.total) || q * pu;
+      if(!q && ca && pu) q = ca / pu;
+      if(!q && !ca) return;
+      var p = produitDe(IP, l.ref, nom);
+      var ben = !vide(l.benefice) ? nb(l.benefice) : (p ? ca - q * achatAu(p, t) : 0);
+      out.push({
+        t: t, p: p,
+        nom: p ? (p.designation || nom) : nom,
+        ref: p ? (p.reference || '') : (l.ref && l.ref !== '—' ? l.ref : ''),
+        cat: String(l.categorie || (p && p.categorie) || '').trim(),
+        cle: p ? cleProduit(p) : 'n:' + norm(nom),
+        q: q, ca: ca, ben: ben,
+        vendeur: String(f.vendeur || f.gerant || '').trim() || '—',
+        client: f.clientNom || f.acheteurNom || '',
+        op: 'f:' + f.id,
+        src: 'facture', piece: f.numero || f.no || ''
+      });
+    });
+  });
+  return out;
+}
+
+/* ============================================================
+   2. LA PERIODE, LES FILTRES, LE REGROUPEMENT PAR PRODUIT
+   ============================================================ */
+var maintenant = new Date();
+var S = {
+  mode: 'mois',                                  /* jour | mois | annee | periode | tout */
+  jour: aujourdhui(),
+  an: maintenant.getFullYear(),
+  mois: maintenant.getMonth() + 1,
+  du: '', au: '',
+  cat: '', vendeur: '', tri: 'n', recherche: '',
+  factures: true, nonVendus: false,
+  ouverts: {}
+};
+
+function bornesPeriode(){
+  if(S.mode === 'periode'){
+    var a = S.du ? new Date(S.du + 'T00:00:00').getTime() : -Infinity;
+    var b = S.au ? new Date(S.au + 'T23:59:59.999').getTime() : Infinity;
+    if(a > b){ var x = a; a = b; b = x; }
+    return [a, b];
+  }
+  return null;
+}
+function dansPeriode(t){
+  if(S.mode === 'tout') return true;
+  if(!t) return false;
+  var d = new Date(t);
+  if(S.mode === 'jour') return cleJour(t) === S.jour;
+  if(S.mode === 'mois') return d.getFullYear() === Number(S.an) && (d.getMonth() + 1) === Number(S.mois);
+  if(S.mode === 'annee') return d.getFullYear() === Number(S.an);
+  var B = bornesPeriode();
+  return t >= B[0] && t <= B[1];
+}
+function libellePeriode(){
+  if(S.mode === 'jour'){
+    var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(S.jour || '');
+    if(!m) return 'Jour';
+    var d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 12);
+    var t = d.toLocaleDateString('fr-FR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+    return t.charAt(0).toUpperCase() + t.slice(1);
+  }
+  if(S.mode === 'mois') return MOIS[Number(S.mois) - 1] + ' ' + S.an;
+  if(S.mode === 'annee') return 'Année ' + S.an;
+  if(S.mode === 'tout') return 'Tout l\'historique';
+  var du = S.du ? new Date(S.du + 'T12:00:00').toLocaleDateString('fr-FR') : '…';
+  var au = S.au ? new Date(S.au + 'T12:00:00').toLocaleDateString('fr-FR') : '…';
+  if(!S.du && !S.au) return 'Toutes dates';
+  return 'Du ' + du + ' au ' + au;
+}
+
+function calculer(){
+  var toutes = lignesVendues(S.factures);
+  var periode = toutes.filter(function(l){ return dansPeriode(l.t); });
+
+  /* listes des filtres, a partir de la periode (et du catalogue pour les categories) */
+  var cats = {}, vendeurs = {};
+  les('products').forEach(function(p){ var c = String(p.categorie || '').trim(); if(c) cats[c] = true; });
+  periode.forEach(function(l){ if(l.cat) cats[l.cat] = true; if(l.vendeur) vendeurs[l.vendeur] = true; });
+
+  var nc = norm(S.cat);
+  var retenues = periode.filter(function(l){
+    if(S.cat && norm(l.cat) !== nc) return false;
+    if(S.vendeur && l.vendeur !== S.vendeur) return false;
+    return true;
+  });
+
+  var m = {};
+  retenues.forEach(function(l){
+    var x = m[l.cle];
+    if(!x){
+      x = m[l.cle] = { cle: l.cle, nom: l.nom, ref: l.ref, cat: l.cat || (l.p && l.p.categorie) || '',
+                       p: l.p, ops: {}, n: 0, nFact: 0, q: 0, ca: 0, ben: 0, dern: 0, lignes: [] };
+    }
+    if(!x.ops[l.op]){ x.ops[l.op] = true; x.n++; if(l.src === 'facture') x.nFact++; }
+    x.q += l.q; x.ca += l.ca; x.ben += l.ben;
+    if(l.t > x.dern) x.dern = l.t;
+    if(!x.cat && l.cat) x.cat = l.cat;
+    x.lignes.push(l);
+  });
+
+  /* produits du catalogue non vendus sur la periode */
+  if(S.nonVendus){
+    les('products').forEach(function(p){
+      var k = cleProduit(p);
+      if(m[k]) return;
+      if(S.cat && norm(p.categorie) !== nc) return;
+      m[k] = { cle: k, nom: p.designation || '(sans nom)', ref: p.reference || '', cat: p.categorie || '', p: p,
+               ops: {}, n: 0, nFact: 0, q: 0, ca: 0, ben: 0, dern: 0, lignes: [], zero: true };
+    });
+  }
+
+  var rangs = Object.keys(m).map(function(k){ return m[k]; });
+  var r = norm(S.recherche);
+  if(r){
+    rangs = rangs.filter(function(x){ return norm(x.nom).indexOf(r) >= 0 || norm(x.ref).indexOf(r) >= 0; });
+  }
+  var cmpNom = function(a, b){ return String(a.nom).localeCompare(String(b.nom), 'fr', { sensitivity: 'base' }); };
+  var tri = {
+    n:   function(a, b){ return b.n - a.n || b.q - a.q || b.ca - a.ca || cmpNom(a, b); },
+    q:   function(a, b){ return b.q - a.q || b.n - a.n || cmpNom(a, b); },
+    ca:  function(a, b){ return b.ca - a.ca || b.n - a.n || cmpNom(a, b); },
+    ben: function(a, b){ return b.ben - a.ben || b.ca - a.ca || cmpNom(a, b); },
+    nom: cmpNom
+  }[S.tri] || null;
+  rangs.sort(tri || function(a, b){ return b.n - a.n; });
+
+  var T = { produits: 0, n: 0, nFact: 0, q: 0, ca: 0, ben: 0 };
+  rangs.forEach(function(x){
+    if(x.n > 0) T.produits++;
+    T.n += x.n; T.nFact += x.nFact; T.q += x.q; T.ca += x.ca; T.ben += x.ben;
+  });
+  return {
+    rangs: rangs, total: T,
+    categories: Object.keys(cats).sort(function(a, b){ return a.localeCompare(b, 'fr', { sensitivity: 'base' }); }),
+    vendeurs: Object.keys(vendeurs).sort(function(a, b){ return a.localeCompare(b, 'fr', { sensitivity: 'base' }); }),
+    catalogue: les('products').length
+  };
+}
+
+/* ============================================================
+   3. L'ONGLET « PAR PRODUIT »
+   ============================================================ */
+function el(id){ return document.getElementById(id); }
+
+function htmlPanneau(){
+  var ans = '';
+  for(var y = 2040; y >= 2020; y--) ans += '<option value="' + y + '">' + y + '</option>';
+  var mois = MOIS.map(function(n, i){ return '<option value="' + (i + 1) + '">' + n + '</option>'; }).join('');
+  return ''
+    + '<div class="a48-barre">'
+      + '<div><label class="form-label">Période</label><select id="a48-mode" class="a48-in">'
+        + '<option value="jour">Jour</option><option value="mois">Mois</option><option value="annee">Année</option>'
+        + '<option value="periode">Du … au …</option><option value="tout">Tout l\'historique</option></select></div>'
+      + '<div class="a48-p a48-p-jour"><label class="form-label">Date</label><input type="date" id="a48-jour" class="a48-in"></div>'
+      + '<div class="a48-p a48-p-mois a48-p-annee"><label class="form-label">Année</label><select id="a48-an" class="a48-in">' + ans + '</select></div>'
+      + '<div class="a48-p a48-p-mois"><label class="form-label">Mois</label><select id="a48-mois" class="a48-in">' + mois + '</select></div>'
+      + '<div class="a48-p a48-p-periode"><label class="form-label">Du</label><input type="date" id="a48-du" class="a48-in"></div>'
+      + '<div class="a48-p a48-p-periode"><label class="form-label">Au</label><input type="date" id="a48-au" class="a48-in"></div>'
+      + '<div><label class="form-label">Catégorie</label><select id="a48-cat" class="a48-in"><option value="">Toutes</option></select></div>'
+      + '<div><label class="form-label">Vendeur</label><select id="a48-vendeur" class="a48-in"><option value="">Tous</option></select></div>'
+      + '<div><label class="form-label">Trier par</label><select id="a48-tri" class="a48-in">'
+        + '<option value="n">Nombre de ventes</option><option value="q">Quantité vendue</option>'
+        + '<option value="ca">Chiffre d\'affaires</option><option value="ben">Bénéfice</option>'
+        + '<option value="nom">Nom (A → Z)</option></select></div>'
+      + '<button type="button" id="a48-pdf" class="btn-print" style="margin-bottom:1px">🖨️ PDF A4</button>'
+      + '<button type="button" id="a48-csv" class="btn-print" style="margin-bottom:1px">⬇️ CSV</button>'
+    + '</div>'
+    + '<div class="a48-barre2">'
+      + '<input type="search" id="a48-recherche" class="a48-in a48-rech" placeholder="🔍 Rechercher un produit (nom ou référence)…" autocomplete="off">'
+      + '<label class="a48-opt"><input type="checkbox" id="a48-factures"> Compter aussi les factures faites directement (Clients &amp; Factures)</label>'
+      + '<label class="a48-opt"><input type="checkbox" id="a48-nonvendus"> Afficher aussi les produits non vendus</label>'
+    + '</div>'
+    + '<div class="stats" id="a48-stats" style="margin-bottom:16px"></div>'
+    + '<div id="a48-contenu"></div>';
+}
+
+function poserControles(){
+  if(el('a48-mode')) el('a48-mode').value = S.mode;
+  if(el('a48-jour')) el('a48-jour').value = S.jour || '';
+  if(el('a48-an')) el('a48-an').value = String(S.an);
+  if(el('a48-mois')) el('a48-mois').value = String(Number(S.mois));
+  if(el('a48-du')) el('a48-du').value = S.du || '';
+  if(el('a48-au')) el('a48-au').value = S.au || '';
+  if(el('a48-tri')) el('a48-tri').value = S.tri;
+  if(el('a48-recherche') && el('a48-recherche').value !== S.recherche) el('a48-recherche').value = S.recherche;
+  if(el('a48-factures')) el('a48-factures').checked = !!S.factures;
+  if(el('a48-nonvendus')) el('a48-nonvendus').checked = !!S.nonVendus;
+  var zone = el('rpt-produits');
+  if(zone){
+    Array.prototype.forEach.call(zone.querySelectorAll('.a48-p'), function(d){
+      d.style.display = d.classList.contains('a48-p-' + S.mode) ? '' : 'none';
+    });
+  }
+}
+function remplirSelect(id, valeurs, choisi, libelleTous){
+  var s = el(id);
+  if(!s) return;
+  var l = valeurs.slice();
+  if(choisi && l.indexOf(choisi) < 0) l.unshift(choisi);
+  var h = '<option value="">' + libelleTous + '</option>'
+        + l.map(function(v){ return '<option value="' + esc(v) + '">' + esc(v) + '</option>'; }).join('');
+  if(s.__a48 !== h){ s.innerHTML = h; s.__a48 = h; }
+  s.value = choisi || '';
+}
+
+var derniers = { rangs: [] };
+function rendre(){
+  if(!API.actif) return;
+  var zone = el('rpt-produits');
+  if(!zone) return;
+  poserControles();
+  var R = calculer();
+  derniers = R;
+  remplirSelect('a48-cat', R.categories, S.cat, 'Toutes');
+  remplirSelect('a48-vendeur', R.vendeurs, S.vendeur, 'Tous');
+
+  var T = R.total;
+  var st = el('a48-stats');
+  if(st){
+    st.innerHTML = ''
+      + '<div class="stat"><div class="stat-label"><div class="dot blue"></div>Produits vendus</div>'
+        + '<div class="stat-val blue">' + T.produits + '</div>'
+        + '<div class="stat-sub">sur ' + R.catalogue + ' au catalogue</div></div>'
+      + '<div class="stat"><div class="stat-label"><div class="dot purple"></div>Nombre de ventes</div>'
+        + '<div class="stat-val purple">' + T.n.toLocaleString('fr-FR') + '</div>'
+        + '<div class="stat-sub">' + (T.nFact ? 'dont ' + T.nFact + ' par facture directe' : esc(libellePeriode())) + '</div></div>'
+      + '<div class="stat"><div class="stat-label"><div class="dot amber"></div>Quantité vendue</div>'
+        + '<div class="stat-val">' + qte(T.q) + '</div><div class="stat-sub">unités</div></div>'
+      + '<div class="stat"><div class="stat-label"><div class="dot green"></div>Chiffre d\'affaires</div>'
+        + '<div class="stat-val green">' + argent(T.ca) + '</div>'
+        + '<div class="stat-sub">Bénéfice : ' + argent(T.ben) + '</div></div>';
+  }
+
+  var c = el('a48-contenu');
+  if(!c) return;
+  var filtres = [];
+  if(S.cat) filtres.push('catégorie « ' + esc(S.cat) + ' »');
+  if(S.vendeur) filtres.push('vendeur « ' + esc(S.vendeur) + ' »');
+  if(S.recherche) filtres.push('recherche « ' + esc(S.recherche) + ' »');
+  var titre = '<h3 style="font-size:13px;font-weight:700;margin-bottom:10px">🏷️ Ventes par produit — ' + esc(libellePeriode())
+    + (filtres.length ? ' <span style="font-weight:500;color:var(--text3)">(' + filtres.join(', ') + ')</span>' : '') + '</h3>';
+
+  if(!R.rangs.length){
+    c.innerHTML = '<div class="card">' + titre + '<div class="empty"><div class="empty-icon">🏷️</div>'
+      + '<div class="empty-text">Aucune vente de produit sur cette période</div></div></div>';
+    return;
+  }
+
+  var maxCa = 0;
+  R.rangs.forEach(function(x){ if(x.ca > maxCa) maxCa = x.ca; });
+  var h = '<div class="card">' + titre + '<div class="a48-tw"><table class="a48-t"><thead><tr>'
+    + '<th class="c">#</th><th>Produit</th>'
+    + '<th class="c"><span class="a48-mob-x">Nb de ventes</span><span class="a48-mob">Ventes</span></th>'
+    + '<th class="n"><span class="a48-mob-x">Qté vendue</span><span class="a48-mob">Qté</span></th>'
+    + '<th class="n a48-mob-x">Prix moyen</th>'
+    + '<th class="n"><span class="a48-mob-x">Chiffre d\'affaires</span><span class="a48-mob">CA</span></th>'
+    + '<th class="a48-mob-x" style="min-width:90px">Part du CA</th><th class="a48-mob-x">Dernière vente</th>'
+    + '</tr></thead><tbody>';
+  R.rangs.forEach(function(x, i){
+    var ouvert = !!S.ouverts[x.cle] && x.lignes.length > 0;
+    var part = T.ca > 0 ? x.ca / T.ca * 100 : 0;
+    var larg = maxCa > 0 ? Math.round(x.ca / maxCa * 100) : 0;
+    var sub = [];
+    if(x.ref) sub.push(esc(x.ref));
+    if(x.cat) sub.push(esc(x.cat));
+    h += '<tr class="a48-r' + (ouvert ? ' ouvert' : '') + (x.n ? '' : ' a48-zero') + '" data-i="' + i + '"'
+      + (x.lignes.length ? ' title="Voir le détail des ventes"' : '') + '>'
+      + '<td class="c" style="color:var(--text3);font-weight:700">' + (i + 1) + '</td>'
+      + '<td><div class="a48-nom">' + (x.lignes.length ? (ouvert ? '▾ ' : '▸ ') : '') + esc(x.nom) + '</div>'
+        + (sub.length ? '<div class="a48-sub">' + sub.join(' · ') + '</div>' : '') + '</td>'
+      + '<td class="c"><span class="a48-nb">' + x.n + '</span>'
+        + (x.nFact ? '<div class="a48-sub">dont ' + x.nFact + ' fact.</div>' : '') + '</td>'
+      + '<td class="n" style="font-weight:700">' + qte(x.q) + '</td>'
+      + '<td class="n a48-mob-x">' + (x.q ? argent(x.ca / x.q) : '—') + '</td>'
+      + '<td class="n"><div style="font-weight:700;color:var(--green)">' + argent(x.ca) + '</div>'
+        + '<div class="a48-sub" style="color:var(--purple,#6d28d9)">bén. ' + argent(x.ben) + '</div></td>'
+      + '<td class="a48-mob-x"><div class="a48-bar"><div style="width:' + larg + '%"></div></div>'
+        + '<div class="a48-sub">' + part.toLocaleString('fr-FR', { maximumFractionDigits: 1 }) + ' %</div></td>'
+      + '<td class="a48-mob-x" style="white-space:nowrap;font-size:11.5px;color:var(--text2)">' + jourFr(x.dern) + '</td>'
+      + '</tr>';
+    if(ouvert) h += '<tr class="a48-det"><td colspan="8">' + htmlDetail(x) + '</td></tr>';
+  });
+  h += '<tr class="a48-tot"><td></td><td>TOTAL — ' + T.produits + ' produit(s)</td>'
+    + '<td class="c">' + T.n.toLocaleString('fr-FR') + '</td><td class="n">' + qte(T.q) + '</td>'
+    + '<td class="n a48-mob-x">' + (T.q ? argent(T.ca / T.q) : '—') + '</td>'
+    + '<td class="n"><div style="color:var(--green)">' + argent(T.ca) + '</div>'
+      + '<div class="a48-sub" style="color:var(--purple,#6d28d9)">bén. ' + argent(T.ben) + '</div></td>'
+    + '<td class="a48-mob-x"></td><td class="a48-mob-x"></td></tr>';
+  h += '</tbody></table></div>'
+    + '<div class="a48-note">« Nb de ventes » = nombre de fois où le produit a été vendu (une vente ou une facture compte une fois). '
+    + 'Touchez un produit pour voir chacune de ses ventes.'
+    + (S.factures ? '' : ' Les factures faites directement depuis Clients &amp; Factures ne sont pas comptées.') + '</div></div>';
+  c.innerHTML = h;
+}
+
+function htmlDetail(x){
+  var l = x.lignes.slice().sort(function(a, b){ return b.t - a.t; });
+  var max = 300, plus = l.length > max ? l.length - max : 0;
+  if(plus) l = l.slice(0, max);
+  var h = '<div class="a48-detbox"><table><thead><tr><th>Date</th><th class="n" style="text-align:right">Qté</th>'
+    + '<th style="text-align:right" class="a48-mob-x">Prix U.</th><th style="text-align:right">Total</th>'
+    + '<th>Vendeur</th><th class="a48-mob-x">Origine</th></tr></thead><tbody>';
+  l.forEach(function(v){
+    var pu = v.q ? v.ca / v.q : 0;
+    h += '<tr><td style="white-space:nowrap">' + jourHeureFr(v.t) + '</td>'
+      + '<td style="text-align:right;font-weight:700">' + qte(v.q) + '</td>'
+      + '<td style="text-align:right;white-space:nowrap" class="a48-mob-x">' + argent(pu) + '</td>'
+      + '<td style="text-align:right;white-space:nowrap;font-weight:700;color:var(--green)">' + argent(v.ca) + '</td>'
+      + '<td style="font-size:11px;color:var(--text2)">' + esc(v.vendeur) + (v.client ? '<div class="a48-sub">' + esc(v.client) + '</div>' : '') + '</td>'
+      + '<td class="a48-mob-x">' + (v.src === 'facture'
+          ? '<span class="a48-src f">Facture' + (v.piece ? ' ' + esc(v.piece) : '') + '</span>'
+          : '<span class="a48-src">Vente</span>') + '</td></tr>';
+  });
+  h += '</tbody></table>' + (plus ? '<div class="a48-note">… et ' + plus + ' vente(s) plus ancienne(s).</div>' : '') + '</div>';
+  return h;
+}
+
+/* ============================================================
+   4. IMPRESSION PDF A4 ET EXPORT CSV
+   ============================================================ */
+function imprimer(){
+  var R = calculer();
+  var T = R.total;
+  var shop = window._currentShop || {};
+  var shopNom = shop.entreprise || shop.nom || 'Ma Boutique';
+  var now = new Date();
+  var dateStr = now.toLocaleDateString('fr-FR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+  var timeStr = now.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+  var css = [
+    '@page{size:A4 portrait;margin:15mm 12mm}',
+    '*{margin:0;padding:0;box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact}',
+    'body{font-family:Arial,Helvetica,sans-serif;font-size:11px;color:#111;background:#fff;line-height:1.4}',
+    '.pdf-header{display:flex;justify-content:space-between;align-items:flex-start;padding-bottom:10px;border-bottom:2px solid #1e3a5f;margin-bottom:14px}',
+    '.pdf-logo{width:48px;height:48px;object-fit:contain;border-radius:6px}',
+    '.pdf-shop{flex:1;padding:0 12px}.pdf-shop-name{font-size:16px;font-weight:700;color:#1e3a5f}',
+    '.pdf-shop-sub{font-size:10px;color:#666;margin-top:2px}',
+    '.pdf-meta{text-align:right;font-size:10px;color:#666}',
+    '.pdf-title{font-size:14px;font-weight:700;color:#1e3a5f;margin:12px 0 6px;padding-bottom:6px;border-bottom:1px solid #e0e0e0;text-transform:uppercase;letter-spacing:.05em}',
+    '.pdf-filtres{font-size:10px;color:#555;margin-bottom:10px}',
+    '.pdf-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:14px}',
+    '.pdf-stat{background:#f5f7fa;border:1px solid #e0e6ef;border-radius:6px;padding:8px 10px;text-align:center}',
+    '.pdf-stat-label{font-size:9px;color:#666;text-transform:uppercase;letter-spacing:.04em;margin-bottom:3px}',
+    '.pdf-stat-val{font-size:13px;font-weight:700;color:#1e3a5f}',
+    '.pdf-stat-val.green{color:#16a34a}.pdf-stat-val.purple{color:#7c3aed}',
+    'table{width:100%;border-collapse:collapse;font-size:10px;margin-bottom:14px}',
+    'thead th{background:#1e3a5f;color:#fff;padding:6px 6px;text-align:left;font-size:9px;text-transform:uppercase;letter-spacing:.04em}',
+    'thead th.right{text-align:right}thead th.center{text-align:center}',
+    'tbody td{padding:5px 6px;border-bottom:1px solid #ececec}',
+    'tbody tr:nth-child(even){background:#f9f9f9}',
+    'tbody tr.total,tbody tr.total:nth-child(even){background:#1e3a5f!important;color:#fff!important;font-weight:700}',
+    'tbody tr.total td{color:#fff!important}',
+    'tr{page-break-inside:avoid}',
+    '.pdf-note{font-size:9px;color:#666;margin-top:-6px;margin-bottom:10px}',
+    '.pdf-footer{margin-top:20px;padding-top:8px;border-top:1px solid #e0e0e0;font-size:9px;color:#999;text-align:center}'
+  ].join('');
+  var logo = shop.logo ? '<img class="pdf-logo" src="' + shop.logo + '">'
+    : '<div style="width:48px;height:48px;background:#1e3a5f;border-radius:6px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:20px;font-weight:700">'
+      + esc(shopNom.charAt(0)) + '</div>';
+  var body = '<div class="pdf-header"><div>' + logo + '</div>'
+    + '<div class="pdf-shop"><div class="pdf-shop-name">' + esc(shopNom) + '</div>'
+    + (shop.adresse ? '<div class="pdf-shop-sub">📍 ' + esc(shop.adresse) + '</div>' : '')
+    + (shop.tel ? '<div class="pdf-shop-sub">📞 ' + esc(shop.tel) + '</div>' : '') + '</div>'
+    + '<div class="pdf-meta"><div style="font-weight:700;font-size:11px;color:#1e3a5f">VENTES PAR PRODUIT</div>'
+    + '<div>' + dateStr + '</div><div>' + timeStr + '</div></div></div>';
+  body += '<div class="pdf-title">🏷️ Ventes par produit — ' + esc(libellePeriode()) + '</div>';
+  var f = [];
+  f.push('Catégorie : ' + (S.cat ? esc(S.cat) : 'toutes'));
+  f.push('Vendeur : ' + (S.vendeur ? esc(S.vendeur) : 'tous'));
+  if(S.recherche) f.push('Recherche : « ' + esc(S.recherche) + ' »');
+  f.push(S.factures ? 'Ventes + factures directes' : 'Ventes seulement');
+  f.push('Tri : ' + ({ n: 'nombre de ventes', q: 'quantité', ca: 'chiffre d\'affaires', ben: 'bénéfice', nom: 'nom' }[S.tri] || ''));
+  body += '<div class="pdf-filtres">' + f.join(' &nbsp;·&nbsp; ') + '</div>';
+  body += '<div class="pdf-stats">'
+    + '<div class="pdf-stat"><div class="pdf-stat-label">Produits vendus</div><div class="pdf-stat-val">' + T.produits + '</div></div>'
+    + '<div class="pdf-stat"><div class="pdf-stat-label">Nombre de ventes</div><div class="pdf-stat-val purple">' + T.n.toLocaleString('fr-FR') + '</div></div>'
+    + '<div class="pdf-stat"><div class="pdf-stat-label">Quantité vendue</div><div class="pdf-stat-val">' + qte(T.q) + '</div></div>'
+    + '<div class="pdf-stat"><div class="pdf-stat-label">Chiffre d\'affaires</div><div class="pdf-stat-val green">' + argent(T.ca) + '</div></div>'
+    + '</div>';
+  if(!R.rangs.length){
+    body += '<div style="text-align:center;padding:30px;color:#999;font-style:italic">Aucune vente de produit sur cette période</div>';
+  }else{
+    body += '<table><thead><tr><th class="center">#</th><th>Produit</th><th>Catégorie</th><th class="center">Nb ventes</th>'
+      + '<th class="right">Qté</th><th class="right">Prix moyen</th><th class="right">Chiffre d\'affaires</th>'
+      + '<th class="right">Bénéfice</th><th class="right">Part</th><th>Dernière vente</th></tr></thead><tbody>';
+    R.rangs.forEach(function(x, i){
+      var part = T.ca > 0 ? x.ca / T.ca * 100 : 0;
+      body += '<tr' + (x.n ? '' : ' style="color:#999"') + '><td style="text-align:center">' + (i + 1) + '</td>'
+        + '<td style="font-weight:600">' + esc(x.nom) + (x.ref ? '<div style="font-size:8.5px;color:#888;font-weight:400">' + esc(x.ref) + '</div>' : '') + '</td>'
+        + '<td>' + esc(x.cat || '—') + '</td>'
+        + '<td style="text-align:center;font-weight:700">' + x.n + '</td>'
+        + '<td style="text-align:right;font-weight:700">' + qte(x.q) + '</td>'
+        + '<td style="text-align:right">' + (x.q ? argent(x.ca / x.q) : '—') + '</td>'
+        + '<td style="text-align:right;font-weight:700;color:#16a34a">' + argent(x.ca) + '</td>'
+        + '<td style="text-align:right;color:#7c3aed">' + argent(x.ben) + '</td>'
+        + '<td style="text-align:right">' + part.toLocaleString('fr-FR', { maximumFractionDigits: 1 }) + ' %</td>'
+        + '<td style="white-space:nowrap">' + jourFr(x.dern) + '</td></tr>';
+    });
+    body += '<tr class="total"><td></td><td colspan="2">TOTAL — ' + T.produits + ' produit(s)</td>'
+      + '<td style="text-align:center">' + T.n.toLocaleString('fr-FR') + '</td>'
+      + '<td style="text-align:right">' + qte(T.q) + '</td><td></td>'
+      + '<td style="text-align:right">' + argent(T.ca) + '</td>'
+      + '<td style="text-align:right">' + argent(T.ben) + '</td><td style="text-align:right">100 %</td><td></td></tr>';
+    body += '</tbody></table>';
+    body += '<div class="pdf-note">Nb ventes = nombre de fois où le produit a été vendu (une vente ou une facture compte une fois).'
+      + (T.nFact ? ' Dont ' + T.nFact + ' vente(s) par facture directe.' : '') + '</div>';
+  }
+  body += '<div class="pdf-footer">Document généré par App AGV — ' + esc(shopNom) + ' — ' + dateStr + ' à ' + timeStr + '</div>';
+  if(typeof window.agvBlobPrint === 'function'){
+    try{ window.agvBlobPrint(css, body, 'Ventes-par-produit'); }
+    catch(e){ console.warn('[AGV-48] impression', e); toast('Impression impossible : ' + (e && e.message ? e.message : 'erreur')); }
+  }else{
+    toast('Impression indisponible');
+  }
+}
+
+function exporterCSV(){
+  var R = calculer();
+  if(!R.rangs.length){ toast('Rien à exporter sur cette période'); return; }
+  function c(v){ var s = String(v == null ? '' : v); return /[";\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }
+  function n(v){ return String(Math.round(nb(v) * 100) / 100).replace('.', ','); }
+  var lignes = [['Rang','Produit','Reference','Categorie','Nombre de ventes','dont factures directes','Quantite vendue',
+                 'Prix moyen','Chiffre affaires','Benefice','Part du CA (%)','Derniere vente'].join(';')];
+  R.rangs.forEach(function(x, i){
+    lignes.push([i + 1, c(x.nom), c(x.ref), c(x.cat), x.n, x.nFact, n(x.q), n(x.q ? Math.round(x.ca / x.q) : 0),
+                 n(Math.round(x.ca)), n(Math.round(x.ben)),
+                 n(R.total.ca > 0 ? Math.round(x.ca / R.total.ca * 1000) / 10 : 0), x.dern ? jourFr(x.dern) : ''].join(';'));
+  });
+  lignes.push(['', 'TOTAL', '', '', R.total.n, R.total.nFact, n(R.total.q), '', n(Math.round(R.total.ca)), n(Math.round(R.total.ben)), '100', ''].join(';'));
+  var nom = 'ventes-par-produit-' + libellePeriode().replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').toLowerCase() + '.csv';
+  try{
+    var blob = new Blob(['﻿' + lignes.join('\r\n')], { type: 'text/csv;charset=utf-8' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = nom;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(function(){ try{ URL.revokeObjectURL(a.href); a.remove(); }catch(e){} }, 1500);
+  }catch(e){ console.warn('[AGV-48] CSV', e); toast('Export impossible'); }
+}
+
+/* ============================================================
+   5. MISE EN PLACE DANS LA VUE RAPPORTS (sans rien retirer)
+   ============================================================ */
+function styleOnglet(b, actif){
+  if(!b) return;
+  b.style.background = actif ? 'var(--accent)' : 'transparent';
+  b.style.color = actif ? '#fff' : 'var(--text3)';
+}
+function montrer(){
+  ['jour', 'mois', 'annuel'].forEach(function(t){
+    var z = el('rpt-' + t);
+    if(z) z.style.display = 'none';
+    styleOnglet(el('rpt-tab-' + t), false);
+  });
+  var p = el('rpt-produits');
+  if(p) p.style.display = '';
+  styleOnglet(el('rpt-tab-produits'), true);
+  rendre();
+}
+function cacher(){
+  var p = el('rpt-produits');
+  if(p) p.style.display = 'none';
+  styleOnglet(el('rpt-tab-produits'), false);
+}
+function visible(){
+  var p = el('rpt-produits');
+  return !!(p && p.style.display !== 'none' && p.offsetParent !== null);
+}
+
+/* ouvrir l'onglet sur une periode donnee (raccourcis des rapports existants) */
+function ouvrir(preset){
+  preset = preset || {};
+  ['mode', 'jour', 'an', 'mois', 'du', 'au'].forEach(function(k){ if(!vide(preset[k])) S[k] = preset[k]; });
+  /* venu d'un rapport : on repart de toute la boutique sur cette periode */
+  S.cat = ''; S.vendeur = ''; S.recherche = '';
+  S.ouverts = {};
+  if(typeof window.switchRapportTab === 'function') window.switchRapportTab('produits');
+  else montrer();
+}
+API.ouvrir = ouvrir;
+
+function brancherControles(){
+  function sur(id, ev, fn){ var e = el(id); if(e && !e['__a48' + ev]){ e['__a48' + ev] = true; e.addEventListener(ev, fn); } }
+  sur('a48-mode', 'change', function(){ S.mode = this.value; S.ouverts = {}; rendre(); });
+  sur('a48-jour', 'change', function(){ S.jour = this.value || aujourdhui(); S.ouverts = {}; rendre(); });
+  sur('a48-an', 'change', function(){ S.an = Number(this.value) || maintenant.getFullYear(); S.ouverts = {}; rendre(); });
+  sur('a48-mois', 'change', function(){ S.mois = Number(this.value) || 1; S.ouverts = {}; rendre(); });
+  sur('a48-du', 'change', function(){ S.du = this.value || ''; S.ouverts = {}; rendre(); });
+  sur('a48-au', 'change', function(){ S.au = this.value || ''; S.ouverts = {}; rendre(); });
+  sur('a48-cat', 'change', function(){ S.cat = this.value || ''; rendre(); });
+  sur('a48-vendeur', 'change', function(){ S.vendeur = this.value || ''; rendre(); });
+  sur('a48-tri', 'change', function(){ S.tri = this.value || 'n'; rendre(); });
+  sur('a48-factures', 'change', function(){ S.factures = !!this.checked; rendre(); });
+  sur('a48-nonvendus', 'change', function(){ S.nonVendus = !!this.checked; rendre(); });
+  var minuteur = null;
+  sur('a48-recherche', 'input', function(){
+    var v = this.value;
+    clearTimeout(minuteur);
+    minuteur = setTimeout(function(){ S.recherche = String(v || '').trim(); rendre(); }, 220);
+  });
+  sur('a48-pdf', 'click', function(){ imprimer(); });
+  sur('a48-csv', 'click', function(){ exporterCSV(); });
+  sur('a48-contenu', 'click', function(ev){
+    var tr = ev.target && ev.target.closest ? ev.target.closest('tr.a48-r') : null;
+    if(!tr) return;
+    var x = derniers.rangs[Number(tr.getAttribute('data-i'))];
+    if(!x || !x.lignes.length) return;
+    if(S.ouverts[x.cle]) delete S.ouverts[x.cle]; else S.ouverts[x.cle] = true;
+    rendre();
+  });
+}
+
+function boutonRaccourci(zoneId, id, preset){
+  var zone = document.querySelector('#' + zoneId + ' > div');
+  if(!zone || el(id)) return;
+  var b = document.createElement('button');
+  b.type = 'button';
+  b.id = id;
+  b.className = 'btn-print';
+  b.style.marginBottom = '1px';
+  b.textContent = '🏷️ Ventes par produit';
+  b.title = 'Nombre de ventes de chaque produit sur la même période';
+  b.addEventListener('click', function(){ ouvrir(preset()); });
+  zone.appendChild(b);
+}
+
+function installer(){
+  var vue = el('view-rapport');
+  var ongletAn = el('rpt-tab-annuel');
+  var zoneAn = el('rpt-annuel');
+  if(!vue || !ongletAn || !zoneAn || typeof window.switchRapportTab !== 'function') return false;
+
+  /* 1. le quatrieme onglet */
+  if(!el('rpt-tab-produits')){
+    var b = document.createElement('button');
+    b.id = 'rpt-tab-produits';
+    b.type = 'button';
+    b.setAttribute('style', ongletAn.getAttribute('style') || '');
+    styleOnglet(b, false);
+    b.textContent = '🏷️ Par produit';
+    b.addEventListener('click', function(){ window.switchRapportTab('produits'); });
+    ongletAn.parentNode.appendChild(b);
+  }
+  /* 2. son contenu, place apres le rapport annuel */
+  if(!el('rpt-produits')){
+    var d = document.createElement('div');
+    d.id = 'rpt-produits';
+    d.style.display = 'none';
+    d.innerHTML = htmlPanneau();
+    zoneAn.parentNode.insertBefore(d, zoneAn.nextSibling);
+  }
+  brancherControles();
+
+  /* 3. raccourcis dans les rapports existants (rien n'y est retire) */
+  boutonRaccourci('rpt-jour', 'a48-rac-jour', function(){
+    return { mode: 'jour', jour: (el('rpt-jour-date') || {}).value || aujourdhui() };
+  });
+  boutonRaccourci('rpt-mois', 'a48-rac-mois', function(){
+    return { mode: 'mois', an: Number((el('rpt-mois-year') || {}).value) || maintenant.getFullYear(),
+             mois: Number((el('rpt-mois-month') || {}).value) || (maintenant.getMonth() + 1) };
+  });
+  boutonRaccourci('rpt-annuel', 'a48-rac-annee', function(){
+    return { mode: 'annee', an: Number((el('rpt-annuel-year') || {}).value) || maintenant.getFullYear() };
+  });
+  var haut = document.querySelector('#view-rapport .topbar > div');
+  if(haut && !el('a48-top-pdf')){
+    var t = document.createElement('button');
+    t.type = 'button';
+    t.id = 'a48-top-pdf';
+    t.className = 'btn-print';
+    t.textContent = '🖨️ Produits PDF';
+    t.title = 'Ventes par produit — période choisie dans l\'onglet « Par produit »';
+    t.addEventListener('click', function(){ imprimer(); });
+    haut.appendChild(t);
+  }
+
+  /* 4. l'aiguillage des onglets : « produits » est traite ici, les trois
+        autres onglets passent par la fonction d'origine, inchangee */
+  if(!window.switchRapportTab.__agv48){
+    var origine = window.switchRapportTab;
+    var aiguillage = function(tabNom){
+      if(tabNom === 'produits' && API.actif){ montrer(); return; }
+      cacher();
+      return origine.apply(this, arguments);
+    };
+    aiguillage.__agv48 = true;
+    window.switchRapportTab = aiguillage;
+  }
+  poserControles();
+  return true;
+}
+
+(function poser(essai){
+  essai = essai || 0;
+  var ok = false;
+  try{ ok = installer(); }catch(e){ console.warn('[AGV-48] installation', e); }
+  if(!ok && essai < 60) setTimeout(function(){ poser(essai + 1); }, 250);
+})();
+
+/* l'onglet affiche suit les ventes qui arrivent (autre appareil, nouvelle vente),
+   sans jamais interrompre une saisie */
+var signature = '';
+function signatureDonnees(){
+  var v = les('ventes'), f = les('factureVentes'), s = 0;
+  v.forEach(function(x){ s += nb(x.total) + nb(x.qty || x.qte); });
+  f.forEach(function(x){ s += nb(x.totalLignes || x.total); });
+  return v.length + '|' + f.length + '|' + les('products').length + '|' + Math.round(s);
+}
+setInterval(function(){
+  try{
+    if(!API.actif || !visible()) return;
+    var sg = signatureDonnees();
+    if(sg === signature) return;
+    var a = document.activeElement;
+    if(a && el('rpt-produits').contains(a) && /^(INPUT|SELECT|TEXTAREA)$/.test(a.tagName)) return;
+    signature = sg;
+    rendre();
+  }catch(e){}
+}, 2500);
+
+/* ============================================================
+   6. CONSOLE
+   ============================================================ */
+API.rendre = rendre;
+API.imprimer = imprimer;
+API.csv = exporterCSV;
+API.reglages = S;
+API.calculer = calculer;
+API.produit = function(nom){
+  var n = norm(nom);
+  var R = calculer();
+  var x = R.rangs.filter(function(r){ return norm(r.nom).indexOf(n) >= 0 || norm(r.ref) === n; });
+  x.forEach(function(r){
+    console.log('[AGV-48] ' + r.nom + ' — ' + libellePeriode() + ' : ' + r.n + ' vente(s), quantité ' + qte(r.q)
+      + ', CA ' + argent(r.ca) + ', bénéfice ' + argent(r.ben));
+  });
+  return x;
+};
+API.etat = function(){
+  var R = calculer();
+  var o = {
+    actif: API.actif, version: API.version,
+    installe: !!el('rpt-produits'),
+    periode: libellePeriode(),
+    produitsVendus: R.total.produits,
+    nombreDeVentes: R.total.n,
+    dontFacturesDirectes: R.total.nFact,
+    quantite: R.total.q,
+    chiffreAffaires: Math.round(R.total.ca)
+  };
+  try{ console.log('[AGV-48]', o); }catch(e){}
+  return o;
+};
+try{ console.log('[AGV-48] module actif — v' + API.version); }catch(e){}
+
+})();
+</script>
+
 </body></html>
