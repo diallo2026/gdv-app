@@ -24791,6 +24791,9 @@ function creer(){
     return message('Remplissez tous les champs obligatoires (*)', false);
   if(email.indexOf('@') < 0) return message('Email invalide', false);
   if(fondCode.length < 3) return message('Le code fondateur doit faire au moins 3 caracteres', false);
+  /* [AGV-52] la creation d'une nouvelle boutique se fait obligatoirement en ligne */
+  if(navigator.onLine === false || (window.AGV_HORS_LIGNE && !window.AGV_HORS_LIGNE.enLigne()))
+    return message('Création impossible sans connexion Internet. La création d\'une nouvelle boutique se fait obligatoirement en ligne : connectez-vous puis réessayez. (Les boutiques déjà créées restent accessibles sans Internet.)', false);
 
   var d = DB();
   viderJournal();
@@ -40229,8 +40232,8 @@ window.agvStocks = function(){
 (function () {
   'use strict';
   var V = {
-    version: 'AGV-51',
-    date: '2026-11-25 06:00 UTC',
+    version: 'AGV-52',
+    date: '2026-11-25 08:00 UTC',
     modules: 27,
     corrections: [
       'empreinte : deux sels (agvc$ a l ecriture, agv$ a la verification)',
@@ -40275,7 +40278,8 @@ window.agvStocks = function(){
       'STOCK DISPONIBLE : liste imprimable des produits au-dessus de leur seuil d alerte',
       'PRODUITS DORMANTS : plus de 2 mois sans vente -> rappel peremption / sechage / etat',
       'PALMARES : meilleurs produits, clients et fournisseurs de chaque mois, graphiques imprimables',
-      'BASE LOCALE PERMANENTE (AGV-51) : IndexedDB par appareil, file d attente, synchro par enregistrement'
+      'BASE LOCALE PERMANENTE (AGV-51) : IndexedDB par appareil, file d attente, synchro par enregistrement',
+      'ACCES HORS LIGNE ENCADRE (AGV-52) : 2 jours hors ligne, mode hors ligne du concepteur sur un appareil, creation en ligne seulement'
     ]
   };
   window.AGV_VERSION = V;
@@ -40286,7 +40290,7 @@ window.agvStocks = function(){
   V.etat = function () {
     var noms = ['AGV_PERF', 'AGV_FACT', 'AGV_PORTAIL', 'AGV_DETTES', 'AGV_RESET',
                 'AGV_FORFAIT', 'AGV_STABLE', 'AGV_LIER', 'AGV_GERANTS', 'AGV_CONNEXION',
-                'AGV_COMPTES', 'AGV_ACCES', 'AGV_CHOIX', 'AGV_ECRAN', 'AGV_AUDIT', 'AGV_DEST', 'AGV_MDP', 'AGV_SIMPLE', 'AGV_TRACE', 'AGV_BOUTON', 'AGV_ROLE', 'AGV_STOCK', 'AGV_SESSION', 'AGV_LICENCE', 'AGV_FACTURE', 'AGV_SOLDE', 'AGV_PERSONNEL', 'AGV_PORTAIL_GERANT', 'AGV_39', 'AGV_40', 'AGV_BASE_LOCALE'];
+                'AGV_COMPTES', 'AGV_ACCES', 'AGV_CHOIX', 'AGV_ECRAN', 'AGV_AUDIT', 'AGV_DEST', 'AGV_MDP', 'AGV_SIMPLE', 'AGV_TRACE', 'AGV_BOUTON', 'AGV_ROLE', 'AGV_STOCK', 'AGV_SESSION', 'AGV_LICENCE', 'AGV_FACTURE', 'AGV_SOLDE', 'AGV_PERSONNEL', 'AGV_PORTAIL_GERANT', 'AGV_39', 'AGV_40', 'AGV_BASE_LOCALE', 'AGV_HORS_LIGNE'];
     var absents = noms.filter(function (n) { return typeof window[n] !== 'object'; });
     console.log('Version ' + V.version + ' — fichier du ' + V.date);
     console.log(absents.length ? 'MODULES ABSENTS : ' + absents.join(', ')
@@ -68041,16 +68045,19 @@ function changerConnexion(c){
   if (c === connecte) return;
   connecte = c;
   var n = totalEnAttente();
+  /* le module d'acces hors ligne (AGV-52), s'il est present, affiche ses propres messages */
+  var messagesAcces = !!window.AGV_HORS_LIGNE;
   if (!c){
-    if (uidCourant() && !etaitHorsLigne) toast('📵 Hors ligne — vos opérations sont enregistrées sur cet appareil.');
+    if (uidCourant() && !etaitHorsLigne && !messagesAcces) toast('📵 Hors ligne — vos opérations sont enregistrées sur cet appareil.');
     etaitHorsLigne = true;
   } else {
-    if (etaitHorsLigne && n) toast('🌐 Connexion rétablie — envoi de ' + n + ' opération(s)…');
+    if (etaitHorsLigne && n && !messagesAcces) toast('🌐 Connexion rétablie — envoi de ' + n + ' opération(s)…');
     etaitHorsLigne = false;
     Object.keys(BOUTIQUES).forEach(function(u){ var b = BOUTIQUES[u]; if (b.ops.length && uidCourant() === u) decouvrirRubriques(b); });
     planifierEnvoi(300);
   }
   majIndicateur();
+  try{ window.dispatchEvent(new CustomEvent('agv-base-locale-connexion', { detail: { connecte: c } })); }catch(e){}
 }
 
 /* ============================================================
@@ -68731,6 +68738,8 @@ function remplirPanneau(){
   h += ligne('Internet / serveur', connecte ? 'Connecté' : 'Hors ligne — travail sur la base locale', connecte ? '#22c55e' : '#f59e0b');
   h += ligne('Opérations en attente (toutes boutiques)', String(totalEnAttente()), totalEnAttente() ? '#f59e0b' : '#22c55e');
   h += ligne('Dernière synchronisation complète', dateFr(dernierEnvoiOk || (b && b.derniereSynchro)));
+  /* acces hors ligne encadre (module AGV-52) */
+  try{ if (uid && window.AGV_HORS_LIGNE && window.AGV_HORS_LIGNE.lignePanneau){ var la = window.AGV_HORS_LIGNE.lignePanneau(uid); if (la) h += ligne(la.l, la.v, la.c); } }catch(e){}
   if (b){
     h += titre('Boutique ouverte : ' + esc(nomBoutique(uid)));
     var plusVieille = b.ops.length ? b.ops[0].cree : null;
@@ -69011,6 +69020,511 @@ window.__agvBaseLocaleInstaller = function(){
 if (document.readyState !== 'loading') window.__agvBaseLocaleInstaller();
 else document.addEventListener('DOMContentLoaded', function(){ window.__agvBaseLocaleInstaller(); });
 
+})();
+
+</script>
+<script>
+(function(){
+'use strict';
+/* ================================================================
+   AGV-52 — ACCES HORS LIGNE ENCADRE (meme systeme qu'App AGP)
+   ----------------------------------------------------------------
+   1. Une boutique deja ouverte sur l'appareil se connecte avec ou
+      sans Internet. Hors ligne, un message professionnel l'avertit :
+      ses operations sont gardees sur l'appareil puis envoyees en
+      ligne des le retour du reseau.
+   2. La CREATION d'une nouvelle boutique exige Internet (refus sinon).
+   3. Boutique ordinaire : 2 jours hors ligne au plus apres sa derniere
+      liaison en ligne. Rappels de risque de perte de donnees pour
+      pousser a se reconnecter, puis acces suspendu jusqu'a la
+      reconnexion (rien n'est perdu : l'envoi reprend tout seul et
+      l'acces se retablit).
+   4. Boutique marquee « hors ligne » par le concepteur : travail hors
+      ligne jusqu'a la date fixee, SUR UN SEUL APPAREIL (le premier de
+      la boutique qui se connecte apres le reglage ; le concepteur peut
+      le liberer). Alertes avant l'echeance, invitation a se connecter
+      pour la liaison en ligne ; a l'echeance, blocage automatique sauf
+      si le concepteur a indique que la licence est acquittee (alors :
+      jusqu'a la fin de licence). Les autres appareils : regle des 2 jours.
+   STOCKAGE : reglages du concepteur dans le noeud ajoute
+   agv_platform/horsLigne/<uid>. Sur l'appareil : dates de liaison et
+   copie des reglages (localStorage). Aucune ecriture dans gdv_shops.
+   ================================================================ */
+if(window.AGV_HORS_LIGNE) return;
+var X = window.AGV_HORS_LIGNE = {};
+var BL = window.AGV_BASE_LOCALE || null;
+
+var HEURE = 3600e3, JOUR = 24 * HEURE;
+var DUREE_ORDINAIRE = 2 * JOUR;
+var CLE_LIAISON = 'agv_hl_liaison', CLE_HORLOGE = 'agv_hl_horloge', CLE_AUT = 'agv_hl_autorisations', CLE_VU = 'agv_hl_alertes';
+var CONTACT = '+224 623 030 403 (WhatsApp 623 030 403)';
+var PLAT_HL = 'agv_platform/horsLigne';
+
+/* ---------------- outils ---------------- */
+function esc(v){ return String(v === null || v === undefined ? '' : v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function lireJSON(k, d){ try{ var v = JSON.parse(localStorage.getItem(k) || 'null'); return v === null ? d : v; }catch(e){ return d; } }
+function ecrireJSON(k, v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} }
+function pad2(n){ return String(n).padStart(2, '0'); }
+var JOURS = ['dimanche','lundi','mardi','mercredi','jeudi','vendredi','samedi'];
+var MOIS = ['janvier','février','mars','avril','mai','juin','juillet','août','septembre','octobre','novembre','décembre'];
+function dateLongue(t){ var d = new Date(t); return JOURS[d.getDay()] + ' ' + d.getDate() + ' ' + MOIS[d.getMonth()] + ' ' + d.getFullYear() + ' à ' + pad2(d.getHours()) + 'h' + pad2(d.getMinutes()); }
+function dateCourte(t){ var d = new Date(t); return pad2(d.getDate()) + '/' + pad2(d.getMonth() + 1) + ' ' + pad2(d.getHours()) + 'h' + pad2(d.getMinutes()); }
+function jourFr(t){ var d = new Date(t); return pad2(d.getDate()) + '/' + pad2(d.getMonth() + 1) + '/' + d.getFullYear(); }
+function duree(ms){
+  if(ms <= 0) return '0 min';
+  var j = Math.floor(ms / JOUR), h = Math.floor((ms % JOUR) / HEURE), m = Math.floor((ms % HEURE) / 60000);
+  if(j) return j + ' jour' + (j > 1 ? 's' : '') + (h ? ' ' + h + ' h' : '');
+  if(h) return h + ' h' + (m ? ' ' + pad2(m) : '');
+  return m + ' min';
+}
+function finDeJour(iso){
+  var p = String(iso || '').slice(0, 10).split('-');
+  if(p.length !== 3) return NaN;
+  return new Date(+p[0], +p[1] - 1, +p[2], 23, 59, 59).getTime();
+}
+
+/* ---------- horloge protegee : reculer la date de l'appareil ne
+   prolonge pas l'acces hors ligne ; en ligne, l'heure du serveur fait foi ---------- */
+var decalageServeur = null;
+function maintenant(){
+  var n = Date.now(), h = Number(localStorage.getItem(CLE_HORLOGE)) || 0;
+  if(n >= h){ if(n - h > 60000){ try{ localStorage.setItem(CLE_HORLOGE, String(n)); }catch(e){} } return n; }
+  return h;
+}
+function recalerHorloge(){
+  if(decalageServeur === null) return;
+  try{ localStorage.setItem(CLE_HORLOGE, String(Date.now() + decalageServeur)); }catch(e){}
+}
+
+/* ---------------- etat ---------------- */
+function connecte(){
+  if(BL && BL.actif && BL.estConnecte) return !!BL.estConnecte();
+  return navigator.onLine !== false;
+}
+X.enLigne = function(){ return connecte() && navigator.onLine !== false; };
+function enAttente(){ try{ return (BL && BL.enAttente) ? BL.enAttente() : 0; }catch(e){ return 0; } }
+function boutCourante(){
+  var s = window._currentShop, app = document.getElementById('app');
+  return (s && s.uid && app && app.classList.contains('visible')) ? s : null;
+}
+function nomBout(s){ return (s && (s.entreprise || s.nom)) || 'votre boutique'; }
+function encadre(){ return !!(BL && BL.actif); }    /* sans base locale, l'application reste en ligne seulement */
+function fb(){ try{ return (window.firebase && firebase.apps && firebase.apps.length) ? firebase.database() : null; }catch(e){ return null; } }
+
+/* ---------- cet appareil (identifiant de la base locale) ---------- */
+function monAppareil(){
+  try{ var e = BL && BL.etat && BL.etat(); if(e && e.appareil) return e.appareil; }catch(x){}
+  return localStorage.getItem('agv_base_locale_appareil') || '';
+}
+function nomAppareil(){
+  var u = navigator.userAgent || '', t;
+  if(/iPhone/.test(u)) t = 'iPhone'; else if(/iPad/.test(u)) t = 'iPad';
+  else if(/Android/.test(u)) t = /Mobile/.test(u) ? 'Téléphone Android' : 'Tablette Android';
+  else if(/Windows/.test(u)) t = 'Ordinateur Windows'; else if(/Macintosh/.test(u)) t = 'Ordinateur Mac';
+  else if(/Linux/.test(u)) t = 'Ordinateur Linux'; else t = 'Appareil';
+  var n = /Edg\//.test(u) ? 'Edge' : /OPR\//.test(u) ? 'Opera' : /Chrome\//.test(u) ? 'Chrome' : /Firefox\//.test(u) ? 'Firefox' : /Safari\//.test(u) ? 'Safari' : '';
+  return t + (n ? ' · ' + n : '');
+}
+
+function liaisons(){ return lireJSON(CLE_LIAISON, {}); }
+function noterLiaison(uid){ if(!uid) return; var m = liaisons(); m[uid] = maintenant(); ecrireJSON(CLE_LIAISON, m); }
+function autorisations(){ return lireJSON(CLE_AUT, {}); }
+function autorisation(uid){ var a = autorisations()[uid]; return (a && a.v) ? a.v : null; }
+
+/* lecture des reglages du concepteur (en ligne seulement) ; le premier appareil
+   de la boutique qui les lit alors qu'aucun appareil n'est retenu devient
+   l'appareil autorise (transaction : un seul gagnant) */
+var derniereLecture = {};
+function memoriser(uid, v){ var m = autorisations(); m[uid] = { v: v || null, lu: Date.now() }; ecrireJSON(CLE_AUT, m); return m[uid].v; }
+function lireAutorisation(uid, force){
+  var d = fb();
+  if(!uid || !d || !connecte()) return Promise.resolve(autorisation(uid));
+  if(!force && derniereLecture[uid] && Date.now() - derniereLecture[uid] < 5 * 60000) return Promise.resolve(autorisation(uid));
+  derniereLecture[uid] = Date.now();
+  var ref = d.ref(PLAT_HL + '/' + uid);
+  return ref.once('value').then(function(s){
+    var v = s.val() || null;
+    if(v && v.actif && v.jusquau && !(v.appareil && v.appareil.id) && monAppareil()){
+      var moi = { id: monAppareil(), nom: nomAppareil(), le: new Date().toISOString() };
+      return ref.child('appareil').transaction(function(cur){ if(cur && cur.id) return; return moi; })
+        .then(function(){ return ref.once('value'); }, function(){ return s; })
+        .then(function(s2){ return memoriser(uid, s2.val() || null); });
+    }
+    return memoriser(uid, v);
+  }, function(){ return autorisation(uid); });
+}
+
+/* ---------------- la regle ---------------- */
+function politique(s){
+  var uid = s.uid, n = maintenant(), l = liaisons();
+  if(!l[uid]){ l[uid] = n; ecrireJSON(CLE_LIAISON, l); }       /* premiere ouverture avec cette version : le delai part d'ici */
+  var lia = l[uid], finN = lia + DUREE_ORDINAIRE;
+  var r = { mode: 'ordinaire', fin: finN, liaison: lia };
+  var a = autorisation(uid);
+  if(a && a.actif && a.jusquau){
+    var app = a.appareil && a.appareil.id;
+    if(app && app === monAppareil()){
+      var finC = finDeJour(a.jusquau), licEtendue = false;
+      if(a.licenceAcquittee){
+        var ex = Date.parse(s.dateExpiration || '');
+        if(ex && ex > finC){ finC = ex; licEtendue = true; }
+      }
+      if(!isNaN(finC) && finC >= finN) r = { mode: 'concepteur', fin: finC, liaison: lia, jusquau: finDeJour(a.jusquau), acquittee: !!a.licenceAcquittee, licEtendue: licEtendue };
+    } else {
+      r.autreAppareil = app ? (a.appareil.nom || 'un autre appareil') : 'en attente';
+    }
+  }
+  r.reste = r.fin - n;
+  r.bloque = r.reste <= 0;
+  if(r.bloque) r.niveau = 'bloque';
+  else if(r.mode === 'ordinaire') r.niveau = r.reste <= 6 * HEURE ? 'critique' : (r.reste <= JOUR ? 'attention' : 'info');
+  else r.niveau = r.reste <= 2 * JOUR ? 'critique' : (r.reste <= 7 * JOUR ? 'attention' : 'info');
+  return r;
+}
+X.politique = function(){ var s = boutCourante(); return s ? politique(s) : null; };
+X.maintenant = maintenant;
+X.appareil = function(){ return { id: monAppareil(), nom: nomAppareil() }; };
+
+/* ---------------- styles ---------------- */
+function styles(){
+  if(document.getElementById('agvx4-style')) return;
+  var st = document.createElement('style'); st.id = 'agvx4-style';
+  st.textContent =
+    '.agvx4-ov{position:fixed;inset:0;z-index:2147483000;background:rgba(2,6,23,.78);display:flex;align-items:center;justify-content:center;padding:16px;box-sizing:border-box;overflow:auto;font-family:system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif}'
+    + '.agvx4-ov.bloc{background:linear-gradient(160deg,#0b1530,#111c3d);z-index:2147483100}'
+    + '.agvx4-box{background:#fff;color:#0f172a;border-radius:18px;max-width:520px;width:100%;box-shadow:0 30px 80px rgba(0,0,0,.45);overflow:hidden}'
+    + '.agvx4-hd{padding:18px 22px;color:#fff;display:flex;gap:12px;align-items:center}'
+    + '.agvx4-hd .i{font-size:30px;line-height:1}.agvx4-hd h3{margin:0;font-size:18px;font-weight:800}.agvx4-hd p{margin:2px 0 0;font-size:12.5px;opacity:.9}'
+    + '.agvx4-bd{padding:18px 22px;font-size:14px;line-height:1.6;color:#1e293b}.agvx4-bd p{margin:0 0 10px}'
+    + '.agvx4-kv{background:#f1f5f9;border-radius:12px;padding:10px 14px;margin:10px 0;font-size:13.5px}.agvx4-kv div{display:flex;justify-content:space-between;gap:10px;padding:3px 0}.agvx4-kv b{color:#0f172a;text-align:right}'
+    + '.agvx4-ft{padding:12px 22px 20px;display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}'
+    + '.agvx4-b{border:none;border-radius:10px;padding:10px 16px;font-weight:700;font-size:14px;cursor:pointer;font-family:inherit}'
+    + '.agvx4-b.p{background:#1d4ed8;color:#fff}.agvx4-b.w{background:#e2e8f0;color:#0f172a}.agvx4-b.g{background:#15803d;color:#fff}'
+    + '.agvx4-etat{font-size:12.5px;color:#475569;margin-top:6px}'
+    + '#agvx4-bandeau{position:fixed;right:12px;bottom:52px;z-index:8890;max-width:400px;border-radius:14px;color:#fff;box-shadow:0 12px 30px rgba(0,0,0,.28);font:600 12.5px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;display:flex;gap:10px;align-items:flex-start;padding:10px 12px;cursor:default}'
+    + '#agvx4-bandeau .t{flex:1}#agvx4-bandeau button{background:rgba(255,255,255,.22);border:none;color:#fff;border-radius:8px;padding:3px 9px;cursor:pointer;font:700 12px system-ui,sans-serif}'
+    + '#agvx4-bandeau.mini{padding:7px 12px;cursor:pointer}'
+    + '@media(max-width:600px){#agvx4-bandeau{left:8px;right:8px;bottom:46px;max-width:none}}';
+  document.head.appendChild(st);
+}
+var COUL = { info: '#1e3a8a', attention: '#c2410c', critique: '#b91c1c', bloque: '#7f1d1d', ok: '#15803d' };
+
+/* ---------------- fenetres d'alerte ---------------- */
+function fenetre(o){
+  styles();
+  var ancien = document.getElementById(o.id); if(ancien) ancien.remove();
+  var ov = document.createElement('div'); ov.id = o.id; ov.className = 'agvx4-ov' + (o.bloquant ? ' bloc' : '');
+  ov.innerHTML = '<div class="agvx4-box" role="alertdialog" aria-modal="true"><div class="agvx4-hd" style="background:' + o.couleur + '"><div class="i">' + o.icone + '</div><div><h3>' + o.titre + '</h3>' + (o.sous ? '<p>' + o.sous + '</p>' : '') + '</div></div>'
+    + '<div class="agvx4-bd">' + o.corps + '</div><div class="agvx4-ft"></div></div>';
+  var ft = ov.querySelector('.agvx4-ft');
+  (o.boutons || []).forEach(function(b){
+    var e = document.createElement('button'); e.className = 'agvx4-b ' + (b.cls || 'w'); e.textContent = b.txt;
+    e.onclick = function(){ if(b.action) b.action(ov, e); if(b.fermer !== false) ov.remove(); };
+    ft.appendChild(e);
+  });
+  document.body.appendChild(ov);
+  return ov;
+}
+function lignes(kv){ return '<div class="agvx4-kv">' + kv.map(function(x){ return '<div><span>' + x[0] + '</span><b>' + x[1] + '</b></div>'; }).join('') + '</div>'; }
+function exporter(){ var p = boutCourante(); try{ if(BL && BL.exporter) BL.exporter(p ? p.uid : undefined); }catch(e){} }
+
+function texteEcheance(r){
+  if(r.mode === 'concepteur'){
+    if(r.licEtendue) return 'Mode hors ligne accordé par le service AGV (licence acquittée) jusqu\'au <b>' + esc(dateLongue(r.fin)) + '</b>';
+    return 'Mode hors ligne accordé par le service AGV jusqu\'au <b>' + esc(dateLongue(r.fin)) + '</b>';
+  }
+  var t = 'Accès hors ligne autorisé jusqu\'au <b>' + esc(dateLongue(r.fin)) + '</b> (2 jours après la dernière liaison en ligne)';
+  if(r.autreAppareil && r.autreAppareil !== 'en attente') t += '. Le mode hors ligne prolongé accordé à cette boutique est réservé à un seul appareil (« ' + esc(r.autreAppareil) + ' »)';
+  return t;
+}
+function alerteHorsLigne(p, r){
+  var n = enAttente();
+  fenetre({ id: 'agvx4-alerte', couleur: COUL.info, icone: '📴', titre: 'Travail hors connexion', sous: esc(nomBout(p)),
+    corps: '<p>La connexion Internet n\'est pas disponible. <b>Vous pouvez continuer à travailler normalement</b> : chaque opération est enregistrée en sécurité sur cet appareil, puis envoyée automatiquement en ligne dès le retour du réseau.</p>'
+      + lignes([[r.mode === 'concepteur' ? 'Période hors ligne' : 'Accès hors ligne', r.mode === 'concepteur' ? 'jusqu\'au ' + esc(jourFr(r.fin)) : 'jusqu\'au ' + esc(dateCourte(r.fin))],
+                ['Temps restant', esc(duree(r.reste))], ['Opérations en attente d\'envoi', String(n)]])
+      + '<p style="font-size:13px;color:#475569">' + texteEcheance(r) + '. Pour éviter toute perte de données, reconnectez cet appareil à Internet dès que possible et n\'effacez pas les données du navigateur.</p>',
+    boutons: [{ txt: 'J\'ai compris, continuer', cls: 'p' }] });
+}
+function alerteRappel(p, r){
+  var n = enAttente(), crit = r.niveau === 'critique';
+  if(r.mode === 'concepteur'){
+    fenetre({ id: 'agvx4-alerte', couleur: crit ? COUL.critique : COUL.attention, icone: '⏳',
+      titre: 'Fin de la période hors ligne le ' + esc(jourFr(r.fin)), sous: esc(nomBout(p)) + ' — il reste ' + esc(duree(r.reste)),
+      corps: '<p>Votre période de travail hors ligne accordée par le service AGV se termine le <b>' + esc(dateLongue(r.fin)) + '</b>.</p>'
+        + '<p><b>Connectez cet appareil à Internet avant cette date</b> pour la liaison en ligne : envoi de vos ' + n + ' opération(s) en attente et vérification de votre licence.</p>'
+        + (r.acquittee ? '<p style="color:#166534">Votre licence est indiquée comme acquittée.</p>'
+          : '<p style="color:#b91c1c"><b>Votre licence n\'est pas confirmée comme acquittée</b> : sans liaison en ligne, l\'accès sera <b>bloqué automatiquement</b> à cette date. Pour régulariser votre licence : ' + esc(CONTACT) + '.</p>'),
+      boutons: [{ txt: '⬇️ Exporter une copie de sauvegarde', cls: 'w', action: exporter, fermer: false }, { txt: 'Continuer', cls: 'p' }] });
+    return;
+  }
+  fenetre({ id: 'agvx4-alerte', couleur: crit ? COUL.critique : COUL.attention, icone: '⚠️',
+    titre: 'Rappel : vos données ne sont pas encore en ligne', sous: esc(nomBout(p)) + ' — accès hors ligne encore ' + esc(duree(r.reste)),
+    corps: '<p>Cet appareil n\'a plus été relié en ligne depuis le <b>' + esc(dateLongue(r.liaison)) + '</b>. Vos opérations (' + n + ' en attente d\'envoi) se trouvent <b>uniquement sur cet appareil</b> : en cas de perte, de panne ou d\'effacement du navigateur, elles seraient perdues.</p>'
+      + '<p><b>Connectez-vous à Internet avant le ' + esc(dateLongue(r.fin)) + '.</b> Passé ce délai, l\'accès hors ligne sera suspendu jusqu\'au retour de la connexion (vos données resteront conservées et seront envoyées dès la reconnexion).</p>',
+    boutons: [{ txt: '⬇️ Exporter une copie de sauvegarde', cls: 'w', action: exporter, fermer: false }, { txt: 'Continuer', cls: 'p' }] });
+}
+
+/* ---------------- ecran de blocage (aucune donnee n'est perdue) ---------------- */
+function bloquer(p, r){
+  var n = enAttente();
+  var titre, corps;
+  if(r.mode === 'concepteur'){
+    titre = 'Période hors ligne terminée';
+    corps = '<p>La période de travail hors ligne accordée par le service AGV a pris fin le <b>' + esc(dateLongue(r.fin)) + '</b>'
+      + (r.acquittee ? '' : ' et votre licence n\'a pas été confirmée comme acquittée') + '. <b>L\'accès est bloqué automatiquement.</b></p>'
+      + '<p>Connectez cet appareil à Internet pour la liaison en ligne : ' + (n ? 'vos ' + n + ' opération(s) enregistrée(s) seront envoyées automatiquement et ' : '') + 'l\'accès se rétablira dès que votre situation sera vérifiée.</p>'
+      + '<p style="font-size:13px;color:#475569">Pour régulariser votre licence : ' + esc(CONTACT) + '.</p>';
+  } else {
+    titre = 'Accès hors ligne suspendu';
+    corps = '<p>Cette boutique n\'a pas été reliée en ligne depuis plus de 2 jours (dernière liaison : <b>' + esc(dateLongue(r.liaison)) + '</b>). Pour protéger vos données, l\'accès est suspendu jusqu\'au retour de la connexion.</p>'
+      + (n ? '<p><b>Rien n\'est perdu</b> : vos ' + n + ' opération(s) sont conservées sur cet appareil et seront envoyées automatiquement dès que vous serez connecté à Internet. L\'accès se rétablit alors immédiatement.</p>'
+           : '<p><b>Rien n\'est perdu</b> : toutes vos données sont conservées sur cet appareil. Dès que vous serez connecté à Internet, l\'accès se rétablira immédiatement.</p>');
+  }
+  var ov = fenetre({ id: 'agvx4-bloc', bloquant: true, couleur: COUL.bloque, icone: '🔒', titre: titre, sous: esc(nomBout(p)),
+    corps: corps + '<div class="agvx4-etat" id="agvx4-etat">📡 En attente de connexion Internet…</div>',
+    boutons: [{ txt: '⬇️ Exporter une copie de sauvegarde', cls: 'w', action: exporter, fermer: false },
+              { txt: 'Se déconnecter', cls: 'w', action: deconnecter },
+              { txt: '🔄 Vérifier la connexion', cls: 'p', fermer: false, action: function(o, b){
+                  var e = document.getElementById('agvx4-etat'); if(e) e.textContent = '📡 Vérification de la connexion…';
+                  try{ if(BL && BL.synchroniser) BL.synchroniser(); }catch(x){}
+                  setTimeout(function(){ verifier(); var e2 = document.getElementById('agvx4-etat'); if(e2 && document.getElementById('agvx4-bloc')) e2.textContent = '📡 Toujours pas de connexion Internet. Réessayez une fois connecté.'; }, 4000);
+                } }] });
+  var a = document.getElementById('agvx4-alerte'); if(a) a.remove();
+  return ov;
+}
+function deconnecter(){
+  try{ if(typeof window.agvDeconnexionReelle === 'function') return window.agvDeconnexionReelle(); }catch(e){}
+  try{ if(typeof window.doLogout === 'function') return window.doLogout(); }catch(e){}
+}
+function debloquer(){
+  var o = document.getElementById('agvx4-bloc');
+  if(o){ o.remove(); bandeauEtat('ok', '🌐 Connexion rétablie — accès rétabli. Envoi de vos opérations en cours…'); }
+}
+
+/* ---------------- bandeau permanent hors ligne ---------------- */
+var bandeauMini = false, bandeauNiveau = null, minuteurOk = null;
+function bandeau(r){
+  styles();
+  var b = document.getElementById('agvx4-bandeau');
+  if(!b){ b = document.createElement('div'); b.id = 'agvx4-bandeau'; document.body.appendChild(b); }
+  if(bandeauNiveau !== r.niveau){ bandeauMini = false; bandeauNiveau = r.niveau; }
+  b.style.background = COUL[r.niveau] || COUL.info;
+  var n = enAttente();
+  if(bandeauMini){
+    b.className = 'mini'; b.innerHTML = '<span class="t">📴 Hors ligne · ' + n + ' en attente · jusqu\'au ' + esc(dateCourte(r.fin)) + '</span>';
+    b.onclick = function(){ bandeauMini = false; bandeau(r); };
+    return;
+  }
+  b.className = ''; b.onclick = null;
+  var txt = r.niveau === 'info'
+    ? '📴 <b>Hors ligne</b> — vos opérations sont enregistrées sur cet appareil et seront envoyées en ligne dès le retour d\'Internet.'
+    : (r.mode === 'concepteur'
+        ? '⏳ <b>Fin de la période hors ligne le ' + esc(jourFr(r.fin)) + '</b> — connectez-vous à Internet avant cette date pour la liaison en ligne.'
+        : '⚠️ <b>Risque de perte de données</b> — vos opérations ne sont que sur cet appareil. Connectez-vous à Internet avant le ' + esc(dateCourte(r.fin)) + '.');
+  b.innerHTML = '<span class="t">' + txt + '<br><span style="opacity:.9;font-weight:500">' + n + ' opération(s) en attente · accès hors ligne jusqu\'au ' + esc(dateCourte(r.fin)) + ' (' + esc(duree(r.reste)) + ')</span></span><button title="Réduire">—</button>';
+  b.querySelector('button').onclick = function(e){ e.stopPropagation(); bandeauMini = true; bandeau(r); };
+}
+function bandeauEtat(niv, texte, garder){
+  styles();
+  var b = document.getElementById('agvx4-bandeau');
+  if(!b){ b = document.createElement('div'); b.id = 'agvx4-bandeau'; document.body.appendChild(b); }
+  b.className = ''; b.onclick = null; bandeauNiveau = niv;
+  b.style.background = COUL[niv] || COUL.ok;
+  b.innerHTML = '<span class="t">' + texte + '</span>';
+  clearTimeout(minuteurOk);
+  if(!garder) minuteurOk = setTimeout(function(){ var x = document.getElementById('agvx4-bandeau'); if(x && bandeauNiveau === niv) x.remove(); bandeauNiveau = null; }, 6000);
+}
+function retirerBandeau(){ var b = document.getElementById('agvx4-bandeau'); if(b) b.remove(); bandeauNiveau = null; }
+
+/* ---------------- surveillance ---------------- */
+var etatPrec = null, suiviEnvoi = false;
+function rappelDu(uid, niveau){
+  var m = lireJSON(CLE_VU, {}), k = uid + '|' + niveau, d = m[k] || 0, now = Date.now();
+  var delai = niveau === 'critique' ? 2 * HEURE : (niveau === 'attention' ? 6 * HEURE : Infinity);
+  if(!d || now - d >= delai){ m[k] = now; ecrireJSON(CLE_VU, m); return true; }
+  return false;
+}
+function nettoyer(){
+  retirerBandeau();
+  var a = document.getElementById('agvx4-alerte'); if(a) a.remove();
+  var b = document.getElementById('agvx4-bloc'); if(b) b.remove();
+  etatPrec = null; suiviEnvoi = false;
+}
+function verifier(entree){
+  var s = boutCourante();
+  if(!s || !encadre()){ nettoyer(); return; }
+  if(connecte()){
+    noterLiaison(s.uid);
+    lireAutorisation(s.uid);
+    debloquer();
+    var a = document.getElementById('agvx4-alerte'); if(a && etatPrec === 'horsligne') a.remove();
+    if(etatPrec === 'horsligne' || suiviEnvoi){
+      var n = enAttente();
+      if(n){ suiviEnvoi = true; bandeauEtat('ok', '🌐 Connexion rétablie — envoi de ' + n + ' opération(s) en ligne…', true); }
+      else { suiviEnvoi = false; bandeauEtat('ok', '✅ Connexion rétablie — toutes vos opérations sont en ligne.'); }
+    } else if(bandeauNiveau && bandeauNiveau !== 'ok') retirerBandeau();
+    etatPrec = 'enligne';
+    return;
+  }
+  var r = politique(s);
+  if(r.bloque){
+    if(!document.getElementById('agvx4-bloc')) bloquer(s, r);
+    else { var e = document.getElementById('agvx4-etat'); if(e && e.textContent.indexOf('Vérification') < 0 && e.textContent.indexOf('Toujours') < 0) e.textContent = '📡 En attente de connexion Internet…'; }
+    retirerBandeau();
+    etatPrec = 'horsligne';
+    return;
+  }
+  var bo = document.getElementById('agvx4-bloc'); if(bo) bo.remove();      /* l'acces est de nouveau permis (reglage du concepteur...) */
+  bandeau(r);
+  if(etatPrec !== 'horsligne' || entree){
+    /* debut d'une periode hors ligne (ouverture ou coupure) : un seul message */
+    if(r.niveau === 'info') alerteHorsLigne(s, r); else { rappelDu(s.uid, r.niveau); alerteRappel(s, r); }
+  } else if(r.niveau !== 'info' && rappelDu(s.uid, r.niveau) && !document.getElementById('agvx4-alerte')){
+    alerteRappel(s, r);
+  }
+  etatPrec = 'horsligne';
+}
+X.verifier = verifier;
+X.lignePanneau = function(uid){
+  var s = boutCourante(); if(!s || s.uid !== uid) return null;
+  if(connecte()) return { l: 'Accès hors ligne', v: 'en ligne (liaison à jour)', c: '#22c55e' };
+  var r = politique(s);
+  return { l: 'Accès hors ligne', v: r.bloque ? 'suspendu — connectez-vous' : 'jusqu\'au ' + dateCourte(r.fin) + (r.mode === 'concepteur' ? ' (accordé par le service AGV, cet appareil)' : ' (2 jours)'), c: r.bloque ? '#f87171' : (r.niveau === 'info' ? '#e2e8f0' : '#f59e0b') };
+};
+
+/* heure du serveur, quand on est en ligne */
+function suivreHeureServeur(){
+  if(suivreHeureServeur.fait) return;
+  var d = fb(); if(!d) return;
+  suivreHeureServeur.fait = true;
+  try{ d.ref('.info/serverTimeOffset').on('value', function(s){ var v = s.val(); if(typeof v === 'number'){ decalageServeur = v; if(connecte()) recalerHorloge(); } }); }catch(e){}
+}
+
+/* ouverture / fermeture d'une boutique : suivie sans toucher aux fonctions de l'application */
+var uidSuivi = null;
+function suivreSession(){
+  var s = boutCourante(), uid = s ? s.uid : null;
+  if(uid === uidSuivi) return;
+  uidSuivi = uid;
+  if(!uid){ nettoyer(); return; }
+  etatPrec = null;
+  if(connecte()){ noterLiaison(uid); lireAutorisation(uid, true); }
+  setTimeout(function(){ verifier(true); }, 900);
+}
+
+/* ================================================================
+   ESPACE CONCEPTEUR : marquer une boutique « hors ligne »
+   (la liste des boutiques n'est pas modifiee : un bouton est ajoute
+   a chaque ligne apres son affichage)
+   ================================================================ */
+var HL = {}, hlLu = 0;
+function concChargerHL(force){
+  var d = fb(); if(!d) return;
+  if(!force && Date.now() - hlLu < 60000) return;
+  hlLu = Date.now();
+  d.ref(PLAT_HL).once('value').then(function(s){ HL = s.val() || {}; try{ concDecorer(); }catch(e){} }, function(){});
+}
+function concDecorer(){
+  var corps = document.getElementById('cdbBody'); if(!corps) return;
+  corps.querySelectorAll('tr[data-uid]').forEach(function(tr){
+    var uid = tr.getAttribute('data-uid'), zone = tr.querySelector('.cdb-act');
+    if(zone && !zone.querySelector('.agvx4-hlb')){
+      var b = document.createElement('button'); b.className = 'cdb-btn agvx4-hlb'; b.textContent = '📴 Hors ligne';
+      b.onclick = function(){ concDialogue(uid, tr); };
+      zone.appendChild(b);
+    }
+    var a = HL[uid], cell = tr.children[3]; if(!cell) return;
+    var txt = '', coul = '';
+    if(a && a.actif && a.jusquau){
+      var fin = finDeJour(a.jusquau), passe = fin < Date.now();
+      txt = '📴 hors ligne ' + (passe ? 'échu le ' : 'jusqu\'au ') + jourFr(fin) + (a.licenceAcquittee ? ' · licence acquittée' : '') + ' · ' + ((a.appareil && a.appareil.nom) || 'appareil non encore lié');
+      coul = passe ? '#f87171' : (a.licenceAcquittee ? '#4ade80' : '#fbbf24');
+    }
+    var old = cell.querySelector('.agvx4-hlp');
+    if(!txt){ if(old) old.remove(); return; }
+    if(old && old.textContent === txt) return;
+    if(!old){ old = document.createElement('div'); old.className = 'agvx4-hlp'; cell.appendChild(old); }
+    old.style.cssText = 'margin-top:4px;font-size:10px;font-weight:700;line-height:1.35;color:' + coul;
+    old.textContent = txt;
+  });
+}
+function concStyles(){
+  if(document.getElementById('agvx4-cstyle')) return;
+  var st = document.createElement('style'); st.id = 'agvx4-cstyle';
+  st.textContent = '#agvx4-conc{position:fixed;inset:0;z-index:2147483300;background:rgba(0,0,0,.7);display:flex;align-items:center;justify-content:center;padding:14px;box-sizing:border-box;font-family:system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif}'
+    + '#agvx4-conc .bx{background:#0b1530;color:#e2e8f0;border:1px solid rgba(96,165,250,.3);border-radius:16px;max-width:540px;width:100%;padding:20px;max-height:92vh;overflow:auto}'
+    + '#agvx4-conc h3{margin:0 0 4px;font-size:17px}#agvx4-conc .sub{font-size:12px;color:#94a3b8;margin-bottom:12px}'
+    + '#agvx4-conc .n{font-size:12px;color:#94a3b8;line-height:1.6}#agvx4-conc label{display:flex;gap:8px;align-items:flex-start;margin:10px 0}'
+    + '#agvx4-conc input[type=date],#agvx4-conc input[type=text]{width:100%;box-sizing:border-box;padding:9px 11px;border-radius:9px;border:1px solid rgba(96,165,250,.3);background:#060d24;color:#e2e8f0;font:inherit;margin:4px 0 8px}'
+    + '#agvx4-conc .ap{padding:10px;border-radius:10px;background:rgba(96,165,250,.08);border:1px solid rgba(96,165,250,.2);font-size:12.5px;margin:8px 0}'
+    + '#agvx4-conc .act{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;margin-top:12px}'
+    + '#agvx4-conc button{border:1px solid rgba(96,165,250,.35);background:rgba(37,99,235,.15);color:#bfdbfe;border-radius:9px;padding:8px 13px;font-weight:700;cursor:pointer;font:700 12.5px system-ui,sans-serif}'
+    + '#agvx4-conc button.ok{background:#15803d;border-color:#15803d;color:#fff}#agvx4-conc button.ko{background:rgba(239,68,68,.15);border-color:rgba(239,68,68,.4);color:#fca5a5}';
+  document.head.appendChild(st);
+}
+function concDialogue(uid, tr){
+  concStyles();
+  var a = HL[uid] || {}, actif = !!(a.actif && a.jusquau);
+  var defaut = new Date(Date.now() + 30 * JOUR), defIso = defaut.getFullYear() + '-' + pad2(defaut.getMonth() + 1) + '-' + pad2(defaut.getDate());
+  var nom = ''; try{ nom = tr.querySelector('.cdb-name').textContent; }catch(e){}
+  var ov = document.createElement('div'); ov.id = 'agvx4-conc';
+  var ap = a.appareil && a.appareil.id
+    ? 'Appareil autorisé : <b>' + esc(a.appareil.nom || a.appareil.id) + '</b> (lié le ' + esc(jourFr(Date.parse(a.appareil.le) || Date.now())) + ')'
+    : 'Appareil autorisé : <b>aucun pour le moment</b> — le premier appareil de la boutique qui se connecte à Internet après ce réglage sera retenu.';
+  ov.innerHTML = '<div class="bx"><h3>📴 Mode hors ligne — ' + esc(nom || uid) + '</h3>'
+    + '<div class="sub">La boutique peut travailler sans Internet jusqu\'à la date choisie, sur un seul appareil (sans la limite ordinaire de 2 jours).</div>'
+    + '<label><input type="checkbox" id="agvx4-c-actif"' + (actif || !a.jusquau ? ' checked' : '') + '> <b>Autoriser le travail hors ligne</b></label>'
+    + '<div class="n">Jusqu\'au (inclus)</div><input type="date" id="agvx4-c-date" value="' + esc(a.jusquau || defIso) + '">'
+    + '<label><input type="checkbox" id="agvx4-c-lic"' + (a.licenceAcquittee ? ' checked' : '') + '> <span><b>Licence acquittée</b><br><span class="n">À l\'échéance, la boutique n\'est pas bloquée et peut continuer hors ligne jusqu\'à la fin de sa licence.</span></span></label>'
+    + '<div class="n">Note (facultatif)</div><input type="text" id="agvx4-c-note" value="' + esc(a.note || '') + '">'
+    + '<div class="ap">' + ap + (a.appareil && a.appareil.id ? '<div style="margin-top:6px"><button id="agvx4-c-lib">Libérer l\'appareil (en autoriser un autre)</button></div>' : '') + '</div>'
+    + '<div class="n" style="padding:10px;border:1px solid rgba(96,165,250,.2);border-radius:10px">Sans licence acquittée, l\'accès est <b>bloqué automatiquement</b> à l\'échéance. La boutique est prévenue à l\'avance (7 jours avant, puis chaque jour) et invitée à se connecter à Internet pour la liaison en ligne. Elle reçoit ces réglages à sa prochaine connexion Internet : faites-le avant qu\'elle parte hors ligne. Ses autres appareils restent limités à 2 jours hors ligne.</div>'
+    + '<div id="agvx4-c-etat" class="n" style="min-height:16px;margin-top:8px"></div>'
+    + '<div class="act">' + (a.jusquau ? '<button class="ko" id="agvx4-c-ret">Retirer le mode hors ligne</button>' : '')
+    + '<button id="agvx4-c-ann">Annuler</button><button class="ok" id="agvx4-c-ok">Enregistrer</button></div></div>';
+  ov.onclick = function(e){ if(e.target === ov) ov.remove(); };
+  document.body.appendChild(ov);
+  var etat = document.getElementById('agvx4-c-etat');
+  function faire(op, apres){
+    var d = fb();
+    if(!d || !connecte()){ etat.style.color = '#f87171'; etat.textContent = 'Connexion Internet nécessaire pour enregistrer.'; return; }
+    etat.style.color = '#60a5fa'; etat.textContent = 'Enregistrement…';
+    Promise.resolve(op(d.ref(PLAT_HL + '/' + uid))).then(function(){
+      return d.ref(PLAT_HL + '/' + uid).once('value');
+    }).then(function(s){
+      if(s.val()) HL[uid] = s.val(); else delete HL[uid];
+      ov.remove(); concDecorer(); if(apres) apres();
+    }, function(err){ etat.style.color = '#f87171'; etat.textContent = 'Erreur : ' + ((err && err.message) || err); });
+  }
+  document.getElementById('agvx4-c-ann').onclick = function(){ ov.remove(); };
+  var ret = document.getElementById('agvx4-c-ret'); if(ret) ret.onclick = function(){ faire(function(r){ return r.remove(); }); };
+  var lib = document.getElementById('agvx4-c-lib'); if(lib) lib.onclick = function(){ faire(function(r){ return r.child('appareil').remove(); }, function(){ concDialogue(uid, tr); }); };
+  document.getElementById('agvx4-c-ok').onclick = function(){
+    var d0 = document.getElementById('agvx4-c-date').value;
+    if(!d0){ etat.style.color = '#f87171'; etat.textContent = 'Choisissez la date de fin.'; return; }
+    /* update : l'appareil deja retenu est conserve */
+    faire(function(r){ return r.update({ actif: document.getElementById('agvx4-c-actif').checked, jusquau: d0,
+      licenceAcquittee: document.getElementById('agvx4-c-lic').checked, note: document.getElementById('agvx4-c-note').value.trim(), majLe: new Date().toISOString() }); });
+  };
+}
+X.concDialogue = function(uid){ var tr = document.querySelector('#cdbBody tr[data-uid="' + uid + '"]'); if(tr) concDialogue(uid, tr); };
+X.concRecharger = function(){ concChargerHL(true); };
+
+/* ---------------- demarrage ---------------- */
+function demarrer(){
+  suivreHeureServeur();
+  window.addEventListener('agv-base-locale-connexion', function(){ setTimeout(function(){ suivreSession(); verifier(); }, 300); });
+  setInterval(function(){
+    suivreSession();
+    if(document.getElementById('cdbBody')){ concChargerHL(); concDecorer(); } else hlLu = 0;
+  }, 1000);
+  setInterval(function(){ suivreHeureServeur(); verifier(); }, 30000);
+  setInterval(function(){ if(suiviEnvoi && connecte()) verifier(); }, 3000);
+}
+if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', function(){ setTimeout(demarrer, 0); });
+else setTimeout(demarrer, 0);
+console.log('[AGV-52] accès hors ligne encadré actif');
 })();
 
 </script>

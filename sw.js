@@ -10,7 +10,7 @@
    La version change a chaque livraison pour que les telephones deja
    installes recoivent la mise a jour.
    ============================================================================= */
-var VERSION = 'agv-v31-20261125-base-locale';
+var VERSION = 'agv-v32-20261125-acces-hors-ligne';
 var COQUILLE = ['./', './index.html', './manifest.json',
                 './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png'];
 var EXTERNES = ['https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js',
