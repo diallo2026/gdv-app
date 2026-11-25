@@ -20,6 +20,14 @@
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js" crossorigin="anonymous" defer></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js" crossorigin="anonymous" defer></script>
 <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js" crossorigin="anonymous" defer></script>
+<script>
+/* [AGV-51] AMORCE DE LA BASE LOCALE — doit rester ici, juste apres les scripts Firebase :
+   elle branche la base locale AVANT que l'application ne cree sa connexion Firebase. */
+(function(){
+  function go(){ try{ if(typeof window.__agvBaseLocaleInstaller === 'function') window.__agvBaseLocaleInstaller(); }catch(e){ console.error('[AGV-51]', e); } }
+  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', go); else go();
+})();
+</script>
 
 <style>
 *,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
@@ -14776,6 +14784,20 @@ function blocHtml(motif){
 }
 
 function blocHorsLigneHtml(){
+  /* [AGV-51] ce message ne concerne plus que la toute premiere ouverture d'une
+     boutique sur un appareil : ses donnees n'y sont pas encore copiees */
+  if(window.AGV_BASE_LOCALE && window.AGV_BASE_LOCALE.actif){
+    return '<div style="min-height:100vh;min-height:100dvh;display:flex;align-items:center;justify-content:center;'
+      + 'background:linear-gradient(180deg,#060d24 0%,#0a1628 100%);padding:24px;box-sizing:border-box">'
+      + '<div style="text-align:center;max-width:440px">'
+      + '<div style="font-size:52px;margin-bottom:14px">&#128246;</div>'
+      + '<h2 style="color:#f59e0b;font-size:19px;font-weight:800;margin-bottom:10px">Premi&egrave;re ouverture sur cet appareil</h2>'
+      + '<p style="color:#94a3b8;font-size:13.5px;line-height:1.75">'
+      + 'Cette boutique n\'a encore jamais &eacute;t&eacute; ouverte sur cet appareil : une connexion Internet est n&eacute;cessaire '
+      + 'une premi&egrave;re fois pour copier ses donn&eacute;es dans la base locale.<br>'
+      + 'Ensuite, l\'application fonctionne aussi sans Internet.</p>'
+      + '</div></div>';
+  }
   return '<div style="min-height:100vh;min-height:100dvh;display:flex;align-items:center;justify-content:center;'
     + 'background:linear-gradient(180deg,#060d24 0%,#0a1628 100%);padding:24px;box-sizing:border-box">'
     + '<div style="text-align:center;max-width:420px">'
@@ -14802,6 +14824,11 @@ function ecranBlocage(motif){
 }
 
 function ecranHorsLigne(){
+  /* [AGV-51] plus d'ecran bloquant : l'indicateur signale le mode hors ligne */
+  if(window.AGV_BASE_LOCALE && window.AGV_BASE_LOCALE.actif){
+    try{ window.AGV_BASE_LOCALE.bandeauHorsLigne(true); }catch(e){}
+    return;
+  }
   if(document.getElementById('agv-ecran-blocage')) return; // blocage licence prioritaire
   if(document.getElementById('agv-ecran-hors-ligne')) return;
   var ov = document.createElement('div');
@@ -14834,6 +14861,8 @@ function messageCourt(motif){
   if(motif === 'expiree')     return 'Licence expir\u00e9e \u2014 acc\u00e8s suspendu. Contactez le ' + TEL + '.';
   if(motif === 'bloquee')     return 'Acc\u00e8s suspendu \u2014 boutique bloqu\u00e9e. Contactez le ' + TEL + '.';
   if(motif === 'introuvable') return 'Code introuvable. V\u00e9rifiez votre code.';
+  if(window.AGV_BASE_LOCALE && window.AGV_BASE_LOCALE.actif)
+    return 'Premi\u00e8re ouverture sur cet appareil : connexion Internet n\u00e9cessaire une fois pour copier la boutique.';
   return 'Connexion Internet requise : l\'application fonctionne uniquement en ligne.';
 }
 
@@ -14843,7 +14872,13 @@ function messageCourt(motif){
 var connexionFirebase = null;    // true / false / null (inconnu)
 var minuteurHorsLigne = null;
 
-function reseauProbable(){ return navigator.onLine !== false; }
+function reseauProbable(){
+  /* [AGV-51] avec la base locale, l'absence d'Internet n'empeche plus l'acces :
+     les lectures sont servies par l'appareil, la licence est controlee sur la
+     derniere copie connue puis revue des le retour de la connexion. */
+  if(window.AGV_BASE_LOCALE && window.AGV_BASE_LOCALE.actif) return true;
+  return navigator.onLine !== false;
+}
 
 function planifierBlocageHorsLigne(){
   clearTimeout(minuteurHorsLigne);
@@ -40194,8 +40229,8 @@ window.agvStocks = function(){
 (function () {
   'use strict';
   var V = {
-    version: 'AGV-40',
-    date: '2026-10-12 18:30 UTC',
+    version: 'AGV-51',
+    date: '2026-11-25 06:00 UTC',
     modules: 27,
     corrections: [
       'empreinte : deux sels (agvc$ a l ecriture, agv$ a la verification)',
@@ -40239,7 +40274,8 @@ window.agvStocks = function(){
       'OUVERTURE INSTANTANEE des boutiques du gerant (portail) ; il n est jamais promu fondateur',
       'STOCK DISPONIBLE : liste imprimable des produits au-dessus de leur seuil d alerte',
       'PRODUITS DORMANTS : plus de 2 mois sans vente -> rappel peremption / sechage / etat',
-      'PALMARES : meilleurs produits, clients et fournisseurs de chaque mois, graphiques imprimables'
+      'PALMARES : meilleurs produits, clients et fournisseurs de chaque mois, graphiques imprimables',
+      'BASE LOCALE PERMANENTE (AGV-51) : IndexedDB par appareil, file d attente, synchro par enregistrement'
     ]
   };
   window.AGV_VERSION = V;
@@ -40250,7 +40286,7 @@ window.agvStocks = function(){
   V.etat = function () {
     var noms = ['AGV_PERF', 'AGV_FACT', 'AGV_PORTAIL', 'AGV_DETTES', 'AGV_RESET',
                 'AGV_FORFAIT', 'AGV_STABLE', 'AGV_LIER', 'AGV_GERANTS', 'AGV_CONNEXION',
-                'AGV_COMPTES', 'AGV_ACCES', 'AGV_CHOIX', 'AGV_ECRAN', 'AGV_AUDIT', 'AGV_DEST', 'AGV_MDP', 'AGV_SIMPLE', 'AGV_TRACE', 'AGV_BOUTON', 'AGV_ROLE', 'AGV_STOCK', 'AGV_SESSION', 'AGV_LICENCE', 'AGV_FACTURE', 'AGV_SOLDE', 'AGV_PERSONNEL', 'AGV_PORTAIL_GERANT', 'AGV_39', 'AGV_40'];
+                'AGV_COMPTES', 'AGV_ACCES', 'AGV_CHOIX', 'AGV_ECRAN', 'AGV_AUDIT', 'AGV_DEST', 'AGV_MDP', 'AGV_SIMPLE', 'AGV_TRACE', 'AGV_BOUTON', 'AGV_ROLE', 'AGV_STOCK', 'AGV_SESSION', 'AGV_LICENCE', 'AGV_FACTURE', 'AGV_SOLDE', 'AGV_PERSONNEL', 'AGV_PORTAIL_GERANT', 'AGV_39', 'AGV_40', 'AGV_BASE_LOCALE'];
     var absents = noms.filter(function (n) { return typeof window[n] !== 'object'; });
     console.log('Version ' + V.version + ' — fichier du ' + V.date);
     console.log(absents.length ? 'MODULES ABSENTS : ' + absents.join(', ')
@@ -66469,6 +66505,2514 @@ API.publier = publier;
 try{ console.log('[AGV-50] module actif — v' + API.version); }catch(e){}
 
 })();
+</script>
+
+<script>
+/* =============================================================================
+   APP AGV — MODULE 51 : BASE LOCALE PERMANENTE ET AUTONOME (OFFLINE-FIRST) (v1.0)
+   -----------------------------------------------------------------------------
+   POURQUOI L'ANCIEN SYSTEME DE SAUVEGARDE LOCALE PERDAIT DES DONNEES
+   1. En mode boutique, saveAll() n'ecrivait RIEN localement : il appelait
+      seulement sauvegarderFirebase(). La copie locale (localStorage
+      « agv_cache_<uid> ») n'etait ecrite QUE lorsque Firebase renvoyait une
+      valeur. Les ecritures en attente de Firebase vivent en memoire vive :
+      fermer l'application ou redemarrer le telephone les effacait.
+   2. Au retour du reseau, l'ecouteur du noeud « data » remplacait la memoire
+      ET la copie locale par la version du serveur (products=[]; ventes=[];
+      ... applyData(serveur)) : ce qui avait ete saisi hors ligne avant un
+      redemarrage disparaissait.
+   3. Les envois remplacent des branches entieres (set() du noeud data, puis
+      update() branche par branche par le module de performance) : le dernier
+      appareil qui envoie ecrase les ventes saisies par l'autre.
+   4. localStorage : environ 5 Mo, synchrone, texte seulement ; au-dela,
+      setItem echoue et l'erreur est avalee : la copie cesse d'etre mise a
+      jour sans le moindre avertissement.
+   5. Aucune file d'attente, aucun accuse de reception : rien ne permettait de
+      savoir quelle operation etait reellement arrivee sur le serveur.
+   6. La copie locale etait volontairement effacee (purgerCache) et le module
+      « en ligne uniquement » du 12/08 bloquait toute l'application hors
+      ligne (ecran « Connexion Internet requise »).
+   7. Caisse, validations, depots, livraisons... n'avaient aucune copie
+      locale : hors ligne, leurs lectures restaient suspendues.
+   8. Aucune demande de stockage persistant au navigateur, aucune version de
+      structure, aucun export possible.
+
+   CE QUE FAIT CE MODULE
+   - Une vraie base IndexedDB par appareil (« agv_base_locale »), avec une
+     entree par boutique autorisee ; elle survit a la fermeture, au
+     redemarrage, a la deconnexion de session et aux longues coupures.
+   - Toute ecriture de l'application vers gdv_shops/<boutique>/... est
+     d'abord appliquee a la base locale et ajoutee a la file d'attente (dans
+     la meme transaction IndexedDB) ; l'interface est mise a jour depuis la
+     base locale ; l'envoi au serveur vient ensuite.
+   - Les ecritures sont transformees en differences PAR ENREGISTREMENT (une
+     vente, un client, un paiement...) reconnus par leur « id » : deux
+     appareils qui travaillent hors ligne ne s'ecrasent plus.
+   - L'envoi passe par des transactions Firebase ; une operation ne quitte la
+     file qu'apres l'accuse de reception du serveur et la verification de la
+     valeur reellement enregistree.
+   - Les changements des autres appareils arrivent en temps reel et sont
+     fusionnes avec les operations encore en attente.
+   - AUCUNE modification de la structure de la base Firebase ni des donnees
+     existantes : memes chemins, memes tableaux, memes champs.
+   - Garde-fous : jamais de remplacement par une base vide, rien n'est
+     efface a la deconnexion, journal, instantanes quotidiens, export et
+     restauration, surveillance de l'espace de stockage.
+
+   Console : agvBaseLocale.etat(), agvBaseLocale.synchroniser(),
+             agvBaseLocale.panneau(), agvBaseLocale.exporter()
+   Coupure d'urgence : localStorage.agv_base_locale_off = '1' puis recharger.
+   ============================================================================= */
+(function(){
+'use strict';
+if (window.AGV_BASE_LOCALE) return;
+
+/* ============================================================
+   0. REGLAGES
+   ============================================================ */
+var VERSION        = '1.0';
+var NOM_BASE       = 'agv_base_locale';
+var VERSION_SCHEMA = 1;            /* structure IndexedDB (migrations plus bas) */
+var FORMAT_DONNEES = 1;            /* format des enregistrements locaux */
+var CLE_REGISTRE   = 'agv_base_locale_boutiques';
+var CLE_COUPURE    = 'agv_base_locale_off';
+/* jamais copie localement : historique volumineux reserve au serveur */
+var SEGMENTS_EXCLUS = { sauvegardes: true };
+/* racines copiees des l'ouverture d'une boutique (les autres a la demande) */
+var RACINES_BOUTIQUE = ['data', 'caisse', 'info', 'comptes', 'validations', 'depots', 'transferts',
+                        'livraisons', 'depotsClients', 'rattachement', 'blocs/_meta', 'blocs/_affect'];
+var RACINES_BLOC     = ['data', 'caisse', 'validations', 'depots'];
+/* tableaux dont l'ordre compte : remplaces d'un bloc, jamais fusionnes */
+var NON_FUSIONNES  = { lignes: true };
+var GARDER_INSTANTANES = 3;
+var MAX_JOURNAL    = 1500;
+
+var API = window.AGV_BASE_LOCALE = window.agvBaseLocale = {
+  actif: false, version: VERSION, pret: false, raison: ''
+};
+
+function log(){ try{ var a = [].slice.call(arguments); a.unshift('[AGV-51]'); console.log.apply(console, a); }catch(e){} }
+function avert(){ try{ var a = [].slice.call(arguments); a.unshift('[AGV-51]'); console.warn.apply(console, a); }catch(e){} }
+
+/* ============================================================
+   1. VALEURS : FORME NORMALE FIREBASE, COPIE, COMPARAISON
+   ============================================================ */
+var HAS = Object.prototype.hasOwnProperty;
+var RE_ENTIER = /^(0|[1-9]\d*)$/;
+function estObj(x){ return x !== null && typeof x === 'object' && !Array.isArray(x); }
+
+/* Un objet a cles entieres « assez dense » est rendu par Firebase sous forme
+   de tableau (regle de ChildrenNode.val : cle max < 2 x nombre de cles). */
+function tableauSiDense(o){
+  var cles = Object.keys(o), n = cles.length, max = -1, i;
+  if (!n) return null;
+  for (i = 0; i < n; i++){
+    if (!RE_ENTIER.test(cles[i])) return o;
+    var x = +cles[i]; if (x > max) max = x;
+  }
+  if (max < 2 * n){
+    var a = new Array(max + 1);
+    for (i = 0; i <= max; i++){ var e = o[i]; a[i] = (e === undefined ? null : e); }
+    return a;
+  }
+  return o;
+}
+
+/* Ce que Firebase rendrait apres avoir enregistre v :
+   undefined/fonctions/NaN supprimes, conteneurs vides = null, tableaux a trous. */
+function normal(v){
+  if (v === undefined || v === null) return null;
+  var t = typeof v;
+  if (t === 'number') return isFinite(v) ? v : null;
+  if (t === 'string' || t === 'boolean') return v;
+  if (t !== 'object') return null;
+  if (!Array.isArray(v) && typeof v.toJSON === 'function'){
+    try{ return normal(v.toJSON()); }catch(e){ return null; }
+  }
+  var o = {}, n = 0, k, x;
+  if (Array.isArray(v)){
+    for (k = 0; k < v.length; k++){ x = normal(v[k]); if (x !== null){ o[k] = x; n++; } }
+  } else {
+    for (k in v){ if (!HAS.call(v, k)) continue; x = normal(v[k]); if (x !== null){ o[k] = x; n++; } }
+  }
+  return n ? tableauSiDense(o) : null;
+}
+
+var copie = (typeof structuredClone === 'function')
+  ? function(v){ return (v === null || typeof v !== 'object') ? (v === undefined ? null : v) : structuredClone(v); }
+  : function(v){ return (v === null || typeof v !== 'object') ? (v === undefined ? null : v) : JSON.parse(JSON.stringify(v)); };
+
+function egal(a, b){
+  if (a === b) return true;
+  if (a === null || b === null || typeof a !== 'object' || typeof b !== 'object') return false;
+  var ta = Array.isArray(a), tb = Array.isArray(b), i;
+  if (ta !== tb) return false;
+  if (ta){
+    if (a.length !== b.length) return false;
+    for (i = 0; i < a.length; i++) if (!egal(a[i], b[i])) return false;
+    return true;
+  }
+  var ka = Object.keys(a);
+  if (ka.length !== Object.keys(b).length) return false;
+  for (i = 0; i < ka.length; i++){
+    var k = ka[i];
+    if (!HAS.call(b, k) || !egal(a[k], b[k])) return false;
+  }
+  return true;
+}
+
+/* Cles interdites par Firebase : la base les refuserait au moment de
+   l'envoi et l'operation resterait bloquee dans la file. On refuse donc
+   tout de suite, exactement comme le faisait Firebase. */
+var RE_CLE_INVALIDE = /[\[\].#$\/\u0000-\u001F\u007F]/;
+function validerCles(v, ou){
+  if (v === null || typeof v !== 'object') return;
+  if (Array.isArray(v)){ for (var i = 0; i < v.length; i++) validerCles(v[i], ou); return; }
+  for (var k in v){
+    if (!HAS.call(v, k)) continue;
+    if (k === '' || RE_CLE_INVALIDE.test(k)){
+      throw new Error('Firebase.set failed: ' + ou + ' contains an invalid key (' + k + ')');
+    }
+    validerCles(v[k], ou);
+  }
+}
+
+/* ============================================================
+   2. CHEMINS
+   ============================================================ */
+function decouper(ch){
+  if (Array.isArray(ch)) return ch.slice();
+  return String(ch === undefined || ch === null ? '' : ch).split('/').filter(function(s){ return s !== ''; });
+}
+function joindre(s){ return s.join('/'); }
+function estPrefixe(a, b){
+  if (a.length > b.length) return false;
+  for (var i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+function lireA(v, s, depuis){
+  for (var i = depuis || 0; i < s.length; i++){
+    if (v === null || typeof v !== 'object') return null;
+    v = v[s[i]];
+    if (v === undefined || v === null) return null;
+  }
+  return v === undefined ? null : v;
+}
+
+/* reconstruit un niveau apres modification : trous, vides, tableaux */
+function renorm(x){
+  if (x === null || typeof x !== 'object') return x === undefined ? null : x;
+  var o = {}, n = 0, k;
+  if (Array.isArray(x)){
+    for (k = 0; k < x.length; k++) if (x[k] !== null && x[k] !== undefined){ o[k] = x[k]; n++; }
+  } else {
+    for (k in x) if (HAS.call(x, k) && x[k] !== null && x[k] !== undefined){ o[k] = x[k]; n++; }
+  }
+  return n ? tableauSiDense(o) : null;
+}
+
+/* Ecrit val (forme normale) au chemin s de h.v SANS JAMAIS MODIFIER les
+   objets existants : seuls les niveaux traverses sont recrees. Les arbres
+   (copie serveur, base de travail, vue de l'application, valeurs livrees)
+   peuvent ainsi partager leurs branches inchangees en toute securite. */
+function poser(h, s, val){
+  if (!s.length){ h.v = val; return; }
+  var chaine = [], cur = h.v, i;
+  for (i = 0; i < s.length; i++){
+    chaine.push(cur);
+    cur = (cur !== null && typeof cur === 'object') ? cur[s[i]] : null;
+    if (cur === undefined) cur = null;
+  }
+  if (cur === val) return;
+  var enfant = val;
+  for (i = s.length - 1; i >= 0; i--){
+    var c = chaine[i], o, k;
+    if (c !== null && typeof c === 'object'){
+      if (Array.isArray(c)){
+        if (RE_ENTIER.test(s[i])) o = c.slice();
+        else { o = {}; for (k = 0; k < c.length; k++) if (c[k] !== null && c[k] !== undefined) o[k] = c[k]; }
+      }
+      else { o = {}; for (k in c) if (HAS.call(c, k)) o[k] = c[k]; }
+    } else o = {};
+    o[s[i]] = enfant;
+    enfant = renorm(o);
+  }
+  h.v = enfant;
+}
+
+/* ordre des cles Firebase : entieres d'abord (numerique), puis texte */
+function comparerCles(a, b){
+  var ea = RE_ENTIER.test(a), eb = RE_ENTIER.test(b);
+  if (ea && eb) return (+a) - (+b);
+  if (ea) return -1;
+  if (eb) return 1;
+  return a < b ? -1 : (a > b ? 1 : 0);
+}
+function enfants(v){
+  if (v === null || typeof v !== 'object') return [];
+  var out = [];
+  if (Array.isArray(v)){ for (var i = 0; i < v.length; i++) if (v[i] !== null && v[i] !== undefined) out.push(String(i)); }
+  else { out = Object.keys(v).filter(function(k){ return v[k] !== null && v[k] !== undefined; }); out.sort(comparerCles); }
+  return out;
+}
+
+/* ============================================================
+   3. ENREGISTREMENTS : IDENTITE ET COLLECTIONS
+   ------------------------------------------------------------
+   Un tableau d'objets (ventes, produits, clients, paiements...)
+   est traite comme une collection d'enregistrements reconnus par
+   leur identite, et non par leur position :
+     - depense programmee : progId + progMois (une seule par mois,
+       meme si deux appareils l'ecrivent hors ligne) ;
+     - sinon « id » (nombre ou texte, compares en texte) ;
+     - a defaut, le contenu lui-meme (paiements sans id).
+   Les doublons d'une meme identite sont numerotes (#0, #1...).
+   ============================================================ */
+function stable(v){
+  if (v === null || typeof v !== 'object') return JSON.stringify(v);
+  if (Array.isArray(v)) return '[' + v.map(stable).join(',') + ']';
+  return '{' + Object.keys(v).sort().map(function(k){ return JSON.stringify(k) + ':' + stable(v[k]); }).join(',') + '}';
+}
+function vide(x){ return x === undefined || x === null || x === ''; }
+function cleBase(r){
+  if (!estObj(r)) return 'x:' + stable(r);
+  if (!vide(r.progId) && !vide(r.progMois)) return 'p:' + String(r.progId) + '|' + String(r.progMois);
+  if (!vide(r.id)) return 'i:' + String(r.id);
+  return 's:' + stable(r);
+}
+function clesDe(arr){
+  var vus = {}, out = new Array(arr.length);
+  for (var i = 0; i < arr.length; i++){
+    var b = cleBase(arr[i]), n = vus[b] || 0;
+    vus[b] = n + 1;
+    out[i] = b + '#' + n;
+  }
+  return out;
+}
+function baseDe(k){ var i = k.lastIndexOf('#'); return i < 0 ? k : k.slice(0, i); }
+function rangDe(k){ var i = k.lastIndexOf('#'); return i < 0 ? 0 : (+k.slice(i + 1) || 0); }
+
+function toutEntier(o){
+  var ks = Object.keys(o);
+  for (var i = 0; i < ks.length; i++) if (!RE_ENTIER.test(ks[i])) return false;
+  return ks.length > 0;
+}
+/* entrees non vides d'un tableau ou d'un objet a cles entieres, dans l'ordre */
+function entreesBrutes(v){
+  var out = [];
+  if (Array.isArray(v)){ for (var i = 0; i < v.length; i++) if (v[i] !== null && v[i] !== undefined) out.push({ k: String(i), r: v[i] }); }
+  else if (estObj(v) && toutEntier(v)){ Object.keys(v).sort(comparerCles).forEach(function(k){ if (v[k] !== null) out.push({ k: k, r: v[k] }); }); }
+  return out;
+}
+/* undefined : ce n'est pas une collection ; null : collection vide */
+function enCollection(v, nom){
+  if (v === null || v === undefined) return null;
+  if (nom && NON_FUSIONNES[nom]) return undefined;
+  if (!Array.isArray(v) && !(estObj(v) && toutEntier(v))) return undefined;
+  var e = entreesBrutes(v), out = [];
+  for (var i = 0; i < e.length; i++){ if (!estObj(e[i].r)) return undefined; out.push(e[i].r); }
+  return out.length ? out : null;
+}
+
+/* ============================================================
+   4. DIFFERENCES ET APPLICATION
+   ------------------------------------------------------------
+   Une modification est une liste de changements :
+     { t:'v', p:[chemin], v:valeur }          valeur posee (null = retrait)
+     { t:'c', p:[chemin], add:[{k,r}], mod:[{k,d}], del:[k] }
+                                              collection : ajouts,
+                                              modifications (d = changements
+                                              relatifs a l'enregistrement),
+                                              retraits
+     { t:'inc', p, d, plancher }              compteur (transaction hors ligne)
+     { t:'siabsent', p, v }                   verrou (transaction hors ligne)
+   ============================================================ */
+function difference(a, b, p, nom, out, opts){
+  if (egal(a, b)) return out;
+  var ca = enCollection(a, nom), cb = enCollection(b, nom);
+  if (ca !== undefined && cb !== undefined && (ca || cb)){
+    diffCollection(ca || [], cb || [], p, out, opts);
+    return out;
+  }
+  if (estObj(a) && estObj(b)){
+    var vus = {}, k;
+    for (k in a){ vus[k] = 1; difference(a[k], HAS.call(b, k) ? b[k] : null, p.concat([k]), k, out, opts); }
+    for (k in b){ if (!vus[k]) difference(null, b[k], p.concat([k]), k, out, opts); }
+    return out;
+  }
+  if (b === null && opts && opts.sansSuppression) return out;
+  /* quantites cumulees (stock) : on envoie la VARIATION, pas la valeur.
+     Deux appareils qui vendent le meme produit hors ligne retirent ainsi
+     chacun leurs quantites ; « le dernier qui envoie gagne » perdrait les
+     ventes de l'autre dans le stock. */
+  if (typeof a === 'number' && typeof b === 'number' && estCumulatif(p)){
+    out.push({ t: 'inc', p: p, d: b - a });
+    return out;
+  }
+  out.push({ t: 'v', p: p, v: copie(b) });
+  return out;
+}
+var CHAMPS_CUMULATIFS = { stock_initial: true };
+function estCumulatif(p){
+  var n = p.length;
+  if (!n) return false;
+  if (CHAMPS_CUMULATIFS[p[n - 1]]) return true;
+  return n >= 2 && p[n - 2] === 'quantites';
+}
+/* apres une variation de stock, la valeur du stock (total = stock x prix
+   d'achat) est recalculee comme le fait l'application */
+function apresModification(rec, d){
+  if (!estObj(rec) || typeof rec.stock_initial !== 'number' || typeof rec.prix_achat !== 'number' || !HAS.call(rec, 'total')) return rec;
+  var varie = d.some(function(c){ return c.t === 'inc' && c.p.length === 1 && c.p[0] === 'stock_initial'; });
+  if (!varie) return rec;
+  var o = {}; for (var k in rec) o[k] = rec[k];
+  o.total = rec.stock_initial * rec.prix_achat;
+  return o;
+}
+function diffCollection(ta, tb, p, out, opts){
+  var ka = clesDe(ta), kb = clesDe(tb), ia = {}, ib = {}, i;
+  for (i = 0; i < ka.length; i++) ia[ka[i]] = i;
+  for (i = 0; i < kb.length; i++) ib[kb[i]] = i;
+  var add = [], mod = [], del = [];
+  if (!(opts && opts.sansSuppression)){
+    for (i = 0; i < ka.length; i++) if (!HAS.call(ib, ka[i])) del.push(ka[i]);
+  }
+  for (i = 0; i < kb.length; i++){
+    var k = kb[i];
+    if (!HAS.call(ia, k)) add.push({ k: k, r: copie(tb[i]) });
+    else {
+      var ra = ta[ia[k]], rb = tb[i];
+      if (!egal(ra, rb)){
+        var d = difference(ra, rb, [], null, [], opts ? { sansSuppression: opts.sansSuppression } : null);
+        if (d.length) mod.push({ k: k, d: d });
+      }
+    }
+  }
+  if (add.length || mod.length || del.length) out.push({ t: 'c', p: p, add: add, mod: mod, del: del });
+}
+
+/* applique une liste de changements a h.v (sur place) */
+function appliquer(h, changes, conflits, prefixe){
+  for (var i = 0; i < changes.length; i++){
+    var ch = changes[i];
+    var p = prefixe ? ch.p.slice(prefixe) : ch.p;
+    if (ch.t === 'v') poser(h, p, copie(ch.v));
+    else if (ch.t === 'c') appliquerCollection(h, p, ch, conflits);
+    else if (ch.t === 'inc'){
+      var cur = lireA(h.v, p), n = (typeof cur === 'number' ? cur : (parseFloat(cur) || 0)) + ch.d;
+      if (ch.plancher && n < 0) n = 0;
+      poser(h, p, n);
+    }
+    else if (ch.t === 'siabsent'){
+      if (lireA(h.v, p) === null) poser(h, p, copie(ch.v));
+    }
+  }
+}
+function appliquerCollection(h, p, ch, conflits){
+  var cur = lireA(h.v, p), arr;
+  if (cur === null) arr = [];
+  else {
+    var e = entreesBrutes(cur);
+    if (!e.length && typeof cur === 'object' && !Array.isArray(cur)){
+      if (conflits) conflits.push({ type: 'structure', chemin: joindre(p) });
+      return;                                   /* structure inattendue : on ne detruit rien */
+    }
+    if (!e.length){ if (conflits) conflits.push({ type: 'structure', chemin: joindre(p) }); return; }
+    arr = e.map(function(x){ return x.r; });
+  }
+  var cles, i;
+  if (ch.del && ch.del.length){
+    var asup = {};
+    ch.del.forEach(function(k){ asup[k] = 1; });
+    cles = clesDe(arr);
+    var garde = [];
+    for (i = 0; i < arr.length; i++) if (!asup[cles[i]]) garde.push(arr[i]);
+    arr = garde;
+  }
+  /* positions par identite (base -> positions dans l'ordre) */
+  var pos = {}, compte = {};
+  for (i = 0; i < arr.length; i++){
+    var b = cleBase(arr[i]);
+    (pos[b] = pos[b] || []).push(i);
+    compte[b] = (compte[b] || 0) + 1;
+  }
+  if (ch.mod) ch.mod.forEach(function(m){
+    var lst = pos[baseDe(m.k)], r = rangDe(m.k);
+    if (!lst || lst[r] === undefined){
+      if (conflits) conflits.push({ type: 'modifie-mais-supprime', chemin: joindre(p), cle: m.k });
+      return;
+    }
+    var j = lst[r], hh = { v: copie(arr[j]) };
+    appliquer(hh, m.d, conflits);
+    if (hh.v !== null) arr[j] = apresModification(hh.v, m.d);
+  });
+  if (ch.add) ch.add.forEach(function(a){
+    var b = baseDe(a.k), r = rangDe(a.k);
+    if ((compte[b] || 0) > r) return;          /* deja present : ajout idempotent */
+    arr.push(copie(a.r));
+    (pos[b] = pos[b] || []).push(arr.length - 1);
+    compte[b] = (compte[b] || 0) + 1;
+  });
+  poser(h, p, arr.length ? arr : null);
+}
+
+/* ne garde que ce qui AJOUTE (restauration : rien n'est remplace ni retire) */
+function seulementAjouts(changes, actuel){
+  var out = [];
+  changes.forEach(function(ch){
+    if (ch.t === 'c'){ if (ch.add.length) out.push({ t: 'c', p: ch.p, add: ch.add, mod: [], del: [] }); }
+    else if (ch.t === 'v'){ if (ch.v !== null && lireA(actuel, ch.p) === null) out.push(ch); }
+  });
+  return out;
+}
+
+/* resume lisible d'une liste de changements : « data/ventes +2 ~1 -0 » */
+function resumer(changes){
+  var parts = [];
+  changes.forEach(function(ch){
+    var c = joindre(ch.p);
+    if (ch.t === 'c'){
+      var s = [];
+      if (ch.add.length) s.push('+' + ch.add.length);
+      if (ch.mod.length) s.push('~' + ch.mod.length);
+      if (ch.del.length) s.push('-' + ch.del.length);
+      parts.push(c + ' ' + s.join(' '));
+    }
+    else if (ch.t === 'v') parts.push(c + (ch.v === null ? ' (retire)' : ''));
+    else parts.push(c + ' (' + ch.t + ')');
+  });
+  var t = parts.slice(0, 4).join(' ; ');
+  if (parts.length > 4) t += ' ; +' + (parts.length - 4);
+  return t;
+}
+
+/* ============================================================
+   5. REQUETES (orderBy..., limitTo..., startAt/endAt/equalTo)
+   evaluees sur la base locale
+   ============================================================ */
+function rangType(v){
+  if (v === null || v === undefined) return 0;
+  if (v === false) return 1;
+  if (v === true) return 2;
+  if (typeof v === 'number') return 3;
+  if (typeof v === 'string') return 4;
+  return 5;
+}
+function comparerIndex(a, b){
+  var ra = rangType(a), rb = rangType(b);
+  if (ra !== rb) return ra - rb;
+  if (ra === 3) return a - b;
+  if (ra === 4) return a < b ? -1 : (a > b ? 1 : 0);
+  return 0;
+}
+function etendreSpec(parent, methode, args){
+  var s = {};
+  if (parent) for (var k in parent) s[k] = parent[k];
+  switch (methode){
+    case 'orderByChild':  s.ordre = 'enfant'; s.enfant = decouper(args[0]); break;
+    case 'orderByKey':    s.ordre = 'cle'; break;
+    case 'orderByValue':  s.ordre = 'valeur'; break;
+    case 'limitToFirst':  s.limite = +args[0]; s.depuis = 'debut'; break;
+    case 'limitToLast':   s.limite = +args[0]; s.depuis = 'fin'; break;
+    case 'startAt':       s.debut = { v: args[0], k: args[1] }; break;
+    case 'endAt':         s.fin = { v: args[0], k: args[1] }; break;
+    case 'equalTo':       s.debut = { v: args[0], k: args[1] }; s.fin = { v: args[0], k: args[1] }; break;
+    default:              s.nonGere = true;   /* orderByPriority, startAfter, endBefore */
+  }
+  return s;
+}
+function texteSpec(s){ return s ? JSON.stringify(s) : ''; }
+function evaluerRequete(v, spec){
+  var cles = enfants(v);
+  var mode = spec.ordre || 'cle';
+  function indexDe(k){
+    if (mode === 'cle') return k;
+    var x = v[k];
+    if (mode === 'valeur') return x;
+    return lireA(x, spec.enfant || []);
+  }
+  var e = cles.map(function(k){ return { k: k, i: indexDe(k) }; });
+  e.sort(function(a, b){
+    if (mode === 'cle') return comparerCles(a.k, b.k);
+    var c = comparerIndex(a.i, b.i);
+    return c || comparerCles(a.k, b.k);
+  });
+  function avant(x, borne){
+    if (mode === 'cle') return comparerCles(x.k, String(borne.v)) < 0;
+    var c = comparerIndex(x.i, borne.v);
+    if (c) return c < 0;
+    return (borne.k !== undefined && borne.k !== null) ? comparerCles(x.k, String(borne.k)) < 0 : false;
+  }
+  function apres(x, borne){
+    if (mode === 'cle') return comparerCles(x.k, String(borne.v)) > 0;
+    var c = comparerIndex(x.i, borne.v);
+    if (c) return c > 0;
+    return (borne.k !== undefined && borne.k !== null) ? comparerCles(x.k, String(borne.k)) > 0 : false;
+  }
+  if (spec.debut) e = e.filter(function(x){ return !avant(x, spec.debut); });
+  if (spec.fin)   e = e.filter(function(x){ return !apres(x, spec.fin); });
+  if (spec.limite > 0 && e.length > spec.limite) e = (spec.depuis === 'fin') ? e.slice(e.length - spec.limite) : e.slice(0, spec.limite);
+  var o = {};
+  e.forEach(function(x){ o[x.k] = v[x.k]; });
+  return { v: e.length ? tableauSiDense(o) : null, ordre: e.map(function(x){ return x.k; }) };
+}
+
+/* ============================================================
+   6. INSTANTANE LOCAL (meme interface qu'un DataSnapshot)
+   ============================================================ */
+function Instantane(ref, v, cle, ordre){
+  this.ref = ref || null;
+  this.key = (cle !== undefined) ? cle : (ref ? ref.key : null);
+  this._v = (v === undefined ? null : v);
+  this._ordre = ordre || null;
+}
+Instantane.prototype.val = function(){ return copie(this._v); };
+Instantane.prototype.exportVal = Instantane.prototype.val;
+Instantane.prototype.toJSON = Instantane.prototype.val;
+Instantane.prototype.exists = function(){ return this._v !== null; };
+Instantane.prototype.getPriority = function(){ return null; };
+Instantane.prototype.child = function(chemin){
+  var s = decouper(chemin), r = null;
+  try{ r = this.ref ? this.ref.child(chemin) : null; }catch(e){}
+  return new Instantane(r, lireA(this._v, s), s.length ? s[s.length - 1] : this.key);
+};
+Instantane.prototype.hasChild = function(chemin){ return lireA(this._v, decouper(chemin)) !== null; };
+Instantane.prototype.hasChildren = function(){ return enfants(this._v).length > 0; };
+Instantane.prototype.numChildren = function(){ return enfants(this._v).length; };
+Object.defineProperty(Instantane.prototype, 'size', { get: function(){ return this.numChildren(); } });
+Instantane.prototype.forEach = function(action){
+  var ks = this._ordre || enfants(this._v);
+  for (var i = 0; i < ks.length; i++){
+    if (action(this.child(ks[i])) === true) return true;
+  }
+  return false;
+};
+
+
+/* ============================================================
+   7. BASE INDEXEDDB
+   ------------------------------------------------------------
+   docs        : copie du serveur, une entree par enfant de chaque
+                 racine (data/ventes, data/products, caisse/...,
+                 info/logo...) + un marqueur par racine
+   operations  : file d'attente (ordre d'enregistrement)
+   meta        : identifiant de l'appareil, boutiques, etat
+   journal     : operations envoyees, conflits, anomalies
+   instantanes : copie quotidienne de la base de travail
+   lectures    : derniere valeur lue hors perimetre (codes, infos)
+   Les migrations ne suppriment jamais un magasin contenant des
+   donnees : chaque version ajoute ce qui manque.
+   ============================================================ */
+var MIGRATIONS = {
+  1: function(db){
+    if (!db.objectStoreNames.contains('docs')) db.createObjectStore('docs', { keyPath: ['uid', 'chemin'] });
+    if (!db.objectStoreNames.contains('operations')){
+      var o = db.createObjectStore('operations', { keyPath: 'seq', autoIncrement: true });
+      o.createIndex('uid', 'uid', { unique: false });
+      o.createIndex('opId', 'opId', { unique: true });
+    }
+    if (!db.objectStoreNames.contains('meta')) db.createObjectStore('meta', { keyPath: 'cle' });
+    if (!db.objectStoreNames.contains('journal')){
+      var j = db.createObjectStore('journal', { keyPath: 'n', autoIncrement: true });
+      j.createIndex('uid', 'uid', { unique: false });
+    }
+    if (!db.objectStoreNames.contains('instantanes')) db.createObjectStore('instantanes', { keyPath: ['uid', 'jour'] });
+    if (!db.objectStoreNames.contains('lectures')) db.createObjectStore('lectures', { keyPath: 'chemin' });
+  }
+};
+
+var IDB = null;
+var ouvertureIDB = null;
+function ouvrirIDB(){
+  if (ouvertureIDB) return ouvertureIDB;
+  ouvertureIDB = new Promise(function(res, rej){
+    var rq;
+    try{ rq = indexedDB.open(NOM_BASE, VERSION_SCHEMA); }catch(e){ rej(e); return; }
+    rq.onupgradeneeded = function(ev){
+      var db = rq.result, de = ev.oldVersion || 0;
+      for (var v = de + 1; v <= VERSION_SCHEMA; v++){
+        if (MIGRATIONS[v]){ MIGRATIONS[v](db, rq.transaction); log('structure locale migree vers la version ' + v); }
+      }
+    };
+    rq.onsuccess = function(){
+      var db = rq.result;
+      db.onversionchange = function(){
+        /* une nouvelle version de l'application est ouverte dans un autre onglet */
+        try{ db.close(); }catch(e){}
+        IDB = null; ouvertureIDB = null;
+        avert('base locale fermee pour mise a jour de structure (autre onglet)');
+      };
+      IDB = db;
+      res(db);
+    };
+    rq.onerror = function(){ rej(rq.error || new Error('IndexedDB indisponible')); };
+    rq.onblocked = function(){ avert('mise a jour de la base locale en attente : un autre onglet est ouvert'); };
+  });
+  return ouvertureIDB;
+}
+function tx(magasins, mode, travail){
+  return ouvrirIDB().then(function(db){
+    return new Promise(function(res, rej){
+      var t, resultat;
+      try{ t = db.transaction(magasins, mode); }catch(e){ rej(e); return; }
+      t.oncomplete = function(){ res(resultat); };
+      t.onerror = function(){ rej(t.error || new Error('transaction locale echouee')); };
+      t.onabort = function(){ rej(t.error || new Error('transaction locale annulee')); };
+      try{ resultat = travail(t); }catch(e){ try{ t.abort(); }catch(x){} rej(e); }
+    });
+  });
+}
+function requete(rq){
+  return new Promise(function(res, rej){
+    rq.onsuccess = function(){ res(rq.result); };
+    rq.onerror = function(){ rej(rq.error); };
+  });
+}
+function plage(uid){ return IDBKeyRange.bound([uid, ''], [uid, '￿']); }
+
+/* ============================================================
+   8. APPAREIL ET REGISTRE DES BOUTIQUES
+   Le registre est double : localStorage (lecture immediate au
+   demarrage, avant meme l'ouverture d'IndexedDB) et IndexedDB.
+   ============================================================ */
+var APPAREIL = null;
+var REGISTRE = {};
+(function lireRegistre(){
+  try{
+    var l = JSON.parse(localStorage.getItem(CLE_REGISTRE) || '[]');
+    (Array.isArray(l) ? l : []).forEach(function(x){ if (x && x.uid) REGISTRE[x.uid] = x; });
+  }catch(e){}
+  try{
+    APPAREIL = localStorage.getItem('agv_base_locale_appareil');
+    if (!APPAREIL){
+      APPAREIL = 'ap_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
+      localStorage.setItem('agv_base_locale_appareil', APPAREIL);
+    }
+  }catch(e){ APPAREIL = 'ap_' + Math.random().toString(36).slice(2, 10); }
+})();
+function ecrireRegistre(){
+  var l = Object.keys(REGISTRE).map(function(u){ return REGISTRE[u]; });
+  try{ localStorage.setItem(CLE_REGISTRE, JSON.stringify(l)); }catch(e){}
+  tx(['meta'], 'readwrite', function(t){
+    t.objectStore('meta').put({ cle: 'registre', boutiques: l, appareil: APPAREIL, format: FORMAT_DONNEES });
+  }).catch(function(){});
+}
+function enregistrerBoutique(uid, infos){
+  if (!uid) return;
+  var neuf = !REGISTRE[uid];
+  var r = REGISTRE[uid] || { uid: uid, ajoute: Date.now() };
+  if (infos){
+    if (infos.entreprise) r.nom = infos.entreprise;
+    if (infos.codeAcces) r.code = infos.codeAcces;
+  }
+  r.vu = Date.now();
+  REGISTRE[uid] = r;
+  if (neuf){
+    ecrireRegistre();
+    log('boutique ' + (r.nom || uid) + ' : base locale creee sur cet appareil');
+    demanderPersistance();
+  } else if (infos) {
+    clearTimeout(enregistrerBoutique._t);
+    enregistrerBoutique._t = setTimeout(ecrireRegistre, 3000);
+  }
+}
+function uidCourant(){ var s = window._currentShop; return (s && s.uid) ? s.uid : null; }
+function sourcesBlocs(){
+  var out = [], s = window._agvBlocSource;
+  if (s && typeof s === 'object') for (var k in s) if (s[k]) out.push(String(s[k]));
+  return out;
+}
+/* une boutique est dans le perimetre si elle a deja ete ouverte sur cet
+   appareil, si c'est la boutique ouverte, ou un bloc rattache de celle-ci */
+function dansPerimetre(uid){
+  if (!uid) return false;
+  if (REGISTRE[uid]) return true;
+  if (uid === uidCourant()){ enregistrerBoutique(uid, window._currentShop); return true; }
+  if (uidCourant() && sourcesBlocs().indexOf(uid) >= 0){ enregistrerBoutique(uid); return true; }
+  return false;
+}
+
+/* ============================================================
+   9. MAGASIN EN MEMOIRE D'UNE BOUTIQUE
+   S  : derniere valeur connue du serveur pour chaque racine
+   L  : base de travail = S + operations en attente
+   ============================================================ */
+var BOUTIQUES = {};
+function boutique(uid){
+  return BOUTIQUES[uid] || (BOUTIQUES[uid] = {
+    uid: uid, R: {}, ops: [], charge: false, chargement: null,
+    vue: { v: null }, vueConnue: {}, derniereSynchro: 0, erreurs: 0
+  });
+}
+function cleRacine(rel){
+  if (!rel || !rel.length) return null;
+  if (rel[0] === 'blocs'){
+    if (rel.length < 2) return null;
+    if (/^[A-Z]$/.test(rel[1])) return rel.length >= 3 ? 'blocs/' + rel[1] + '/' + rel[2] : null;
+    return 'blocs/' + rel[1];
+  }
+  return rel[0];
+}
+function racine(b, cle){
+  return b.R[cle] || (b.R[cle] = {
+    cle: cle, s: decouper(cle), S: null, couvert: false, frais: false,
+    L: null, ecoute: null, anomalie: null, attente: [], version: 0
+  });
+}
+function racinesSous(b, rel){
+  var out = [];
+  for (var c in b.R){ if (estPrefixe(rel, b.R[c].s) && b.R[c].s.length > rel.length) out.push(b.R[c]); }
+  return out;
+}
+function valeurL(r){ return r.L; }
+
+/* reconstruit L d'une racine : copie du serveur + operations en attente.
+   Les arbres ne sont jamais modifies sur place (voir poser) : L partage
+   les branches que les operations ne touchent pas. */
+function rebaser(b, r){
+  var h = { v: r.S };
+  b.ops.forEach(function(op){ if (opTouche(op, r.s)) appliquerSurRacine(h, changesEffectifs(op), r.s, null); });
+  r.L = h.v; r.version++;
+}
+/* Les etapes deja enregistrees sur le serveur figurent dans S. Rejouer un
+   ajout ou une valeur est sans effet (idempotent) ; rejouer une VARIATION
+   de stock la compterait deux fois : on l'ecarte des qu'elle est partie. */
+function contientVariation(d){
+  for (var i = 0; i < d.length; i++){
+    if (d[i].t === 'inc') return true;
+    if (d[i].t === 'c' && d[i].mod.some(function(m){ return contientVariation(m.d); })) return true;
+  }
+  return false;
+}
+function changesEffectifs(op){
+  if (!op.faits && !op.enVol && !op.faitsItems) return op.changes;
+  var faits = op.faits || {}, items = op.faitsItems || {}, vol = op.enVol || null, out = [];
+  op.changes.forEach(function(ch, i){
+    if (faits[i]) return;
+    if (ch.t === 'c'){
+      var toutEnVol = (vol === String(i));
+      var mod = ch.mod.filter(function(m){
+        var k = i + ':m:' + m.k;
+        if (items[k]) return false;
+        if ((toutEnVol || vol === k) && contientVariation(m.d)) return false;
+        return true;
+      });
+      var add = ch.add.filter(function(a){ return !items[i + ':a:' + a.k]; });
+      if (mod.length !== ch.mod.length || add.length !== ch.add.length){
+        if (mod.length || add.length || ch.del.length) out.push({ t: 'c', p: ch.p, add: add, mod: mod, del: ch.del });
+        return;
+      }
+      out.push(ch);
+      return;
+    }
+    if (ch.t === 'inc' && vol === String(i)) return;
+    out.push(ch);
+  });
+  return out;
+}
+function opTouche(op, rs){
+  for (var i = 0; i < op.changes.length; i++){
+    var p = op.changes[i].p;
+    if (estPrefixe(rs, p) || estPrefixe(p, rs)) return true;
+  }
+  return false;
+}
+/* applique les changements (chemins relatifs a la boutique) a la racine rs */
+function appliquerSurRacine(h, changes, rs, conflits){
+  for (var i = 0; i < changes.length; i++){
+    var ch = changes[i];
+    if (estPrefixe(rs, ch.p)) appliquer(h, [ch], conflits, rs.length);
+    else if (estPrefixe(ch.p, rs) && ch.t === 'v'){
+      h.v = copie(normal(lireA(ch.v, rs.slice(ch.p.length))));
+    }
+  }
+}
+
+/* ---------- persistance de S (un enregistrement par enfant) ---------- */
+function persisterS(b, r, ancien){
+  var nouv = r.S, uid = b.uid, cle = r.cle;
+  return tx(['docs'], 'readwrite', function(t){
+    var st = t.objectStore('docs');
+    var typ = (nouv === null) ? 'vide' : (typeof nouv !== 'object' ? 'scalaire' : (Array.isArray(nouv) ? 'tableau' : 'objet'));
+    st.put({ uid: uid, chemin: cle, racine: cle, marqueur: true, type: typ,
+             v: (typ === 'scalaire' ? nouv : null), maj: Date.now(), format: FORMAT_DONNEES });
+    var kn = (typ === 'objet' || typ === 'tableau') ? Object.keys(nouv) : [];
+    var ka = (ancien && typeof ancien === 'object') ? Object.keys(ancien) : [];
+    var vus = {};
+    kn.forEach(function(k){
+      vus[k] = 1;
+      var vn = nouv[k];
+      if (vn === null) return;
+      if (ancien && typeof ancien === 'object' && egal(ancien[k], vn)) return;
+      st.put({ uid: uid, chemin: cle + '/' + k, racine: cle, enfant: k, v: vn });
+    });
+    ka.forEach(function(k){ if (!vus[k] || nouv[k] === null) st.delete([uid, cle + '/' + k]); });
+  });
+}
+
+/* ---------- chargement d'une boutique depuis IndexedDB ---------- */
+function charger(uid){
+  var b = boutique(uid);
+  if (b.charge) return Promise.resolve(b);
+  if (b.chargement) return b.chargement;
+  b.chargement = Promise.all([
+    tx(['docs'], 'readonly', function(t){ return requete(t.objectStore('docs').getAll(plage(uid))); }),
+    tx(['operations'], 'readonly', function(t){ return requete(t.objectStore('operations').index('uid').getAll(uid)); })
+  ]).then(function(res){
+    var docs = res[0] || [], ops = res[1] || [];
+    var parRacine = {};
+    docs.forEach(function(d){
+      var g = parRacine[d.racine] || (parRacine[d.racine] = { m: null, e: {} });
+      if (d.marqueur) g.m = d; else g.e[d.enfant] = d.v;
+    });
+    Object.keys(parRacine).forEach(function(cle){
+      var g = parRacine[cle];
+      if (!g.m) return;
+      var r = racine(b, cle), v = null;
+      if (g.m.type === 'scalaire') v = g.m.v;
+      else if (g.m.type === 'objet' || g.m.type === 'tableau') v = normal(g.e);
+      /* une valeur deja recue du serveur pendant le chargement fait foi */
+      if (!r.frais){ r.S = v; r.couvert = true; }
+    });
+    ops.sort(function(a, c){ return a.seq - c.seq; });
+    var deja = {};
+    b.ops.forEach(function(o){ deja[o.opId] = 1; });
+    b.ops = ops.filter(function(o){ return !deja[o.opId]; }).concat(b.ops);
+    b.ops.sort(function(a, c){ return (a.seq || 1e15) - (c.seq || 1e15); });
+    Object.keys(b.R).forEach(function(c){ rebaser(b, b.R[c]); });
+    b.charge = true;
+    metaLire('synchro:' + uid).then(function(m){ if (m && m.quand && !b.derniereSynchro) b.derniereSynchro = m.quand; });
+    log('base locale chargee : ' + (REGISTRE[uid] && REGISTRE[uid].nom || uid) + ' — ' +
+        Object.keys(parRacine).length + ' rubrique(s), ' + b.ops.length + ' operation(s) en attente');
+    instantaneDuJour(b);
+    return b;
+  }).catch(function(e){
+    b.chargement = null;
+    avert('chargement local impossible', e);
+    throw e;
+  });
+  return b.chargement;
+}
+
+/* ============================================================
+   10. ECOUTEURS DE L'APPLICATION ET LIVRAISON
+   Les ecouteurs « value » de l'application sur une boutique du
+   perimetre ne sont PAS poses sur Firebase : ils sont servis par
+   la base locale, comme le ferait le cache de Firebase, mais un
+   cache qui survit a la fermeture et qui contient les operations
+   en attente.
+   ============================================================ */
+var ECOUTEURS = [];
+var FILE_LIVRAISON = [];
+var enLivraison = false;
+var compteurEcouteurs = 0;
+
+function refDe(q){ try{ return q.ref || q; }catch(e){ return q; } }
+
+/* ce que l'application « voit » : derniere valeur livree ou ecrite par elle */
+function noterVue(b, rel, v){
+  var h = { v: b.vue.v };
+  poser(h, rel, v);
+  b.vue.v = h.v;
+  b.vueConnue[joindre(rel)] = true;
+}
+function lireVue(b, rel){
+  for (var i = rel.length; i > 0; i--){
+    if (b.vueConnue[joindre(rel.slice(0, i))]) return { connu: true, v: lireA(b.vue.v, rel) };
+  }
+  return { connu: false, v: null };
+}
+
+/* valeur de la base de travail ; undefined = pas encore disponible */
+function valeurLocale(b, rel){
+  var cle = cleRacine(rel);
+  if (!cle) return undefined;
+  var r = b.R[cle];
+  if (!r || !r.couvert) return undefined;
+  return lireA(r.L, rel, r.s.length);
+}
+
+function signaler(uid, chemins){
+  for (var i = 0; i < ECOUTEURS.length; i++){
+    var e = ECOUTEURS[i];
+    if (e.uid !== uid || e.retire) continue;
+    if (chemins){
+      var touche = false;
+      for (var j = 0; j < chemins.length && !touche; j++){
+        if (estPrefixe(chemins[j], e.rel) || estPrefixe(e.rel, chemins[j])) touche = true;
+      }
+      if (!touche) continue;
+    }
+    if (FILE_LIVRAISON.indexOf(e) < 0) FILE_LIVRAISON.push(e);
+  }
+  viderFile();
+}
+function viderFile(){
+  if (enLivraison) return;
+  enLivraison = true;
+  try{
+    while (FILE_LIVRAISON.length) livrer(FILE_LIVRAISON.shift());
+  } finally { enLivraison = false; }
+}
+function livrer(e){
+  if (e.retire) return;
+  var b = BOUTIQUES[e.uid];
+  if (!b || !b.charge) return;
+  var v = valeurLocale(b, e.rel);
+  if (v === undefined) return;
+  var ordre = null;
+  if (e.spec){ var q = evaluerRequete(v, e.spec); v = q.v; ordre = q.ordre; }
+  if (e.livre && egal(v, e.derniere)) return;
+  e.derniere = v; e.livre = true;
+  if (!e.spec) noterVue(b, e.rel, v);
+  var snap = new Instantane(refDe(e.ref), v, undefined, ordre);
+  try{ e.cb.call(e.ctx || null, snap); }
+  catch(err){ console.error('[AGV-51] erreur dans un ecouteur de l\'application :', err); }
+}
+
+function ajouterEcouteur(q, c, cb, annul, ctx){
+  var e = { id: ++compteurEcouteurs, uid: c.uid, rel: c.rel, abs: joindre(c.abs),
+            spec: c.spec, specTxt: texteSpec(c.spec), ref: q, cb: cb, annul: annul, ctx: ctx,
+            livre: false, derniere: null, retire: false };
+  ECOUTEURS.push(e);
+  var b = boutique(c.uid);
+  var cle = cleRacine(c.rel);
+  function premier(){
+    assurerMiroir(b, cle);
+    if (valeurLocale(b, c.rel) !== undefined){ FILE_LIVRAISON.push(e); viderFile(); }
+  }
+  if (b.charge) premier();                 /* livraison immediate, comme le cache Firebase */
+  else charger(c.uid).then(premier, function(){});
+  return e;
+}
+function retirerEcouteurs(abs, specTxt, type, cb, ctx){
+  ECOUTEURS = ECOUTEURS.filter(function(e){
+    var vise = e.abs === abs && e.specTxt === specTxt &&
+               (type === undefined || type === null || type === 'value') &&
+               (!cb || e.cb === cb) && (ctx === undefined || ctx === null || e.ctx === ctx);
+    if (vise) e.retire = true;
+    return !vise;
+  });
+}
+function annulerEcouteurs(b, r, err){
+  ECOUTEURS.forEach(function(e){
+    if (e.uid !== b.uid || e.retire || cleRacine(e.rel) !== r.cle) return;
+    if (typeof e.annul === 'function'){ try{ e.annul.call(e.ctx || null, err); }catch(x){} }
+  });
+}
+
+/* ============================================================
+   11. LECTURES PONCTUELLES (once / get)
+   ============================================================ */
+function attendreCouvert(b, cle){
+  var r = racine(b, cle);
+  if (r.couvert) return Promise.resolve();
+  return new Promise(function(res){ r.attente.push(res); });
+}
+function resoudreAttente(r){
+  var l = r.attente; r.attente = [];
+  l.forEach(function(f){ try{ f(); }catch(e){} });
+}
+function lireLocal(q, c){
+  var b = boutique(c.uid), cle = cleRacine(c.rel);
+  return charger(c.uid).then(function(){
+    assurerMiroir(b, cle);
+    return attendreCouvert(b, cle);
+  }).then(function(){
+    var v = valeurLocale(b, c.rel);
+    if (v === undefined) v = null;
+    var ordre = null;
+    if (c.spec){ var e = evaluerRequete(v, c.spec); v = e.v; ordre = e.ordre; }
+    else noterVue(b, c.rel, v);
+    return new Instantane(refDe(q), v, undefined, ordre);
+  });
+}
+
+/* ---------- lecture « hors perimetre » avec copie de secours ----------
+   Codes boutique, fiches d'autres boutiques, tarifs : le serveur fait foi
+   quand il repond ; sinon la derniere valeur lue sur cet appareil. */
+var LECTURES = {};
+function lectureMemo(chemin){
+  if (HAS.call(LECTURES, chemin)) return Promise.resolve(LECTURES[chemin]);
+  return tx(['lectures'], 'readonly', function(t){ return requete(t.objectStore('lectures').get(chemin)); })
+    .then(function(x){ LECTURES[chemin] = x || null; return LECTURES[chemin]; }, function(){ return null; });
+}
+function lectureNoter(chemin, v){
+  var ancien = LECTURES[chemin];
+  if (ancien && egal(ancien.v, v)) return;
+  /* copie de secours seulement pour les petites valeurs : la fiche d'une autre
+     boutique avec son logo (plusieurs Mo) n'a pas a encombrer l'appareil */
+  try{ if (v !== null && typeof v === 'object' && JSON.stringify(v).length > 512 * 1024) return; }catch(e){ return; }
+  LECTURES[chemin] = { chemin: chemin, v: v, quand: Date.now() };
+  tx(['lectures'], 'readwrite', function(t){ t.objectStore('lectures').put(LECTURES[chemin]); }).catch(function(){});
+}
+function lireAvecSecours(q, c){
+  var chemin = joindre(c.abs);
+  return new Promise(function(res, rej){
+    var fini = false;
+    function rendre(snap){ if (!fini){ fini = true; res(snap); } }
+    function secours(){
+      lectureMemo(chemin).then(function(m){
+        if (m && !fini) rendre(new Instantane(refDe(q), m.v));
+      });
+    }
+    if (!connecte) secours();
+    var minuteur = connecte ? setTimeout(secours, 4000) : null;
+    O.once.call(q, 'value').then(function(s){
+      clearTimeout(minuteur);
+      lectureNoter(chemin, normal(s.val()));
+      rendre(s);
+    }, function(err){
+      clearTimeout(minuteur);
+      lectureMemo(chemin).then(function(m){
+        if (m) rendre(new Instantane(refDe(q), m.v));
+        else if (!fini){ fini = true; rej(err); }
+      });
+    });
+  });
+}
+var ECOUTEURS_LECTURE = [];
+function ecouterAvecSecours(q, c, cb, annul, ctx){
+  var chemin = joindre(c.abs), e = { q: q, abs: chemin, cb: cb, ctx: ctx, recu: false, retire: false };
+  e.h = function(s){
+    e.recu = true;
+    lectureNoter(chemin, normal(s.val()));
+    try{ cb.call(ctx || null, s); }catch(err){ console.error(err); }
+  };
+  ECOUTEURS_LECTURE.push(e);
+  O.on.call(q, 'value', e.h, annul ? function(err){ try{ annul.call(ctx || null, err); }catch(x){} } : undefined);
+  if (!connecte){
+    lectureMemo(chemin).then(function(m){
+      if (m && !e.recu && !e.retire){
+        try{ cb.call(ctx || null, new Instantane(refDe(q), m.v)); }catch(err){ console.error(err); }
+      }
+    });
+  }
+}
+
+/* ============================================================
+   12. ECRITURES : D'ABORD LA BASE LOCALE, ENSUITE LE SERVEUR
+   ============================================================ */
+var compteurOps = 0;
+
+/* derniere copie localStorage de l'application : c'est elle que l'ecran
+   affiche tant que la base locale n'a rien livre (ouverture de boutique) */
+function baseDepuisCacheApp(b, r, rel){
+  if (b.uid !== uidCourant()) return undefined;
+  if (!(r.cle === 'data' || /^blocs\/[A-Z]\/data$/.test(r.cle))) return undefined;
+  try{
+    var brut = localStorage.getItem('agv_cache_' + b.uid);
+    if (!brut) return undefined;
+    return lireA(normal(JSON.parse(brut)), rel, r.s.length);
+  }catch(e){ return undefined; }
+}
+
+/* changements produits par l'ecriture de v au chemin rel */
+function calculer(b, rel, v, explicite){
+  var cle = cleRacine(rel);
+  if (!cle) return [{ t: 'v', p: rel, v: v }];       /* au-dessus des rubriques : remplacement */
+  var r = racine(b, cle);
+  var vue = lireVue(b, rel), base, opts = null;
+  if (vue.connu) base = vue.v;
+  else {
+    var bc = baseDepuisCacheApp(b, r, rel);
+    if (bc !== undefined) base = bc;
+    else {
+      base = r.couvert ? lireA(r.L, rel, r.s.length) : null;
+      /* la base exacte de l'application est inconnue : on ajoute et on
+         modifie, mais on ne retire rien qu'elle n'a pas demande */
+      if (!explicite) opts = { sansSuppression: true };
+    }
+  }
+  return difference(base, v, rel, rel[rel.length - 1], [], opts);
+}
+
+function racinesDesChanges(b, changes){
+  var vues = {}, out = [];
+  changes.forEach(function(ch){
+    var cle = cleRacine(ch.p);
+    if (cle){ if (!vues[cle]){ vues[cle] = 1; out.push(racine(b, cle)); } }
+    else racinesSous(b, ch.p).forEach(function(r){ if (!vues[r.cle]){ vues[r.cle] = 1; out.push(r); } });
+  });
+  return out;
+}
+
+function enregistrerOp(b, changes){
+  var op = {
+    opId: APPAREIL + '_' + Date.now().toString(36) + '_' + (++compteurOps).toString(36),
+    uid: b.uid, changes: changes, cree: Date.now(), appareil: APPAREIL,
+    tentatives: 0, faits: {}, resume: resumer(changes), format: FORMAT_DONNEES
+  };
+  b.ops.push(op);
+  racinesDesChanges(b, changes).forEach(function(r){
+    var h = { v: r.L };
+    appliquerSurRacine(h, changes, r.s, null);
+    r.L = h.v; r.version++;
+    if (!r.couvert) assurerMiroir(b, r.cle);
+  });
+  signaler(b.uid, changes.map(function(ch){ return ch.p; }));
+  majIndicateurBientot();
+  return tx(['operations'], 'readwrite', function(t){
+    var rq = t.objectStore('operations').add(op);
+    rq.onsuccess = function(){ op.seq = rq.result; };
+  }).then(function(){
+    diffuser({ type: 'ops', uid: b.uid });
+    planifierEnvoi(40);
+  }, function(e){
+    op.nonPersistee = true;
+    alerteStockage(e);
+    planifierEnvoi(40);
+  });
+}
+
+function ecrireLocal(c, type, valeur){
+  var b = boutique(c.uid);
+  function faire(){
+    var changes = [];
+    if (type === 'update'){
+      Object.keys(valeur || {}).forEach(function(k){
+        var sub = c.rel.concat(decouper(k)), v = normal(valeur[k]);
+        changes = changes.concat(calculer(b, sub, v, v === null));
+        noterVue(b, sub, v);
+      });
+    } else {
+      var v = normal(valeur);
+      changes = calculer(b, c.rel, v, v === null);
+      noterVue(b, c.rel, v);
+    }
+    if (!changes.length) return Promise.resolve();
+    return enregistrerOp(b, changes);
+  }
+  if (b.charge) return faire();
+  return charger(c.uid).then(faire);
+}
+
+/* transaction hors ligne : calculee sur la base locale, puis rejouee sur
+   le serveur selon sa nature (compteur, verrou, ou valeur) */
+function transactionHorsLigne(q, c, fn){
+  var b = boutique(c.uid);
+  return charger(c.uid).then(function(){
+    var cur = valeurLocale(b, c.rel);
+    if (cur === undefined) cur = null;
+    var r = fn(copie(cur));
+    if (r === undefined) return { committed: false, snapshot: new Instantane(refDe(q), cur) };
+    var rn = normal(r), changes;
+    if (cur === null && rn !== null) changes = [{ t: 'siabsent', p: c.rel, v: rn }];
+    else if (typeof cur === 'number' && typeof rn === 'number')
+      changes = [{ t: 'inc', p: c.rel, d: rn - cur, plancher: (cur >= 0 && rn >= 0) }];
+    else changes = difference(cur, rn, c.rel, c.rel[c.rel.length - 1], [], null);
+    noterVue(b, c.rel, rn);
+    var fin = changes.length ? enregistrerOp(b, changes) : Promise.resolve();
+    return fin.then(function(){ return { committed: true, snapshot: new Instantane(refDe(q), rn) }; });
+  });
+}
+
+/* ============================================================
+   13. INTERCEPTION DE FIREBASE
+   Les methodes des references Firebase sont remplacees au niveau
+   de leur prototype, avant la creation de la base : toutes les
+   references (y compris celles des 50 modules et la redirection
+   des blocs) passent donc par la base locale, sans modifier une
+   seule ligne de ces modules.
+   ============================================================ */
+var O = null;                 /* methodes d'origine de Firebase */
+
+function cheminAbs(q){
+  try{
+    var p = q._delegate && q._delegate._path;
+    if (p && typeof p.toString === 'function') return decouper(p.toString());
+  }catch(e){}
+  try{
+    var t = String(q.toString()), r = String(q.ref.root.toString());
+    return decouper(t.slice(r.length)).map(function(x){ return decodeURIComponent(x); });
+  }catch(e){}
+  return null;
+}
+
+/* ou va cette reference ?  'local' : base locale ; 'lecture' : serveur avec
+   copie de secours ; null : Firebase directement (espace concepteur...) */
+function cible(q){
+  if (!API.actif) return null;
+  var s = cheminAbs(q);
+  if (!s || !s.length) return null;
+  var spec = q.__agvSpec || null;
+  if (s[0] === 'gdv_shops' && s.length >= 3){
+    var uid = s[1], rel = s.slice(2);
+    for (var i = 0; i < rel.length; i++) if (SEGMENTS_EXCLUS[rel[i]]) return null;
+    if (dansPerimetre(uid)){
+      if (spec && spec.nonGere) return null;
+      return { mode: 'local', uid: uid, rel: rel, spec: spec, abs: s };
+    }
+    if (!spec && (rel[0] === 'info' || rel[0] === 'comptes' || rel[0] === 'rattachement' ||
+                  (rel[0] === 'blocs' && rel[1] && rel[1].charAt(0) === '_')))
+      return { mode: 'lecture', abs: s };
+    return null;
+  }
+  if (!spec && s[0] === 'gdv_codes' && s.length === 2) return { mode: 'lecture', abs: s };
+  if (!spec && s[0] === 'agv_platform' && (s[1] === 'tarifs' || s[1] === 'config' || s[1] === 'forfaitsPro'))
+    return { mode: 'lecture', abs: s };
+  return null;
+}
+function lectureLocale(c){ return c && c.mode === 'local' && !!cleRacine(c.rel); }
+
+function rappel(fn, ctx, args){
+  if (typeof fn !== 'function') return;
+  try{ fn.apply(ctx || null, args); }catch(e){ console.error(e); }
+}
+
+function installerInterception(){
+  if (O) return true;
+  var fb = window.firebase;
+  if (!fb || !fb.database || !fb.database.Reference || !fb.database.Query) return false;
+  var RP = fb.database.Reference.prototype, QP = fb.database.Query.prototype;
+  O = { on: QP.on, off: QP.off, once: QP.once, get: QP.get, set: RP.set, update: RP.update,
+        remove: RP.remove, push: RP.push, transaction: RP.transaction, setWithPriority: RP.setWithPriority };
+
+  /* les requetes gardent la trace de leurs criteres pour etre evaluees localement */
+  ['orderByChild', 'orderByKey', 'orderByValue', 'orderByPriority', 'limitToFirst', 'limitToLast',
+   'startAt', 'startAfter', 'endAt', 'endBefore', 'equalTo'].forEach(function(m){
+    var origine = QP[m];
+    if (typeof origine !== 'function') return;
+    QP[m] = function(){
+      var q = origine.apply(this, arguments);
+      try{ q.__agvSpec = etendreSpec(this.__agvSpec, m, arguments); }catch(e){}
+      return q;
+    };
+  });
+
+  QP.on = function(type, cb, annulOuCtx, ctx){
+    var c = cible(this);
+    var annul = (typeof annulOuCtx === 'function') ? annulOuCtx : null;
+    var contexte = (typeof annulOuCtx === 'function') ? ctx : (annulOuCtx !== undefined ? annulOuCtx : ctx);
+    if (type === 'value' && typeof cb === 'function'){
+      if (lectureLocale(c)){ ajouterEcouteur(this, c, cb, annul, contexte); return cb; }
+      if (c && c.mode === 'lecture'){ ecouterAvecSecours(this, c, cb, annul, contexte); return cb; }
+    }
+    return O.on.apply(this, arguments);
+  };
+
+  QP.off = function(type, cb, ctx){
+    var c = cible(this), abs = null;
+    try{ abs = joindre(cheminAbs(this) || []); }catch(e){}
+    if (abs !== null){
+      retirerEcouteurs(abs, texteSpec(this.__agvSpec || null), type, cb, ctx);
+      var self = this;
+      ECOUTEURS_LECTURE = ECOUTEURS_LECTURE.filter(function(e){
+        var vise = e.abs === abs && (!type || type === 'value') && (!cb || e.cb === cb);
+        if (vise){ e.retire = true; try{ O.off.call(self, 'value', e.h); }catch(x){} }
+        return !vise;
+      });
+    }
+    return O.off.apply(this, arguments);
+  };
+
+  QP.once = function(type, succes, echecOuCtx, ctx){
+    var c = cible(this);
+    if (type !== 'value' || !(lectureLocale(c) || (c && c.mode === 'lecture'))) return O.once.apply(this, arguments);
+    var echec = (typeof echecOuCtx === 'function') ? echecOuCtx : null;
+    var contexte = (typeof echecOuCtx === 'function') ? ctx : (echecOuCtx !== undefined ? echecOuCtx : ctx);
+    var p = lectureLocale(c) ? lireLocal(this, c) : lireAvecSecours(this, c);
+    p.then(function(s){ rappel(succes, contexte, [s]); }, function(e){ rappel(echec, contexte, [e]); });
+    return p;
+  };
+
+  if (typeof QP.get === 'function'){
+    QP.get = function(){
+      var c = cible(this);
+      if (lectureLocale(c)) return lireLocal(this, c);
+      if (c && c.mode === 'lecture') return lireAvecSecours(this, c);
+      return O.get.apply(this, arguments);
+    };
+  }
+
+  function ecrire(ref, args, type){
+    var c = cible(ref);
+    if (!c || c.mode !== 'local') return null;
+    var valeur = args[0], fin = (type === 'remove') ? args[0] : args[1];
+    if (type === 'set' && valeur === undefined) throw new Error('Firebase.set failed: first argument contains undefined');
+    if (type === 'update' && (valeur === null || typeof valeur !== 'object')) throw new Error('Firebase.update failed: first argument must be an object');
+    validerCles(valeur, joindre(c.abs));
+    var p = ecrireLocal(c, type === 'remove' ? 'set' : type, type === 'remove' ? null : valeur);
+    p.then(function(){ rappel(fin, null, [null]); }, function(e){ rappel(fin, null, [e]); });
+    return p;
+  }
+  RP.set = function(){ var p = ecrire(this, arguments, 'set'); return p || O.set.apply(this, arguments); };
+  RP.update = function(){ var p = ecrire(this, arguments, 'update'); return p || O.update.apply(this, arguments); };
+  RP.remove = function(){ var p = ecrire(this, arguments, 'remove'); return p || O.remove.apply(this, arguments); };
+  if (typeof RP.setWithPriority === 'function'){
+    RP.setWithPriority = function(v, prio, fin){ var p = ecrire(this, [v, fin], 'set'); return p || O.setWithPriority.apply(this, arguments); };
+  }
+
+  RP.push = function(valeur, fin){
+    var c = cible(this);
+    if (!c || c.mode !== 'local') return O.push.apply(this, arguments);
+    var enfant = O.push.call(this);                    /* cle generee sur l'appareil, sans ecriture */
+    if (valeur === undefined || valeur === null) return enfant;
+    var p = enfant.set(valeur, fin);
+    try{ enfant.then = p.then.bind(p); enfant['catch'] = p['catch'].bind(p); }catch(e){}
+    return enfant;
+  };
+
+  RP.transaction = function(fn, fin, appliquerLocalement){
+    var c = cible(this);
+    if (!c || c.mode !== 'local' || typeof fn !== 'function') return O.transaction.apply(this, arguments);
+    var self = this;
+    if (connecte){
+      /* en ligne : le serveur arbitre (compteurs, verrous partages entre appareils) */
+      assurerMiroir(boutique(c.uid), cleRacine(c.rel));
+      var p = O.transaction.call(this, fn, undefined, appliquerLocalement);
+      p.then(function(res){ rappel(fin, null, [null, res.committed, res.snapshot]); },
+             function(e){ rappel(fin, null, [e, false, null]); });
+      return p;
+    }
+    var q = transactionHorsLigne(self, c, fn);
+    q.then(function(res){ rappel(fin, null, [null, res.committed, res.snapshot]); },
+           function(e){ rappel(fin, null, [e, false, null]); });
+    return q;
+  };
+
+  log('interception Firebase installee');
+  return true;
+}
+
+/* ============================================================
+   14. COPIE DU SERVEUR (MIROIR) ET GARDE-FOU « BASE VIDE »
+   ============================================================ */
+var connecte = false;
+
+/* reference Firebase brute : ni redirection des blocs, ni modules */
+function refBrute(chemin){
+  var d = window.db;
+  if (!d) return null;
+  var proto = Object.getPrototypeOf(d);
+  var f = (proto && typeof proto.ref === 'function') ? proto.ref : d.ref;
+  return f.call(d, chemin);
+}
+
+/* rubriques dont l'effacement complet par le serveur est suspect */
+function racineCritique(cle){ return /^(data|caisse|info|comptes)$/.test(cle) || /^blocs\/[A-Z]\/(data|caisse)$/.test(cle); }
+function opsVident(b, r){
+  return b.ops.some(function(op){
+    return op.changes.some(function(ch){ return ch.t === 'v' && ch.v === null && estPrefixe(ch.p, r.s); });
+  });
+}
+
+function assurerMiroir(b, cle){
+  if (!cle || !O || !API.actif) return;
+  var r = racine(b, cle);
+  if (r.ecoute || !window.db) return;
+  var ref = refBrute('gdv_shops/' + b.uid + '/' + cle);
+  if (!ref) return;
+  var h = function(s){ recuServeur(b, r, normal(s.val())); };
+  r.ecoute = { ref: ref, h: h };
+  O.on.call(ref, 'value', h, function(err){
+    r.ecoute = null;
+    r.erreur = String((err && err.message) || err);
+    avert('copie de « ' + cle + ' » refusee par le serveur', err);
+    annulerEcouteurs(b, r, err);
+  });
+}
+
+function recuServeur(b, r, v){
+  if (!b.charge){
+    charger(b.uid).then(function(){ recuServeur(b, r, v); }, function(){});
+    return;
+  }
+  var ancien = r.S;
+  /* GARDE-FOU : une base vide ne remplace jamais des donnees locales */
+  if (v === null && r.couvert && ancien !== null && racineCritique(r.cle) && !opsVident(b, r)){
+    r.frais = true;
+    if (!r.anomalie){
+      r.anomalie = { depuis: Date.now(), cle: r.cle };
+      journaliser({ uid: b.uid, type: 'anomalie', resume: 'le serveur renvoie « ' + r.cle + ' » VIDE : donnees locales conservees' });
+      avert('le serveur renvoie « ' + r.cle + ' » vide — donnees locales CONSERVEES (voir le panneau Base locale)');
+      toast('⚠️ Le serveur renvoie une rubrique vide (' + r.cle + ') : vos données locales sont conservées.');
+      majIndicateurBientot();
+    }
+    resoudreAttente(r);
+    return;
+  }
+  if (r.anomalie && v !== null){ r.anomalie = null; majIndicateurBientot(); }
+  r.frais = true;
+  if (r.couvert && egal(ancien, v)){ resoudreAttente(r); reveillerAttenteServeur(r); return; }
+  r.S = v; r.couvert = true;
+  persisterS(b, r, ancien).catch(alerteStockage);
+  var avant = r.L;
+  rebaser(b, r);
+  resoudreAttente(r);
+  reveillerAttenteServeur(r);
+  if (!egal(avant, r.L)){
+    if (b.uid === uidCourant() && /(^|\/)data$/.test(r.cle)){
+      /* une saisie encore retenue par le module de performance (500 ms)
+         est enregistree AVANT que l'ecran ne recoive la nouvelle version */
+      try{ if (window.AGV_PERF && typeof window.AGV_PERF.viderFileAttente === 'function') window.AGV_PERF.viderFileAttente(); }catch(e){}
+    }
+    signaler(b.uid, [r.s]);
+  }
+  if (r.cle === 'blocs/_meta') suivreBlocs(b, v);
+}
+
+/* chaque bloc et chaque boutique rattachee a aussi sa copie locale */
+function suivreBlocs(b, meta){
+  if (!meta || typeof meta !== 'object') return;
+  Object.keys(meta).forEach(function(l){
+    if (!/^[A-Z]$/.test(l) || !meta[l]) return;
+    var src = meta[l].source;
+    if (src && typeof src === 'string'){
+      enregistrerBoutique(src, { entreprise: meta[l].nom });
+      var bs = boutique(src);
+      charger(src).then(function(){ RACINES_BLOC.forEach(function(c){ assurerMiroir(bs, c); }); }, function(){});
+    } else {
+      RACINES_BLOC.forEach(function(c){ assurerMiroir(b, 'blocs/' + l + '/' + c); });
+    }
+  });
+}
+
+/* ouverture d'une boutique : toutes ses rubriques sont copiees */
+function couvrirBoutique(uid){
+  var b = boutique(uid);
+  charger(uid).then(function(){
+    RACINES_BOUTIQUE.forEach(function(c){ assurerMiroir(b, c); });
+    decouvrirRubriques(b);
+  }, function(){});
+}
+function decouvrirRubriques(b){
+  try{
+    var url = window.firebase.app().options.databaseURL;
+    if (!url || !window.fetch || !connecte) return;
+    var base = url.split('?')[0].replace(/\/$/, '');
+    fetch(base + '/gdv_shops/' + encodeURIComponent(b.uid) + '.json?shallow=true')
+      .then(function(r){ return r.ok ? r.json() : null; })
+      .then(function(o){
+        if (!o || typeof o !== 'object') return;
+        Object.keys(o).forEach(function(k){
+          if (SEGMENTS_EXCLUS[k] || k === 'blocs' || k === 'discussion' || k === 'audit') return;
+          assurerMiroir(b, k);
+        });
+      }).catch(function(){});
+  }catch(e){}
+}
+
+/* attente de la premiere valeur du serveur pour une rubrique */
+function attendreFrais(b, racines, ms){
+  var manquantes = racines.filter(function(r){ return !r.frais; });
+  if (!manquantes.length) return Promise.resolve();
+  manquantes.forEach(function(r){ assurerMiroir(b, r.cle); });
+  return new Promise(function(res, rej){
+    var t0 = Date.now();
+    (function verifier(){
+      if (manquantes.every(function(r){ return r.frais; })) return res();
+      if (!connecte) return rej(new Error('hors ligne'));
+      if (Date.now() - t0 > ms) return rej(new Error('le serveur ne repond pas (' + manquantes.map(function(r){ return r.cle; }).join(', ') + ')'));
+      setTimeout(verifier, 150);
+    })();
+  });
+}
+function attendreServeur(r, ms){
+  return new Promise(function(res){
+    var t = setTimeout(fin, ms);
+    function fin(){ clearTimeout(t); res(); }
+    (r.reveil = r.reveil || []).push(fin);
+  });
+}
+function reveillerAttenteServeur(r){
+  var l = r.reveil || []; r.reveil = [];
+  l.forEach(function(f){ try{ f(); }catch(e){} });
+}
+
+/* ============================================================
+   15. CONNEXION
+   ============================================================ */
+var etaitHorsLigne = false;
+function suivreConnexion(){
+  var ref = refBrute('.info/connected');
+  if (!ref) return false;
+  O.on.call(ref, 'value', function(s){ changerConnexion(s.val() === true); });
+  window.addEventListener('offline', function(){ changerConnexion(false); });
+  window.addEventListener('online', function(){
+    try{ window.db.goOnline(); }catch(e){}
+    setTimeout(function(){
+      O.once.call(ref, 'value').then(function(s){ changerConnexion(s.val() === true); }, function(){});
+    }, 1200);
+  });
+  return true;
+}
+function changerConnexion(c){
+  if (c === connecte) return;
+  connecte = c;
+  var n = totalEnAttente();
+  if (!c){
+    if (uidCourant() && !etaitHorsLigne) toast('📵 Hors ligne — vos opérations sont enregistrées sur cet appareil.');
+    etaitHorsLigne = true;
+  } else {
+    if (etaitHorsLigne && n) toast('🌐 Connexion rétablie — envoi de ' + n + ' opération(s)…');
+    etaitHorsLigne = false;
+    Object.keys(BOUTIQUES).forEach(function(u){ var b = BOUTIQUES[u]; if (b.ops.length && uidCourant() === u) decouvrirRubriques(b); });
+    planifierEnvoi(300);
+  }
+  majIndicateur();
+}
+
+/* ============================================================
+   16. MOTEUR DE SYNCHRONISATION
+   File d'attente envoyee dans l'ordre, une operation a la fois.
+   Chaque etape terminee est notee dans l'operation (faits) : une
+   synchronisation interrompue reprend la ou elle s'est arretee.
+   Tout est idempotent : renvoyer une etape deja faite ne cree
+   ni doublon ni ecrasement.
+   ============================================================ */
+var envoiActif = false, minEnvoi = null, attenteEchec = 0, dernierEnvoiOk = 0;
+function totalEnAttente(){
+  var n = 0;
+  for (var u in BOUTIQUES) n += BOUTIQUES[u].ops.length;
+  return n;
+}
+function planifierEnvoi(ms){
+  clearTimeout(minEnvoi);
+  minEnvoi = setTimeout(function(){ minEnvoi = null; envoyer(); }, ms === undefined ? 50 : ms);
+}
+function envoyer(){
+  if (envoiActif || !API.actif || !O || !connecte || !totalEnAttente()) return;
+  if (navigator.locks && typeof navigator.locks.request === 'function'){
+    navigator.locks.request('agv-base-locale-envoi', { ifAvailable: true }, function(verrou){
+      if (!verrou){ planifierEnvoi(5000); return; }     /* un autre onglet envoie deja */
+      return boucleEnvoi();
+    }).catch(function(e){ avert('verrou d\'envoi', e); });
+  } else boucleEnvoi();
+}
+function avecDelai(p, ms, quoi){
+  return new Promise(function(res, rej){
+    var t = setTimeout(function(){ rej(new Error('delai depasse : ' + quoi)); }, ms);
+    p.then(function(x){ clearTimeout(t); res(x); }, function(e){ clearTimeout(t); rej(e); });
+  });
+}
+function boucleEnvoi(){
+  envoiActif = true;
+  majIndicateur();
+  var opEnCours = null, bEnCours = null;
+  return (async function(){
+    try{
+      var uids = Object.keys(BOUTIQUES).filter(function(u){ return BOUTIQUES[u].ops.length; });
+      for (var i = 0; i < uids.length; i++){
+        var b = BOUTIQUES[uids[i]];
+        if (!b.charge) await charger(b.uid);
+        while (connecte && API.actif && b.ops.length){
+          opEnCours = b.ops[0]; bEnCours = b;
+          await pousserOp(b, opEnCours);
+          await retirerOp(b, opEnCours);
+          opEnCours = null;
+          majIndicateurBientot();
+        }
+      }
+      attenteEchec = 0;
+      if (!totalEnAttente()){ dernierEnvoiOk = Date.now(); }
+    }catch(e){
+      if (opEnCours && bEnCours){
+        opEnCours.enVol = null;
+        racinesDesChanges(bEnCours, opEnCours.changes).forEach(function(r){
+          var avant = r.L; rebaser(bEnCours, r);
+          if (!egal(avant, r.L)) signaler(bEnCours.uid, [r.s]);
+        });
+        opEnCours.tentatives = (opEnCours.tentatives || 0) + 1;
+        opEnCours.erreur = String((e && e.message) || e);
+        opEnCours.derniereTentative = Date.now();
+        persisterOp(opEnCours);
+        if (opEnCours.tentatives === 1 || opEnCours.tentatives % 10 === 0){
+          journaliser({ uid: bEnCours.uid, type: 'erreur', opId: opEnCours.opId, resume: opEnCours.resume + ' — ' + opEnCours.erreur });
+        }
+      }
+      avert('synchronisation interrompue (nouvel essai automatique) :', e && e.message || e);
+      attenteEchec = Math.min(60000, attenteEchec ? attenteEchec * 2 : 2000);
+      planifierEnvoi(attenteEchec);
+    }finally{
+      envoiActif = false;
+      majIndicateur();
+      if (connecte && totalEnAttente() && !minEnvoi) planifierEnvoi(attenteEchec || 300);
+      if (connecte && !totalEnAttente() && etaitSynchro === false){ etaitSynchro = true; }
+    }
+  })();
+}
+var etaitSynchro = true;
+
+function persisterOp(op){
+  if (!op.seq) return Promise.resolve();
+  return tx(['operations'], 'readwrite', function(t){ t.objectStore('operations').put(op); }).catch(function(){});
+}
+
+function racineDeChange(b, ch){ var cle = cleRacine(ch.p); return cle ? racine(b, cle) : null; }
+
+async function pousserOp(b, op){
+  /* les rubriques concernees doivent etre a jour (positions des enregistrements) */
+  var rs = racinesDesChanges(b, op.changes);
+  await attendreFrais(b, rs, 25000);
+  op.faits = op.faits || {};
+  /* 1. valeurs simples : une seule mise a jour multi-chemins, atomique */
+  var maj = {}, idx = [], renumV = [];
+  op.changes.forEach(function(ch, i){
+    if (ch.t !== 'v' || op.faits[i]) return;
+    var v = ch.v;
+    if (estObj(v) && typeof v.numero === 'string' && ch.p.length >= 2){
+      var r0 = racineDeChange(b, ch);
+      var parent = r0 ? lireA(r0.S, ch.p.slice(0, -1), r0.s.length) : null;
+      if (estObj(parent) && !parent[ch.p[ch.p.length - 1]]){
+        var autres = Object.keys(parent).map(function(k){ return parent[k]; });
+        var n = renumeroter(autres, v, '#nouveau');
+        if (n){ renumV.push([v.numero, n.numero, joindre(ch.p)]); v = n; }
+      }
+    }
+    maj[joindre(ch.p)] = v; idx.push(i);
+  });
+  if (idx.length){
+    await avecDelai(O.update.call(refBrute('gdv_shops/' + b.uid), maj), 60000, 'mise a jour');
+    idx.forEach(function(i){ op.faits[i] = true; });
+    renumV.forEach(function(x){ noterRenumerotation(b, x[2], x[0], x[1]); });
+    await persisterOp(op);
+  }
+  /* 2. collections, compteurs, verrous */
+  op.faitsItems = op.faitsItems || {};
+  for (var i = 0; i < op.changes.length; i++){
+    var ch = op.changes[i];
+    if (op.faits[i] || ch.t === 'v') continue;
+    var conflits = [];
+    try{
+      if (ch.t === 'c') await pousserCollection(b, op, i, ch, conflits);
+      else if (ch.t === 'inc'){ op.enVol = String(i); await pousserCompteur(b, ch); }
+      else if (ch.t === 'siabsent') await pousserVerrou(b, ch);
+    } finally {
+      if (op.enVol) { op.enVol = null; }
+    }
+    op.faits[i] = true;
+    if (conflits.length) op.conflits = (op.conflits || []).concat(dedoublonner(conflits));
+    await persisterOp(op);
+  }
+}
+/* une etape terminee est notee aussitot : une reprise ne la refait pas */
+function itemFait(op, cle){
+  op.faitsItems[cle] = true;
+  if (op.enVol === cle) op.enVol = null;
+  return persisterOp(op);
+}
+function dedoublonner(l){
+  var vus = {}, out = [];
+  l.forEach(function(c){ var k = JSON.stringify(c); if (!vus[k]){ vus[k] = 1; out.push(c); } });
+  return out;
+}
+function transactionServeur(chemin, fn){
+  return avecDelai(O.transaction.call(refBrute(chemin), fn, undefined, true), 60000, 'transaction ' + chemin);
+}
+/* ------------------------------------------------------------
+   NUMEROS DE DOCUMENTS EN DOUBLE (factures, depots, devis...)
+   Deux appareils hors ligne attribuent le meme « numero suivant »
+   (FAC-2026-0002 des deux cotes). Au moment de l'envoi, celui qui
+   arrive en second recoit le premier numero libre du serveur : deux
+   documents differents ne portent jamais le meme numero.
+   ------------------------------------------------------------ */
+var RENUMEROTATIONS = [];
+function renumeroter(autres, rec, cle){
+  /* seulement les numeros de documents : PREFIXE-ANNEE-RANG (FAC-2026-0042,
+     AGV-26-0042, DEP-2026-0003...), jamais un numero de telephone */
+  if (!estObj(rec) || typeof rec.numero !== 'string' || !/^[A-Za-z]{1,8}-\d{2,4}-\d+$/.test(rec.numero)) return null;
+  var m = /^(.*?)(\d+)$/.exec(rec.numero);
+  if (!m) return null;
+  var memes = autres.filter(function(x){ return estObj(x) && typeof x.numero === 'string' && cleBase(x) !== cle; });
+  if (!memes.some(function(x){ return x.numero === rec.numero; })) return null;
+  var prefixe = m[1], largeur = m[2].length, max = 0;
+  memes.concat([rec]).forEach(function(x){
+    if (x.numero.indexOf(prefixe) !== 0) return;
+    var n = parseInt(x.numero.slice(prefixe.length), 10);
+    if (!isNaN(n) && n > max) max = n;
+  });
+  var n2 = max + 1, s2 = String(n2);
+  while (s2.length < largeur) s2 = '0' + s2;
+  var o = {}; for (var k in rec) o[k] = rec[k];
+  o.numero = prefixe + s2;
+  if (typeof rec.seq === 'number' && rec.seq === parseInt(m[2], 10)) o.seq = n2;
+  return o;
+}
+function noterRenumerotation(b, chemin, ancien, nouveau){
+  var t = 'Document ' + ancien + ' (cree sur un appareil hors ligne) renumerote ' + nouveau + ' : ce numero avait deja ete attribue par un autre appareil.';
+  RENUMEROTATIONS.push({ uid: b.uid, chemin: chemin, ancien: ancien, nouveau: nouveau, quand: Date.now() });
+  journaliser({ uid: b.uid, type: 'renumerotation', resume: t });
+  toast('ℹ️ ' + t.replace('renumerote', 'renuméroté').replace('cree', 'créé').replace('deja ete attribue', 'déjà été attribué'));
+}
+function renumeroterAjoutsTableau(arr, cles){
+  var liste = arr.slice(), sortie = [];
+  return { arr: liste.map(function(r){
+    if (!estObj(r) || !cles[cleBase(r)]) return r;
+    var autres = liste.filter(function(x){ return x !== r; });
+    var n = renumeroter(autres, r, cleBase(r));
+    if (n){ sortie.push([r.numero, n.numero]); liste[liste.indexOf(r)] = n; return n; }
+    return r;
+  }), changes: sortie };
+}
+
+function prochaineCle(raw){
+  if (raw === null || raw === undefined) return '0';
+  if (Array.isArray(raw)) return String(raw.length);
+  if (estObj(raw) && toutEntier(raw)){
+    var max = -1; Object.keys(raw).forEach(function(k){ if (+k > max) max = +k; });
+    return String(max + 1);
+  }
+  return null;
+}
+function cleServeur(raw, k){
+  var e = entreesBrutes(raw), ks = clesDe(e.map(function(x){ return x.r; }));
+  for (var i = 0; i < ks.length; i++) if (ks[i] === k) return e[i].k;
+  return null;
+}
+function presentSurServeur(raw, k){
+  var b = baseDe(k), r = rangDe(k), n = 0;
+  entreesBrutes(raw).forEach(function(x){ if (cleBase(x.r) === b) n++; });
+  return n > r;
+}
+
+async function pousserCollection(b, op, ic, ch, conflits){
+  var abs = 'gdv_shops/' + b.uid + '/' + joindre(ch.p);
+  var r = racineDeChange(b, ch);
+  function brut(){ return lireA(r.S, ch.p, r.s.length); }
+  var raw = brut();
+  var indexable = (raw === null || Array.isArray(raw) || (estObj(raw) && toutEntier(raw)));
+  var items = op.faitsItems;
+  var reste = { t: 'c', p: ch.p, del: ch.del,
+                mod: ch.mod.filter(function(m){ return !items[ic + ':m:' + m.k]; }),
+                add: ch.add.filter(function(a){ return !items[ic + ':a:' + a.k]; }) };
+  if (reste.del.length || !indexable || (reste.add.length + reste.mod.length) > 40){
+    /* retraits (ou gros volume) : une transaction sur la collection, qui
+       applique ajouts/modifications/retraits par identite */
+    op.enVol = String(ic);
+    var clesAjout = {}; reste.add.forEach(function(a){ clesAjout[baseDe(a.k)] = 1; });
+    var renum = [];
+    var res = await transactionServeur(abs, function(cur){
+      var c = normal(cur), h = { v: c };
+      appliquerCollection(h, [], reste, conflits);
+      renum = [];
+      if (reste.add.length && Array.isArray(h.v)){
+        var deja = {}; entreesBrutes(c).forEach(function(x){ deja[cleBase(x.r)] = 1; });
+        var aVerifier = {}; Object.keys(clesAjout).forEach(function(k){ if (!deja[k]) aVerifier[k] = 1; });
+        var rn = renumeroterAjoutsTableau(h.v, aVerifier);
+        h.v = rn.arr; renum = rn.changes;
+      }
+      return egal(h.v, c) ? undefined : h.v;
+    });
+    if (res.committed){
+      verifierCollection(normal(res.snapshot.val()), reste);
+      renum.forEach(function(x){ noterRenumerotation(b, abs, x[0], x[1]); });
+    }
+    return;
+  }
+  var i;
+  for (i = 0; i < reste.mod.length; i++){
+    var cm = ic + ':m:' + reste.mod[i].k;
+    op.enVol = cm;
+    await pousserModification(r, abs, reste.mod[i], brut, conflits, ch);
+    await itemFait(op, cm);
+  }
+  for (i = 0; i < reste.add.length; i++){
+    var ca = ic + ':a:' + reste.add[i].k;
+    op.enVol = ca;
+    await pousserAjout(b, r, abs, reste.add[i], brut);
+    await itemFait(op, ca);
+  }
+}
+function verifierCollection(v, ch){
+  var manque = ch.add.filter(function(a){ return !presentSurServeur(v, a.k); });
+  var reste = ch.del.filter(function(k){ return presentSurServeur(v, k); });
+  if (manque.length || reste.length) throw new Error('verification du serveur echouee (' + manque.length + ' ajout(s), ' + reste.length + ' retrait(s))');
+}
+async function pousserModification(r, abs, m, brut, conflits, ch){
+  for (var essai = 0; essai < 8; essai++){
+    var k = cleServeur(brut(), m.k);
+    if (k === null){
+      conflits.push({ type: 'modifie-mais-supprime-ailleurs', chemin: joindre(ch.p), cle: m.k });
+      return;
+    }
+    var etat = '';
+    var res = await transactionServeur(abs + '/' + k, function(cur){
+      var c = normal(cur);
+      if (c === null || cleBase(c) !== baseDe(m.k)){ etat = 'deplace'; return; }
+      var h = { v: c };
+      appliquer(h, m.d, conflits);
+      h.v = apresModification(h.v, m.d);
+      if (egal(h.v, c)){ etat = 'deja'; return; }
+      etat = 'ok';
+      return h.v;
+    });
+    if (res.committed){
+      var sv = normal(res.snapshot.val());
+      if (sv === null || cleBase(sv) !== baseDe(m.k)) throw new Error('verification du serveur echouee (' + m.k + ')');
+      return;
+    }
+    if (etat === 'deja') return;
+    await attendreServeur(r, 800);         /* l'enregistrement a change de place */
+  }
+  throw new Error('modification non placee (' + m.k + ')');
+}
+async function pousserAjout(b, r, abs, a, brut){
+  var k = null;
+  for (var essai = 0; essai < 40; essai++){
+    var raw = brut();
+    if (presentSurServeur(raw, a.k)) return;          /* deja sur le serveur : rien a refaire */
+    if (k === null) k = prochaineCle(raw);
+    if (k === null) throw new Error('collection non indexable');
+    var rec = renumeroter(entreesBrutes(raw).map(function(x){ return x.r; }), a.r, baseDe(a.k)) || a.r;
+    var etat = '';
+    var res = await transactionServeur(abs + '/' + k, function(cur){
+      var c = normal(cur);
+      if (c === null){ etat = 'ok'; return copie(rec); }
+      etat = (cleBase(c) === baseDe(a.k)) ? 'deja' : 'occupe';
+      return;
+    });
+    if (res.committed){
+      var sv = normal(res.snapshot.val());
+      if (sv === null || cleBase(sv) !== baseDe(a.k)) throw new Error('verification du serveur echouee (' + a.k + ')');
+      if (rec !== a.r) noterRenumerotation(b, abs, a.r.numero, rec.numero);
+      return;
+    }
+    if (etat === 'deja') return;
+    if (etat === 'occupe'){ k = String(+k + 1); continue; }   /* case prise par un autre appareil */
+    k = null;
+    await attendreServeur(r, 800);
+  }
+  throw new Error('ajout non place (' + a.k + ')');
+}
+async function pousserCompteur(b, ch){
+  var res = await transactionServeur('gdv_shops/' + b.uid + '/' + joindre(ch.p), function(cur){
+    var n = (typeof cur === 'number' ? cur : (parseFloat(cur) || 0)) + ch.d;
+    if (ch.plancher && n < 0) n = 0;
+    return n;
+  });
+  if (!res.committed) throw new Error('compteur non enregistre');
+}
+async function pousserVerrou(b, ch){
+  await transactionServeur('gdv_shops/' + b.uid + '/' + joindre(ch.p), function(cur){
+    return (cur === null || cur === undefined) ? copie(ch.v) : undefined;
+  });
+}
+
+function retirerOp(b, op){
+  var fin = op.seq ? tx(['operations'], 'readwrite', function(t){ t.objectStore('operations')['delete'](op.seq); })
+                   : Promise.resolve();
+  return fin.then(function(){
+    var i = b.ops.indexOf(op);
+    if (i >= 0) b.ops.splice(i, 1);
+    b.derniereSynchro = Date.now();
+    journaliser({ uid: b.uid, type: 'envoi', opId: op.opId, resume: op.resume, conflits: op.conflits || null,
+                  cree: op.cree, appareil: op.appareil });
+    racinesDesChanges(b, op.changes).forEach(function(r){
+      var avant = r.L;
+      rebaser(b, r);
+      if (!egal(avant, r.L)) signaler(b.uid, [r.s]);
+    });
+    diffuser({ type: 'ops', uid: b.uid });
+    metaPoser('synchro:' + b.uid, { quand: b.derniereSynchro });
+  });
+}
+
+/* ============================================================
+   17. JOURNAL ET META
+   ============================================================ */
+var nbJournal = 0;
+function journaliser(e){
+  e.quand = e.quand || Date.now();
+  e.appareilJournal = APPAREIL;
+  tx(['journal'], 'readwrite', function(t){ t.objectStore('journal').add(e); }).then(function(){
+    if (++nbJournal % 50 === 0) taillerJournal();
+  }).catch(function(){});
+}
+function taillerJournal(){
+  tx(['journal'], 'readwrite', function(t){
+    var st = t.objectStore('journal');
+    requete(st.count()).then(function(n){
+      var trop = n - MAX_JOURNAL;
+      if (trop <= 0) return;
+      var c = st.openCursor();
+      c.onsuccess = function(){ var cur = c.result; if (cur && trop-- > 0){ cur['delete'](); cur['continue'](); } };
+    });
+  }).catch(function(){});
+}
+function lireJournal(n){
+  return tx(['journal'], 'readonly', function(t){ return requete(t.objectStore('journal').getAll()); })
+    .then(function(l){ return (l || []).slice(-(n || 200)).reverse(); }, function(){ return []; });
+}
+function metaPoser(cle, v){
+  var o = { cle: cle }; for (var k in v) o[k] = v[k];
+  return tx(['meta'], 'readwrite', function(t){ t.objectStore('meta').put(o); }).catch(function(){});
+}
+function metaLire(cle){
+  return tx(['meta'], 'readonly', function(t){ return requete(t.objectStore('meta').get(cle)); }).catch(function(){ return null; });
+}
+
+/* ============================================================
+   18. PLUSIEURS ONGLETS SUR LE MEME APPAREIL
+   ============================================================ */
+var ONGLET = 'o' + Math.random().toString(36).slice(2, 9);
+var CANAL = null;
+try{
+  CANAL = new BroadcastChannel('agv_base_locale');
+  CANAL.onmessage = function(ev){
+    var m = ev.data || {};
+    if (m.onglet === ONGLET || !m.uid) return;
+    var b = BOUTIQUES[m.uid];
+    if (b && b.charge) rechargerOps(b);
+  };
+}catch(e){}
+function diffuser(m){ m.onglet = ONGLET; try{ if (CANAL) CANAL.postMessage(m); }catch(e){} }
+function rechargerOps(b){
+  tx(['operations'], 'readonly', function(t){ return requete(t.objectStore('operations').index('uid').getAll(b.uid)); })
+    .then(function(l){
+      l = (l || []).sort(function(a, c){ return a.seq - c.seq; });
+      var connus = {}; l.forEach(function(o){ connus[o.opId] = 1; });
+      var parId = {}; b.ops.forEach(function(o){ parId[o.opId] = o; });
+      /* on garde les objets deja en memoire (envoi en cours) et les ecritures
+         de cet onglet pas encore confirmees par IndexedDB */
+      var neuf = l.map(function(o){ return parId[o.opId] || o; });
+      b.ops.forEach(function(o){ if (!o.seq && !connus[o.opId]) neuf.push(o); });
+      b.ops = neuf;
+      Object.keys(b.R).forEach(function(c){
+        var r = b.R[c], avant = r.L;
+        rebaser(b, r);
+        if (!egal(avant, r.L)) signaler(b.uid, [r.s]);
+      });
+      majIndicateurBientot();
+      planifierEnvoi(500);
+    }).catch(function(){});
+}
+
+/* ============================================================
+   19. STOCKAGE : PERSISTANCE, ESPACE, INSTANTANES
+   ============================================================ */
+var STOCKAGE = { persistant: null, usage: null, quota: null, alerte: false, erreur: null };
+function demanderPersistance(){
+  try{
+    if (!navigator.storage || !navigator.storage.persisted) { STOCKAGE.persistant = null; return; }
+    navigator.storage.persisted().then(function(p){
+      if (p){ STOCKAGE.persistant = true; return; }
+      if (!navigator.storage.persist) { STOCKAGE.persistant = false; return; }
+      return navigator.storage.persist().then(function(ok){
+        STOCKAGE.persistant = !!ok;
+        log(ok ? 'conservation permanente accordee par le navigateur'
+               : 'le navigateur n\'a PAS garanti la conservation (voir le panneau Base locale)');
+      });
+    }).catch(function(){});
+  }catch(e){}
+}
+function surveillerEspace(){
+  try{
+    if (!navigator.storage || !navigator.storage.estimate) return;
+    navigator.storage.estimate().then(function(e){
+      STOCKAGE.usage = e.usage || 0; STOCKAGE.quota = e.quota || 0;
+      var plein = STOCKAGE.quota && (STOCKAGE.usage / STOCKAGE.quota > 0.85 || STOCKAGE.quota - STOCKAGE.usage < 30 * 1024 * 1024);
+      if (plein && !STOCKAGE.alerte){
+        STOCKAGE.alerte = true;
+        toast('⚠️ Espace de stockage presque plein sur cet appareil — libérez de la place pour garder la base locale.');
+      }
+      if (!plein) STOCKAGE.alerte = false;
+    }).catch(function(){});
+  }catch(e){}
+}
+function alerteStockage(e){
+  STOCKAGE.erreur = String((e && (e.name || e.message)) || e);
+  avert('ecriture dans la base locale impossible :', e);
+  toast('⚠️ Base locale : écriture impossible (' + STOCKAGE.erreur + '). Les opérations restent en mémoire et seront envoyées dès que possible.');
+}
+function jourDuJour(){ var d = new Date(); return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2); }
+function instantaneDuJour(b){
+  var jour = jourDuJour();
+  tx(['instantanes'], 'readonly', function(t){ return requete(t.objectStore('instantanes').getAllKeys(plage(b.uid))); })
+    .then(function(cles){
+      cles = cles || [];
+      if (cles.some(function(k){ return k[1] === jour; })) return;
+      var racines = {};
+      Object.keys(b.R).forEach(function(c){ if (b.R[c].couvert) racines[c] = b.R[c].L; });
+      if (!Object.keys(racines).length) return;
+      return tx(['instantanes'], 'readwrite', function(t){
+        var st = t.objectStore('instantanes');
+        st.put({ uid: b.uid, jour: jour, quand: Date.now(), racines: racines, attente: b.ops.length });
+        cles.map(function(k){ return k[1]; }).sort().reverse().slice(GARDER_INSTANTANES - 1)
+            .forEach(function(j){ st['delete']([b.uid, j]); });
+      });
+    }).catch(function(){});
+}
+
+/* ============================================================
+   20. EXPORT ET RESTAURATION
+   ============================================================ */
+function nomBoutique(uid){
+  var r = REGISTRE[uid] || {};
+  var s = window._currentShop;
+  if (s && s.uid === uid && s.entreprise) return s.entreprise;
+  return r.nom || uid;
+}
+function contenuExport(uids){
+  return Promise.all(uids.map(function(u){ return charger(u).then(function(b){ return b; }, function(){ return null; }); }))
+    .then(function(bs){
+      return {
+        format: 'agv-base-locale', version: FORMAT_DONNEES, module: VERSION,
+        appareil: APPAREIL, exporteLe: new Date().toISOString(),
+        boutiques: bs.filter(Boolean).map(function(b){
+          var racines = {};
+          Object.keys(b.R).forEach(function(c){ if (b.R[c].couvert) racines[c] = b.R[c].S; });
+          return { uid: b.uid, nom: nomBoutique(b.uid), racines: racines,
+                   operations: b.ops.map(function(o){ var x = {}; for (var k in o) if (k !== 'seq') x[k] = o[k]; return x; }) };
+        })
+      };
+    });
+}
+function telecharger(nom, texte){
+  var blob = new Blob([texte], { type: 'application/json' });
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = nom;
+  document.body.appendChild(a); a.click();
+  setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); }, 2000);
+}
+API.exporter = function(uid){
+  var uids = uid ? [uid] : Object.keys(REGISTRE);
+  return contenuExport(uids).then(function(o){
+    var nom = 'agv-base-locale-' + (uid ? nomBoutique(uid) : 'appareil').replace(/[^a-z0-9]+/gi, '-').toLowerCase() +
+              '-' + jourDuJour() + '.json';
+    telecharger(nom, JSON.stringify(o));
+    toast('Export de la base locale : ' + nom);
+    return nom;
+  });
+};
+API.exporterObjet = function(uid){ return contenuExport(uid ? [uid] : Object.keys(REGISTRE)); };
+/* restauration ADDITIVE : rien n'est retire ni remplace */
+API.restaurer = function(objet, options){
+  options = options || {};
+  if (!objet || objet.format !== 'agv-base-locale' || !Array.isArray(objet.boutiques)) return Promise.reject(new Error('fichier non reconnu'));
+  var bilan = { operations: 0, reinjections: 0 };
+  return objet.boutiques.reduce(function(p, x){
+    return p.then(function(){
+      if (!x || !x.uid) return;
+      enregistrerBoutique(x.uid, { entreprise: x.nom });
+      return charger(x.uid).then(function(b){
+        var connus = {}; b.ops.forEach(function(o){ connus[o.opId] = 1; });
+        var aImporter = (x.operations || []).filter(function(o){ return o && o.opId && !connus[o.opId]; });
+        var suite = aImporter.reduce(function(pp, o){
+          return pp.then(function(){
+            var op = {}; for (var k in o) op[k] = o[k];
+            op.faits = {}; op.importe = Date.now();
+            b.ops.push(op); bilan.operations++;
+            return tx(['operations'], 'readwrite', function(t){
+              var rq = t.objectStore('operations').add(op);
+              rq.onsuccess = function(){ op.seq = rq.result; };
+            });
+          });
+        }, Promise.resolve());
+        return suite.then(function(){
+          Object.keys(b.R).forEach(function(c){ rebaser(b, b.R[c]); });
+          if (!options.reinjecter) return;
+          var changes = [];
+          Object.keys(x.racines || {}).forEach(function(c){
+            var s = decouper(c), h = { v: normal(x.racines[c]) };
+            (x.operations || []).forEach(function(o){ if (o && o.changes) appliquerSurRacine(h, o.changes, s, null); });
+            var r = racine(b, c);
+            var d = difference(r.couvert ? r.L : null, h.v, s, s[s.length - 1], [], { sansSuppression: true });
+            changes = changes.concat(seulementAjouts(d, r.L ? (function(){ var o = {}; var hh = { v: o }; poser(hh, s, r.L); return hh.v; })() : null));
+          });
+          if (changes.length){ bilan.reinjections += changes.length; return enregistrerOp(b, changes); }
+        }).then(function(){ signaler(b.uid, null); });
+      });
+    });
+  }, Promise.resolve()).then(function(){
+    planifierEnvoi(200);
+    return bilan;
+  });
+};
+API.reinjecterInstantane = function(uid, jour){
+  return tx(['instantanes'], 'readonly', function(t){ return requete(t.objectStore('instantanes').get([uid, jour])); })
+    .then(function(x){
+      if (!x) throw new Error('instantane introuvable');
+      return API.restaurer({ format: 'agv-base-locale', boutiques: [{ uid: uid, nom: nomBoutique(uid), racines: x.racines, operations: [] }] }, { reinjecter: true });
+    });
+};
+function listerInstantanes(uid){
+  return tx(['instantanes'], 'readonly', function(t){ return requete(t.objectStore('instantanes').getAllKeys(plage(uid))); })
+    .then(function(k){ return (k || []).map(function(x){ return x[1]; }).sort().reverse(); }, function(){ return []; });
+}
+
+/* ============================================================
+   21. INDICATEUR, MESSAGES, PANNEAU
+   ============================================================ */
+function toast(t){
+  try{ if (typeof window.showToast === 'function'){ window.showToast(t); return; } }catch(e){}
+  try{
+    var d = document.createElement('div');
+    d.textContent = t;
+    d.style.cssText = 'position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:2147483000;background:#0f172a;color:#e2e8f0;' +
+      'border:1px solid #334155;padding:10px 16px;border-radius:10px;font:13px sans-serif;max-width:90vw;box-shadow:0 6px 24px rgba(0,0,0,.35)';
+    document.body.appendChild(d);
+    setTimeout(function(){ d.remove(); }, 5000);
+  }catch(e){}
+}
+var ORIG_STATUT = null, minIndic = null;
+function majIndicateurBientot(){ clearTimeout(minIndic); minIndic = setTimeout(majIndicateur, 120); }
+function majIndicateur(){
+  var ind = document.getElementById('syncIndicator');
+  if (!ind) return;
+  var dot = document.getElementById('syncDot'), txt = document.getElementById('syncText');
+  if (!dot || !txt){
+    ind.innerHTML = '<span id="syncDot"></span><span id="syncText"></span>';
+    dot = document.getElementById('syncDot'); txt = document.getElementById('syncText');
+  }
+  if (ORIG_STATUT){ try{ ORIG_STATUT(connecte); }catch(e){} }
+  var n = totalEnAttente(), anomalie = false;
+  for (var u in BOUTIQUES) for (var c in BOUTIQUES[u].R) if (BOUTIQUES[u].R[c].anomalie) anomalie = true;
+  var t;
+  if (!API.actif) t = connecte ? 'En ligne ✓' : 'Hors ligne';
+  else if (connecte) t = n ? (envoiActif ? 'Synchronisation… (' + n + ')' : n + ' en attente') : 'En ligne ✓';
+  else t = 'Hors ligne · ' + (n ? n + ' en attente' : 'base locale ✓');
+  if (anomalie) t = '⚠ ' + t;
+  txt.textContent = t;
+  ind.title = 'Base locale de cet appareil : ' + n + ' opération(s) en attente. Toucher pour le détail.';
+  ind.style.cursor = 'pointer';
+  if (!ind.__agv51){
+    ind.__agv51 = true;
+    ind.addEventListener('click', function(){ API.panneau(); });
+    try{
+      new MutationObserver(function(){
+        if (!document.getElementById('syncText')) majIndicateurBientotLent();
+      }).observe(ind, { childList: true });
+    }catch(e){}
+  }
+}
+var minLent = null;
+function majIndicateurBientotLent(){ clearTimeout(minLent); minLent = setTimeout(majIndicateur, 1600); }
+
+function esc(v){ return String(v === null || v === undefined ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+function dateFr(t){ try{ return t ? new Date(t).toLocaleString('fr-FR') : '—'; }catch(e){ return '—'; } }
+function octets(n){ if (n === null || n === undefined) return '—'; if (n > 1073741824) return (n / 1073741824).toFixed(1) + ' Go'; if (n > 1048576) return (n / 1048576).toFixed(1) + ' Mo'; return Math.round(n / 1024) + ' Ko'; }
+function compterEnregistrements(b){
+  var out = {}, noms = { products: 'Produits', ventes: 'Ventes', factureVentes: 'Factures', clients: 'Clients',
+    fournisseurs: 'Fournisseurs', commandes: 'Commandes', depenses: 'Dépenses', dettes: 'Dettes', entrees: 'Entrées', appros: 'Approvisionnements', gerants: 'Personnel' };
+  var r = b.R.data;
+  if (r && r.couvert && r.L){ Object.keys(noms).forEach(function(k){ var c = enCollection(r.L[k], k); out[noms[k]] = c ? c.length : 0; }); }
+  return out;
+}
+
+API.panneau = function(){
+  var ancien = document.getElementById('agv51-panneau');
+  if (ancien) ancien.remove();
+  surveillerEspace();
+  var ov = document.createElement('div');
+  ov.id = 'agv51-panneau';
+  ov.style.cssText = 'position:fixed;inset:0;z-index:2147483200;background:rgba(2,6,23,.82);display:flex;align-items:flex-start;' +
+    'justify-content:center;overflow:auto;padding:16px;box-sizing:border-box;-webkit-overflow-scrolling:touch';
+  ov.innerHTML = '<div id="agv51-boite" style="background:#0b1530;color:#e2e8f0;border:1px solid rgba(96,165,250,.3);border-radius:14px;' +
+    'width:100%;max-width:640px;font:13.5px/1.55 \'DM Sans\',sans-serif;box-shadow:0 20px 60px rgba(0,0,0,.5)">' +
+    '<div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid rgba(96,165,250,.18)">' +
+    '<div><div style="font-weight:800;font-size:15.5px">🗄️ Base locale de cet appareil</div>' +
+    '<div style="font-size:11.5px;color:#94a3b8">Module AGV-51 v' + VERSION + ' — fonctionne avec ou sans Internet</div></div>' +
+    '<button onclick="document.getElementById(\'agv51-panneau\').remove()" style="background:none;border:none;color:#94a3b8;font-size:22px;cursor:pointer">✕</button></div>' +
+    '<div id="agv51-corps" style="padding:14px 18px">Chargement…</div></div>';
+  ov.addEventListener('click', function(e){ if (e.target === ov) ov.remove(); });
+  document.body.appendChild(ov);
+  remplirPanneau();
+};
+function ligne(l, v, couleur){
+  return '<div style="display:flex;justify-content:space-between;gap:12px;padding:5px 0;border-bottom:1px dashed rgba(148,163,184,.15)">' +
+    '<span style="color:#94a3b8">' + l + '</span><span style="text-align:right;font-weight:600;' + (couleur ? 'color:' + couleur : '') + '">' + v + '</span></div>';
+}
+function bouton(txt, action, fond){
+  return '<button onclick="' + action + '" style="padding:9px 13px;border-radius:9px;border:1px solid rgba(96,165,250,.35);' +
+    'background:' + (fond || 'rgba(37,99,235,.15)') + ';color:#e2e8f0;font-weight:700;font-size:12.5px;cursor:pointer;font-family:inherit;margin:4px 6px 0 0">' + txt + '</button>';
+}
+function titre(t){ return '<div style="margin:14px 0 6px;font-weight:800;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:#60a5fa">' + t + '</div>'; }
+function remplirPanneau(){
+  var corps = document.getElementById('agv51-corps');
+  if (!corps) return;
+  var uid = uidCourant();
+  var b = uid ? BOUTIQUES[uid] : null;
+  var h = '';
+  if (!API.actif){
+    h += '<div style="padding:10px;border-radius:9px;background:rgba(239,68,68,.12);color:#fca5a5;margin-bottom:8px">Base locale inactive : ' + esc(API.raison || 'inconnue') + '</div>';
+  }
+  h += titre('Connexion');
+  h += ligne('Internet / serveur', connecte ? 'Connecté' : 'Hors ligne — travail sur la base locale', connecte ? '#22c55e' : '#f59e0b');
+  h += ligne('Opérations en attente (toutes boutiques)', String(totalEnAttente()), totalEnAttente() ? '#f59e0b' : '#22c55e');
+  h += ligne('Dernière synchronisation complète', dateFr(dernierEnvoiOk || (b && b.derniereSynchro)));
+  if (b){
+    h += titre('Boutique ouverte : ' + esc(nomBoutique(uid)));
+    var plusVieille = b.ops.length ? b.ops[0].cree : null;
+    h += ligne('En attente d\'envoi', b.ops.length + (plusVieille ? ' (depuis ' + dateFr(plusVieille) + ')' : ''));
+    var erreurs = b.ops.filter(function(o){ return o.erreur; });
+    if (erreurs.length) h += ligne('Dernière erreur', esc(erreurs[0].erreur) + ' (' + erreurs[0].tentatives + ' essai(s))', '#f87171');
+    var cpt = compterEnregistrements(b);
+    Object.keys(cpt).forEach(function(k){ if (cpt[k]) h += ligne(k + ' (sur l\'appareil)', String(cpt[k])); });
+    Object.keys(b.R).forEach(function(c){
+      var r = b.R[c];
+      if (r.anomalie){
+        h += '<div style="margin-top:10px;padding:10px;border-radius:9px;background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.35)">' +
+          '⚠️ Le serveur renvoie la rubrique <b>' + esc(c) + '</b> VIDE alors que cet appareil en a une copie. Les données locales sont conservées.<br>' +
+          bouton('Renvoyer mes données au serveur', 'agvBaseLocale.renvoyerRubrique(\'' + esc(uid) + '\',\'' + esc(c) + '\')', 'rgba(34,197,94,.18)') +
+          bouton('Accepter la remise à zéro', 'agvBaseLocale.accepterVide(\'' + esc(uid) + '\',\'' + esc(c) + '\')', 'rgba(239,68,68,.15)') + '</div>';
+      }
+    });
+  }
+  h += titre('Stockage sur cet appareil');
+  var pers = STOCKAGE.persistant === true ? ['Garantie par le navigateur ✓', '#22c55e']
+           : (STOCKAGE.persistant === false ? ['NON garantie', '#f59e0b'] : ['Inconnue (navigateur ancien)', '#f59e0b']);
+  h += ligne('Conservation des données', pers[0], pers[1]);
+  if (STOCKAGE.persistant !== true){
+    h += '<div style="font-size:12px;color:#cbd5e1;background:rgba(245,158,11,.08);border-radius:8px;padding:8px 10px;margin-top:6px">' +
+      'Le navigateur peut effacer les données d\'un site peu utilisé ou si l\'espace manque. Pour une conservation garantie : ' +
+      '<b>installez l\'application</b> (bouton « Installer » / « Ajouter à l\'écran d\'accueil »). Sur iPhone et iPad, Safari efface les données d\'un site ' +
+      'non installé après 7 jours sans utilisation : l\'installation sur l\'écran d\'accueil est indispensable. ' +
+      'Exportez régulièrement la base locale tant que la conservation n\'est pas garantie.</div>' +
+      bouton('Demander la conservation permanente', 'agvBaseLocale.demanderConservation()');
+  }
+  h += ligne('Espace utilisé / disponible', octets(STOCKAGE.usage) + ' / ' + octets(STOCKAGE.quota), STOCKAGE.alerte ? '#f87171' : '');
+  if (STOCKAGE.erreur) h += ligne('Dernière erreur d\'écriture', esc(STOCKAGE.erreur), '#f87171');
+  h += ligne('Boutiques conservées sur l\'appareil', String(Object.keys(REGISTRE).length));
+  h += ligne('Identifiant de l\'appareil', '<span style="font-family:monospace;font-size:11.5px">' + esc(APPAREIL) + '</span>');
+  h += '<div style="margin-top:12px">' +
+    bouton('🔄 Synchroniser maintenant', 'agvBaseLocale.synchroniser();setTimeout(function(){agvBaseLocale.panneau()},1500)') +
+    bouton('⬇️ Exporter', 'agvBaseLocale.exporter(' + (uid ? '\'' + esc(uid) + '\'' : '') + ')') +
+    bouton('⬆️ Restaurer', 'document.getElementById(\'agv51-fichier\').click()') +
+    bouton('📜 Journal', 'agvBaseLocale.afficherJournal()') + '</div>' +
+    '<input type="file" id="agv51-fichier" accept=".json,application/json" style="display:none" onchange="agvBaseLocale.restaurerFichier(this)">';
+  h += '<div id="agv51-instantanes"></div><div id="agv51-journal"></div>';
+  corps.innerHTML = h;
+  if (uid) listerInstantanes(uid).then(function(l){
+    var z = document.getElementById('agv51-instantanes');
+    if (!z || !l.length) return;
+    z.innerHTML = titre('Copies quotidiennes de secours') + l.map(function(j){
+      return ligne(j, bouton('Réinjecter ce qui manque', 'agvBaseLocale.reinjecterJour(\'' + esc(uid) + '\',\'' + j + '\')'));
+    }).join('');
+  });
+}
+API.afficherJournal = function(){
+  lireJournal(150).then(function(l){
+    var z = document.getElementById('agv51-journal');
+    if (!z) return;
+    z.innerHTML = titre('Journal (150 derniers évènements)') + (l.length ? l.map(function(e){
+      var c = e.type === 'erreur' ? '#f87171' : (e.type === 'anomalie' ? '#f59e0b' : '#cbd5e1');
+      return '<div style="font-size:12px;padding:4px 0;border-bottom:1px dashed rgba(148,163,184,.12);color:' + c + '">' +
+        '<b>' + dateFr(e.quand) + '</b> · ' + esc(e.type) + ' · ' + esc(e.resume || '') +
+        (e.conflits && e.conflits.length ? ' <span style="color:#f59e0b">(' + e.conflits.length + ' conflit(s))</span>' : '') + '</div>';
+    }).join('') : '<div style="color:#94a3b8">Journal vide.</div>');
+  });
+};
+API.restaurerFichier = function(input){
+  var f = input && input.files && input.files[0];
+  if (!f) return;
+  var rd = new FileReader();
+  rd.onload = function(){
+    var o;
+    try{ o = JSON.parse(rd.result); }catch(e){ toast('Fichier illisible'); return; }
+    var re = confirm('Restaurer ce fichier ?\n\nLes opérations non envoyées qu\'il contient seront ajoutées à la file d\'attente.\n\n' +
+                     'OK : réinjecter aussi les enregistrements absents de cet appareil (rien n\'est supprimé ni remplacé).\nAnnuler : opérations seulement.');
+    API.restaurer(o, { reinjecter: re }).then(function(bilan){
+      toast('Restauration : ' + bilan.operations + ' opération(s) importée(s), ' + bilan.reinjections + ' ajout(s) réinjecté(s).');
+      API.panneau();
+    }, function(e){ toast('Restauration impossible : ' + e.message); });
+  };
+  rd.readAsText(f);
+};
+API.reinjecterJour = function(uid, jour){
+  if (!confirm('Réinjecter la copie du ' + jour + ' ?\nSeuls les enregistrements absents seront ajoutés ; rien n\'est supprimé ni remplacé.')) return;
+  API.reinjecterInstantane(uid, jour).then(function(bilan){ toast(bilan.reinjections ? 'Réinjection en file d\'attente.' : 'Rien ne manquait.'); API.panneau(); },
+                                            function(e){ toast('Impossible : ' + e.message); });
+};
+API.demanderConservation = function(){ demanderPersistance(); setTimeout(function(){ API.panneau(); }, 1200); };
+
+/* garde-fou « base vide » : les deux decisions possibles */
+API.renvoyerRubrique = function(uid, cle){
+  var b = BOUTIQUES[uid]; if (!b) return;
+  var r = b.R[cle]; if (!r) return;
+  var changes = seulementAjouts(difference(null, r.L, r.s, r.s[r.s.length - 1], [], null), null);
+  r.anomalie = null; r.S = null;                  /* le serveur est vide : on repart de la */
+  rebaser(b, r);
+  return enregistrerOp(b, changes).then(function(){ toast('Données renvoyées au serveur (file d\'attente).'); API.panneau(); });
+};
+API.accepterVide = function(uid, cle){
+  if (!confirm('Accepter que la rubrique « ' + cle + ' » soit vide ?\nLes données de cet appareil pour cette rubrique seront retirées (une copie quotidienne de secours reste disponible).')) return;
+  var b = BOUTIQUES[uid]; if (!b) return;
+  var r = b.R[cle]; if (!r) return;
+  var ancien = r.S;
+  r.anomalie = null; r.S = null;
+  persisterS(b, r, ancien).catch(function(){});
+  rebaser(b, r);
+  signaler(uid, [r.s]);
+  API.panneau();
+};
+
+/* carte dans l'onglet Parametres */
+function poserCarteParametres(){
+  var v = document.getElementById('view-parametres');
+  if (!v || document.getElementById('agv51-carte')) return;
+  var d = document.createElement('div');
+  d.id = 'agv51-carte';
+  d.style.cssText = 'margin:16px 0;padding:14px 16px;border-radius:12px;border:1px solid rgba(96,165,250,.3);background:rgba(37,99,235,.06)';
+  d.innerHTML = '<div style="font-weight:800;margin-bottom:4px">🗄️ Base locale de cet appareil</div>' +
+    '<div style="font-size:12.5px;opacity:.8;margin-bottom:10px">Les données de la boutique sont conservées sur cet appareil et utilisables sans Internet. ' +
+    'Les opérations sont envoyées au serveur dès que la connexion revient.</div>' +
+    '<button class="btn btn-primary" onclick="agvBaseLocale.panneau()" style="cursor:pointer">Ouvrir le détail, exporter, restaurer</button>';
+  v.appendChild(d);
+}
+
+/* ============================================================
+   22. INTEGRATION A L'APPLICATION
+   ============================================================ */
+/* l'indicateur reflete la vraie connexion (les livraisons locales ne
+   doivent pas faire croire que l'appareil est en ligne) */
+function brancherIndicateur(){
+  if (typeof window.agvSetOnlineStatus !== 'function' || window.agvSetOnlineStatus.__agv51) return;
+  ORIG_STATUT = window.agvSetOnlineStatus;
+  var f = function(){ majIndicateur(); };
+  f.__agv51 = true;
+  window.agvSetOnlineStatus = f;
+}
+/* bandeau hors ligne non bloquant (remplace l'ecran « Connexion Internet requise ») */
+API.bandeauHorsLigne = function(horsLigne){ majIndicateur(); };
+
+/* ouverture d'une boutique : sa base locale est creee ou mise a jour */
+var dernierUid = null;
+function surveillerBoutique(){
+  var u = uidCourant();
+  if (u && u !== dernierUid){
+    dernierUid = u;
+    enregistrerBoutique(u, window._currentShop);
+    couvrirBoutique(u);
+    sourcesBlocs().forEach(function(s){ enregistrerBoutique(s); couvrirBoutique(s); });
+  } else if (u && window._currentShop && REGISTRE[u] && window._currentShop.entreprise && REGISTRE[u].nom !== window._currentShop.entreprise){
+    enregistrerBoutique(u, window._currentShop);
+  }
+  if (!u) dernierUid = null;
+}
+
+/* une saisie retenue par le module de performance est enregistree avant
+   que la page ne soit fermee ou mise en arriere-plan */
+function viderSaisiesRetenues(){
+  try{ if (window.AGV_PERF && typeof window.AGV_PERF.viderFileAttente === 'function') window.AGV_PERF.viderFileAttente(); }catch(e){}
+}
+
+/* ============================================================
+   23. API ET OUTILS DE CONSOLE
+   ============================================================ */
+API.etat = function(){
+  var o = {
+    actif: API.actif, version: VERSION, raison: API.raison || null, appareil: APPAREIL, connecte: connecte,
+    enAttente: totalEnAttente(), envoiEnCours: envoiActif, derniereSynchro: dernierEnvoiOk ? new Date(dernierEnvoiOk).toLocaleString('fr-FR') : null,
+    stockage: { persistant: STOCKAGE.persistant, utilise: octets(STOCKAGE.usage), quota: octets(STOCKAGE.quota), erreur: STOCKAGE.erreur },
+    boutiques: Object.keys(BOUTIQUES).map(function(u){
+      var b = BOUTIQUES[u];
+      return { uid: u, nom: nomBoutique(u), chargee: b.charge, enAttente: b.ops.length,
+               erreurs: b.ops.filter(function(x){ return x.erreur; }).length,
+               rubriques: Object.keys(b.R).map(function(c){ var r = b.R[c]; return c + (r.couvert ? '' : ' (non copiee)') + (r.frais ? ' ✓' : '') + (r.anomalie ? ' ⚠' : ''); }),
+               enregistrements: compterEnregistrements(b) };
+    }),
+    ecouteursLocaux: ECOUTEURS.length
+  };
+  try{ console.log('[AGV-51]', o); }catch(e){}
+  return o;
+};
+API.synchroniser = function(){
+  if (!connecte){ toast('Hors ligne : la synchronisation partira dès le retour d\'Internet.'); return 'hors ligne'; }
+  attenteEchec = 0;
+  planifierEnvoi(0);
+  return 'synchronisation lancee (' + totalEnAttente() + ' operation(s))';
+};
+API.enAttente = function(){ return totalEnAttente(); };
+API.operations = function(uid){ var b = BOUTIQUES[uid || uidCourant()]; return b ? b.ops.map(function(o){ return { opId: o.opId, cree: new Date(o.cree).toLocaleString('fr-FR'), resume: o.resume, tentatives: o.tentatives, erreur: o.erreur || null }; }) : []; };
+API.journal = function(n){ return lireJournal(n).then(function(l){ try{ console.table(l.map(function(e){ return { quand: dateFr(e.quand), type: e.type, resume: e.resume }; })); }catch(x){} return l; }); };
+API.estConnecte = function(){ return connecte; };
+API._noyau = { normal: normal, egal: egal, difference: difference, appliquer: appliquer, appliquerCollection: appliquerCollection,
+               poser: poser, clesDe: clesDe, cleBase: cleBase, evaluerRequete: evaluerRequete, etendreSpec: etendreSpec,
+               seulementAjouts: seulementAjouts, enCollection: enCollection, Instantane: Instantane, tableauSiDense: tableauSiDense };
+API._interne = { BOUTIQUES: BOUTIQUES, REGISTRE: REGISTRE, ECOUTEURS: function(){ return ECOUTEURS; } };
+
+/* ============================================================
+   24. DEMARRAGE
+   L'amorce placee dans <head> appelle __agvBaseLocaleInstaller
+   au tout premier DOMContentLoaded, AVANT la creation de la base
+   Firebase par l'application.
+   ============================================================ */
+var installe = false;
+function demarrer(){
+  if (installe) return;
+  installe = true;
+  var coupure = false;
+  try{ coupure = localStorage.getItem(CLE_COUPURE) === '1'; }catch(e){}
+  if (coupure){ API.raison = 'desactivee manuellement (' + CLE_COUPURE + ')'; avert('base locale desactivee manuellement'); return; }
+  if (typeof indexedDB === 'undefined'){ API.raison = 'IndexedDB absent sur ce navigateur'; avert(API.raison); return; }
+  if (!installerInterception()){ installe = false; return; }
+  /* actif immediatement (le registre est deja lu depuis localStorage) ;
+     IndexedDB s'ouvre en parallele */
+  API.actif = true;
+  ouvrirIDB().then(function(){
+    API.pret = true;
+    metaLire('registre').then(function(m){
+      if (m && Array.isArray(m.boutiques)){
+        var ajout = false;
+        m.boutiques.forEach(function(x){ if (x && x.uid && !REGISTRE[x.uid]){ REGISTRE[x.uid] = x; ajout = true; } });
+        if (ajout) ecrireRegistre();
+      }
+      /* boutique de la session de l'appareil : chargee tout de suite */
+      try{
+        var s = JSON.parse(localStorage.getItem('agv_session_appareil') || 'null');
+        if (s && s.uid && REGISTRE[s.uid]) charger(s.uid).catch(function(){});
+      }catch(e){}
+      /* boutiques ayant des operations en attente : chargees pour l'envoi */
+      Object.keys(REGISTRE).forEach(function(u){
+        tx(['operations'], 'readonly', function(t){ return requete(t.objectStore('operations').index('uid').count(u)); })
+          .then(function(n){
+            if (n > 0) charger(u).then(function(b){
+              racinesDesChanges(b, [].concat.apply([], b.ops.map(function(o){ return o.changes; })))
+                .forEach(function(r){ assurerMiroir(b, r.cle); });
+              majIndicateurBientot();
+              planifierEnvoi(500);
+            }, function(){});
+          }).catch(function(){});
+      });
+    });
+    demanderPersistanceSiBoutique();
+    surveillerEspace();
+  }, function(e){
+    /* sans IndexedDB fiable, on rend la main a Firebase : rien n'est pire qu'avant */
+    API.actif = false;
+    API.raison = 'IndexedDB inaccessible : ' + ((e && (e.name || e.message)) || e);
+    avert(API.raison + ' — fonctionnement d\'origine conserve');
+  });
+  (function attendreDb(){
+    if (window.db && typeof window.db.ref === 'function'){
+      suivreConnexion();
+      return;
+    }
+    setTimeout(attendreDb, 60);
+  })();
+  setInterval(function(){
+    try{
+      surveillerBoutique();
+      brancherIndicateur();
+      poserCarteParametres();
+      if (connecte && totalEnAttente() && !envoiActif && !minEnvoi) planifierEnvoi(100);
+    }catch(e){ avert(e); }
+  }, 1000);
+  setInterval(surveillerEspace, 10 * 60 * 1000);
+  window.addEventListener('pagehide', viderSaisiesRetenues);
+  document.addEventListener('visibilitychange', function(){
+    if (document.visibilityState === 'hidden') viderSaisiesRetenues();
+    else { majIndicateur(); planifierEnvoi(300); }
+  });
+  log('module actif — v' + VERSION + ' — base locale permanente, ' + Object.keys(REGISTRE).length + ' boutique(s) connue(s) sur cet appareil');
+}
+function demanderPersistanceSiBoutique(){ if (Object.keys(REGISTRE).length) demanderPersistance(); }
+
+window.__agvBaseLocaleInstaller = function(){
+  var essais = 0;
+  (function essayer(){
+    if (installe) return;
+    demarrer();
+    if (!installe && API.raison === '' && ++essais < 400) setTimeout(essayer, 25);
+  })();
+};
+/* filet de securite si l'amorce du <head> est absente */
+if (document.readyState !== 'loading') window.__agvBaseLocaleInstaller();
+else document.addEventListener('DOMContentLoaded', function(){ window.__agvBaseLocaleInstaller(); });
+
+})();
+
 </script>
 
 </body></html>
