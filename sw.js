@@ -1,5 +1,5 @@
 /* =============================================================================
-   App AGV — service worker  (AGV-54 : ouverture independante d'Internet)
+   App AGV — service worker  (AGV-55 : ouverture independante d'Internet)
    -----------------------------------------------------------------------------
    - page (index.html) : la COPIE DE L'APPAREIL d'abord, tout de suite, avec ou
      sans Internet ; la copie est rafraichie en arriere-plan (au plus toutes les
@@ -11,7 +11,7 @@
    La version change a chaque livraison pour que les telephones deja
    installes recoivent la mise a jour.
    ============================================================================= */
-var VERSION = 'agv-v34-20261127-ouverture-instantanee';
+var VERSION = 'agv-v35-20261127-blocs-gerants-relais';
 var COQUILLE = ['./', './index.html', './manifest.json',
                 './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png'];
 var EXTERNES = ['https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js',

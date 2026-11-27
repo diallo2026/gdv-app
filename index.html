@@ -4194,12 +4194,12 @@ function renderParametresBoutique(){
   // gerants dont aucun n'est marque comme fondateur, cela affichait
   // le nom d'un EMPLOYE quelconque dans l'encadre "Fondateur" — les
   // deux identites se melangeaient a l'affichage.
-  var fondateur = gerants.find(function(g){ return g.id===1 || g.role==='fondateur' || g.type==='fondateur'; })
-    || (gerants.length===1 ? gerants[0] : null);
+  /* [AGV-55] la fiche du fondateur, et elle seule : jamais celle d'un gerant */
+  var fondateur = gerants.find(function(g){ return agvFicheEstFondateur(g); }) || null;
   var fondNomEl = document.getElementById('fond-nom');
   var fondCodeEl = document.getElementById('fond-code');
   var fondWaEl   = document.getElementById('fond-whatsapp');
-  if(fondNomEl)  fondNomEl.value  = fondateur?(fondateur.nom||''):'';
+  if(fondNomEl)  fondNomEl.value  = fondateur?(fondateur.nom||''):(shop.nom||'');
   if(fondCodeEl) fondCodeEl.value = shop.codeFondateur||'';
   if(fondWaEl)   fondWaEl.value   = fondateur?(fondateur.whatsapp||''):'';
   var fondPctEl=document.getElementById('fond-pct');
@@ -4289,7 +4289,8 @@ function saveFondateurInfo(){
   var idxF = gerants.findIndex(function(g){ return agvFicheEstFondateur(g); });
   // [CORRECTIF] le seul gerant existant n'est repris que s'il n'a pas de code
   // d'acces propre : une fiche avec son code est un employe, jamais le fondateur.
-  if(idxF<0 && gerants.length===1 && !String((gerants[0]&&gerants[0].code)||'').trim()) idxF = 0;
+  /* [AGV-55] plus jamais : le seul gerant d'un bloc n'est pas le fondateur. Sans fiche du
+     fondateur dans ce bloc, une fiche dediee est creee ci-dessous. */
   if(idxF<0){
     // Aucun gerant marque fondateur (et plusieurs gerants existent,
     // ou aucun du tout) : creer une entree dediee plutot que de
@@ -4562,6 +4563,9 @@ function agvHandleOffline(){
 
 function doLogout(){
   currentRole=null; currentGerantId=null;
+  /* [AGV-55] la session terminee ne revient pas : ni par la veille du role, ni par le role retenu */
+  window._agvRoleConnexion = null;
+  try{ if(window.AGV_ROLE && typeof window.AGV_ROLE.oublier === 'function') window.AGV_ROLE.oublier(); }catch(e){}
   window._boutiqueLoggedOut=true;
   window._currentShop=null;
   if(window._agvDbListener){ try{window._agvDbListener.off();}catch(e){} }
@@ -18038,6 +18042,7 @@ function entrer(shop, role, gerantId){
   }catch(e){}
   window.currentRole = role;
   window.currentGerantId = gerantId || null;
+  window._agvRoleConnexion = role;                 /* [AGV-55] la nouvelle connexion fait foi */
   dire('Connexion reussie !', true);
   setTimeout(function(){
     if(!shop.uid && window._lastShopCode && DB()){
@@ -26455,7 +26460,12 @@ function rattacherGerants(){
     var cle = u + '|' + g.id;
     if(affectFaites[cle] === b) return;
     affectFaites[cle] = b;
-    try{ ecrire('gdv_shops/' + u + '/blocs/_affect/' + g.id, b).catch(function(){}); }catch(e){}
+    /* [AGV-55] pose seulement s'il n'existe pas : il se regle ensuite dans « Acces des gerants » */
+    var r0 = refBrut('gdv_shops/' + u + '/blocs/_affect/' + g.id);
+    if(r0) r0.once('value').then(function(s0){
+      if(s0.exists()) return;
+      return ecrire('gdv_shops/' + u + '/blocs/_affect/' + g.id, b);
+    }).catch(function(){});
   });
 }
 setInterval(function(){ try{ rattacherGerants(); }catch(e){} }, 20000);
@@ -36550,7 +36560,7 @@ function portail(rs, nomDuBloc, blocOuvert){
       + '<div class="rond">' + icone(ICONES.vente) + '</div>'
       + '<div class="t">Lieu de vente</div>'
       + '<div class="s">' + esc(x.nom) + '</div>'
-      + '<div class="g">' + esc(gerantDuBloc(x.nom) || (s.nom || '')) + '</div>'
+      + '<div class="g" data-agv55-bloc="' + esc(x.bloc) + '">' + esc((typeof window.agv55ResponsablesBloc === 'function' && window.agv55ResponsablesBloc(x.bloc)) || '') + '</div>'
       + (ouvert ? '<span class="tag">ouvert</span>' : '') + '</div>');
   });
 
@@ -40259,8 +40269,8 @@ window.agvStocks = function(){
 (function () {
   'use strict';
   var V = {
-    version: 'AGV-54',
-    date: '2026-11-27 12:00 UTC',
+    version: 'AGV-55',
+    date: '2026-11-27 18:00 UTC',
     modules: 27,
     corrections: [
       'empreinte : deux sels (agvc$ a l ecriture, agv$ a la verification)',
@@ -40311,7 +40321,9 @@ window.agvStocks = function(){
       'BOUTIQUE NEUVE (AGV-53) : sa premiere ouverture recoit bien la reponse vide du serveur, ses premieres saisies partent',
       'OUVERTURE ET BLOCS (AGV-54) : page servie par l appareil, bloc fixe avant toute lecture, changement de bloc immediat',
       'PERSONNEL COMPLET (AGV-54) : le fondateur voit le personnel de tous les blocs et les acces sans fiche',
-      'SUPPRESSION D UNE BOUTIQUE (AGV-54) : complete, reservee au concepteur, retiree des appareils'
+      'SUPPRESSION D UNE BOUTIQUE (AGV-54) : complete, reservee au concepteur, retiree des appareils',
+      'GERANTS ET FONDATEUR (AGV-55) : identites jamais melangees, acces aux blocs librement reglables, bloc d arrivee respecte',
+      'EN LIGNE D ABORD (AGV-55) : le serveur fait foi, l appareil sert de relais hors ligne, reconnexion immediate'
     ]
   };
   window.AGV_VERSION = V;
@@ -40322,7 +40334,7 @@ window.agvStocks = function(){
   V.etat = function () {
     var noms = ['AGV_PERF', 'AGV_FACT', 'AGV_PORTAIL', 'AGV_DETTES', 'AGV_RESET',
                 'AGV_FORFAIT', 'AGV_STABLE', 'AGV_LIER', 'AGV_GERANTS', 'AGV_CONNEXION',
-                'AGV_COMPTES', 'AGV_ACCES', 'AGV_CHOIX', 'AGV_ECRAN', 'AGV_AUDIT', 'AGV_DEST', 'AGV_MDP', 'AGV_SIMPLE', 'AGV_TRACE', 'AGV_BOUTON', 'AGV_ROLE', 'AGV_STOCK', 'AGV_SESSION', 'AGV_LICENCE', 'AGV_FACTURE', 'AGV_SOLDE', 'AGV_PERSONNEL', 'AGV_PORTAIL_GERANT', 'AGV_39', 'AGV_40', 'AGV_BASE_LOCALE', 'AGV_HORS_LIGNE', 'AGV_CODE_CREATION', 'AGV_54'];
+                'AGV_COMPTES', 'AGV_ACCES', 'AGV_CHOIX', 'AGV_ECRAN', 'AGV_AUDIT', 'AGV_DEST', 'AGV_MDP', 'AGV_SIMPLE', 'AGV_TRACE', 'AGV_BOUTON', 'AGV_ROLE', 'AGV_STOCK', 'AGV_SESSION', 'AGV_LICENCE', 'AGV_FACTURE', 'AGV_SOLDE', 'AGV_PERSONNEL', 'AGV_PORTAIL_GERANT', 'AGV_39', 'AGV_40', 'AGV_BASE_LOCALE', 'AGV_HORS_LIGNE', 'AGV_CODE_CREATION', 'AGV_54', 'AGV_55'];
     var absents = noms.filter(function (n) { return typeof window[n] !== 'object'; });
     console.log('Version ' + V.version + ' — fichier du ' + V.date);
     console.log(absents.length ? 'MODULES ABSENTS : ' + absents.join(', ')
@@ -45896,7 +45908,9 @@ window.agvStocks = function(){
         var chezLui = enMemoire || tabG(liste).some(function (x) { return String(x.id) === String(g); });
         if (chezLui) {
           memoriserFiche();
-          if (String(accueil) === String(u)) {
+          /* [AGV-55] a la connexion la valeur retenue a ete retiree : c'est l'ouverture qui fixe le bloc
+             d'arrivee (blocs/_affect). On ne retient le bloc ouvert qu'une fois l'application lancee. */
+          if (String(accueil) === String(u) && localStorage.getItem('agv_bloc_g_' + u + '_' + g) !== null) {
             try { localStorage.setItem('agv_bloc_g_' + u + '_' + g, blocActif()); } catch (e) {}
           }
           if (l.length > 1) poserPastille(l.length); else retirerPastille();
@@ -46385,7 +46399,8 @@ window.agvStocks = function(){
 
       // La personne entre chez elle : bloc A de SA boutique.
       try {
-        if (gid != null) localStorage.setItem('agv_bloc_g_' + cible.uid + '_' + gid, 'A');
+        /* [AGV-55] le gerant arrive dans son bloc d'arrivee, relu a l'ouverture */
+        if (gid != null) localStorage.removeItem('agv_bloc_g_' + cible.uid + '_' + gid);
         localStorage.setItem('agv_bloc_' + cible.uid, 'A');
       } catch (e) {}
       try { sessionStorage.removeItem('agv_reprise_bloc'); } catch (e) {}
@@ -46397,6 +46412,9 @@ window.agvStocks = function(){
 
       try { currentRole = fondateur ? 'fondateur' : 'gerant'; } catch (e) {}
       window.currentRole = fondateur ? 'fondateur' : 'gerant';
+      /* [AGV-55] une nouvelle connexion remplace la precedente, sur cet appareil */
+      window._agvRoleConnexion = window.currentRole;
+      if (fondateur) { try { if (window.AGV_ROLE && typeof window.AGV_ROLE.oublier === 'function') window.AGV_ROLE.oublier(); } catch (e) {} }
       poserGerant(cible.uid, fondateur ? null : gid);
 
       log('ouverture directe de ' + shop.entreprise + ' (' + cible.uid + ') pour ' +
@@ -46453,7 +46471,7 @@ window.agvStocks = function(){
 
   function poser() {
     if (typeof window.agvConnexionUnique !== 'function') return false;
-    if (window.agvConnexionUnique.__agvConnexion) return true;
+    if ((function (f) { for (var i = 0; f && i < 60; i++, f = f.__agvOrig) { if (f.__agvConnexion) return true; } return false; })(window.agvConnexionUnique)) return true;   /* [AGV-55] deja dans la chaine */
 
     var suite = window.agvConnexionUnique;
 
@@ -46496,6 +46514,9 @@ window.agvStocks = function(){
               // Ouvrir l'accueil le placerait dans une boutique qui n'est pas
               // la sienne, sans permissions et sans ses donnees.
               return chezLui(u, shop, compte, function (cible) {
+                /* [AGV-55] l'acces du fondateur relie a sa propre fiche reste celui du fondateur */
+                if (typeof window.agv55CompteDuFondateur === 'function')
+                  return window.agv55CompteDuFondateur(cible, compte, function (c2) { ouvrirBoutique(cible, c2, fini); });
                 ouvrirBoutique(cible, compte, fini);
               });
             }
@@ -46525,6 +46546,8 @@ window.agvStocks = function(){
               reconnaitre(liste, mdp, function (compte, souci) {
                 if (compte) {
                   log('compte reconnu dans la boutique rattachée ' + (cible.nom || cible.uid));
+                  if (typeof window.agv55CompteDuFondateur === 'function')
+                    return window.agv55CompteDuFondateur(cible, compte, function (c2) { ouvrirBoutique(cible, c2, fini); });
                   return ouvrirBoutique(cible, compte, fini);
                 }
                 fini();
@@ -46594,6 +46617,7 @@ window.agvStocks = function(){
     };
 
     neuf.__agvConnexion = true;
+    neuf.__agvOrig = suite;                  /* [AGV-55] chaine lisible */
     window.agvConnexionUnique = neuf;
     log('module actif — v' + API.version);
     return true;
@@ -46607,7 +46631,7 @@ window.agvStocks = function(){
     essais++;
     if (essais > 1200) return;
     try {
-      if (typeof window.agvConnexionUnique === 'function' && !window.agvConnexionUnique.__agvConnexion) {
+      if (typeof window.agvConnexionUnique === 'function' && !(function (f) { for (var i = 0; f && i < 60; i++, f = f.__agvOrig) { if (f.__agvConnexion) return true; } return false; })(window.agvConnexionUnique)) {
         poser();
       }
     } catch (e) {}
@@ -48191,7 +48215,7 @@ window.agvStocks = function(){
   }
 
   function brancherEcranUnifie() {
-    if (typeof window.agvConnexionUnique !== 'function' || window.agvConnexionUnique.__agvDest) return false;
+    if (typeof window.agvConnexionUnique !== 'function' || (function (f) { for (var i = 0; f && i < 60; i++, f = f.__agvOrig) { if (f.__agvDest) return true; } return false; })(window.agvConnexionUnique)) return false;   /* [AGV-55] */
     var suite = window.agvConnexionUnique;
     var neuf = function () {
       var self = this, args = arguments;
@@ -49281,6 +49305,9 @@ window.agvStocks = function(){
       ancre = null;
       return;
     }
+
+    // [AGV-55] plus aucune session (deconnexion) : il n'y a rien a retablir.
+    if (!role) { ancre = null; return; }
 
     // La session a derive sur place. On la retablit.
     poser('gerant', ancre.gid);
@@ -67515,7 +67542,16 @@ function ajouterEcouteur(q, c, cb, annul, ctx){
   var cle = cleRacine(c.rel);
   function premier(){
     assurerMiroir(b, cle);
-    if (valeurLocale(b, c.rel) !== undefined){ FILE_LIVRAISON.push(e); viderFile(); }
+    var r = racine(b, cle);
+    function livrerSiConnue(){ if (valeurLocale(b, c.rel) !== undefined){ if (FILE_LIVRAISON.indexOf(e) < 0) FILE_LIVRAISON.push(e); viderFile(); } }
+    /* [AGV-55] en ligne, le serveur d'abord ; l'appareil n'est qu'un relais */
+    if (connecte && !r.frais && !copieRecente(c.uid) && !modeHorsLigneAccorde(c.uid)){
+      var fait = false;
+      var t = setTimeout(function(){ if (!fait){ fait = true; livrerSiConnue(); } }, 2500);
+      r.attente.push(function(){ if (!fait){ fait = true; clearTimeout(t); livrerSiConnue(); } });
+      return;
+    }
+    livrerSiConnue();
   }
   if (b.charge) premier();                 /* livraison immediate, comme le cache Firebase */
   else charger(c.uid).then(premier, function(){});
@@ -67839,7 +67875,10 @@ function installerInterception(){
         return !vise;
       });
     }
-    return O.off.apply(this, arguments);
+    var resultat = O.off.apply(this, arguments);
+    /* [AGV-55] la copie du serveur tenue par la base locale n'appartient pas a l'appelant */
+    if (abs !== null && !cb && (!type || type === 'value') && !this.__agvSpec) reposerMiroirs(abs);
+    return resultat;
   };
 
   QP.once = function(type, succes, echecOuCtx, ctx){
@@ -67933,6 +67972,19 @@ function opsVident(b, r){
   });
 }
 
+/* [AGV-55] reposer l'ecoute du serveur d'une rubrique retiree par un off() global sur son emplacement */
+function reposerMiroirs(abs){
+  Object.keys(BOUTIQUES).forEach(function(u){
+    var b = BOUTIQUES[u];
+    if (!b || !b.R) return;
+    Object.keys(b.R).forEach(function(cle){
+      var r = b.R[cle];
+      if (!r || !r.ecoute || ('gdv_shops/' + b.uid + '/' + cle) !== abs) return;
+      r.ecoute = null;
+      try{ assurerMiroir(b, cle); }catch(e){}
+    });
+  });
+}
 function assurerMiroir(b, cle){
   if (!cle || !O || !API.actif) return;
   var r = racine(b, cle);
@@ -67949,7 +68001,32 @@ function assurerMiroir(b, cle){
   });
 }
 
+/* [AGV-55] copie de l'appareil revue par le serveur il y a peu : elle est a jour */
+var FRAIS = {};
+function noterFrais(uid){
+  var n = Date.now();
+  if (FRAIS[uid] && n - FRAIS[uid] < 10000) return;
+  FRAIS[uid] = n;
+  try{ localStorage.setItem('agv55_frais_' + uid, String(n)); }catch(e){}
+}
+function copieRecente(uid){
+  var t = FRAIS[uid];
+  if (!t){ try{ t = Number(localStorage.getItem('agv55_frais_' + uid)) || 0; }catch(e){ t = 0; } }
+  return Date.now() - t < 120000;
+}
+/* boutique mise « hors ligne » par le concepteur pour CET appareil : la base locale fait foi */
+function modeHorsLigneAccorde(uid){
+  try{
+    var a = JSON.parse(localStorage.getItem('agv_hl_autorisations') || '{}')[uid];
+    var v = a && a.v;
+    if (!v || !v.actif || !v.jusquau || !v.appareil || v.appareil.id !== APPAREIL) return false;
+    return Date.parse(v.jusquau + 'T23:59:59') >= Date.now() || !!v.licenceAcquittee;
+  }catch(e){ return false; }
+}
+API.copieRecente = copieRecente;
+API.modeHorsLigneAccorde = modeHorsLigneAccorde;
 function recuServeur(b, r, v){
+  noterFrais(b.uid);
   if (!b.charge){
     charger(b.uid).then(function(){ recuServeur(b, r, v); }, function(){});
     return;
@@ -68090,6 +68167,7 @@ function changerConnexion(c){
   } else {
     if (etaitHorsLigne && n && !messagesAcces) toast('🌐 Connexion rétablie — envoi de ' + n + ' opération(s)…');
     etaitHorsLigne = false;
+    attenteEchec = 0;                       /* [AGV-55] retour du reseau : envoi immediat */
     Object.keys(BOUTIQUES).forEach(function(u){ var b = BOUTIQUES[u]; if (b.ops.length && uidCourant() === u) decouvrirRubriques(b); });
     planifierEnvoi(300);
   }
@@ -70644,6 +70722,515 @@ setTimeout(surveillerAppareil, 4000);
 X.verifierSuppression = function(){ vus = {}; surveillerAppareil(); };
 
 log('module actif — v' + X.version + ' — blocs contrôlés, personnel complet, suppression des boutiques');
+})();
+
+</script>
+<script>
+(function(){
+'use strict';
+/* ================================================================
+   AGV-55 — GERANTS, FONDATEUR, BLOCS ET RELAIS HORS LIGNE
+   ----------------------------------------------------------------
+   1. IDENTITES JAMAIS MELANGEES
+      - Une fiche qu'un acces de connexion de GERANT designe est une fiche
+        de gerant, meme si une ancienne erreur l'avait marquee « fondateur »
+        (son nom avait alors ete remplace par celui du fondateur et elle
+        avait disparu des listes) : elle revient dans le Personnel, avec
+        un repere « nom a verifier ».
+      - Le fondateur qui se connecte avec un acces relie a SA propre fiche
+        entre en fondateur (il entrait en gerant : plus de portail, plus
+        de changement de bloc, ses informations melangees au personnel).
+      - Un gerant cree dans le Personnel est enregistre aussitot : il ne
+        peut plus disparaitre avant d'avoir ete complete.
+   2. ACCES DES GERANTS AUX BLOCS
+      Tous les gerants de tous les blocs, toutes les cases librement
+      cochables (le bloc de creation compris). Le bloc d'arrivee suit
+      les cases. Un gerant garde ses droits dans chaque bloc ouvert : sa
+      fiche est relue la ou elle se trouve.
+   3. EN LIGNE D'ABORD, L'APPAREIL EN RELAIS
+      Des que le reseau revient, la connexion est relancee sans attendre
+      (le SDK pouvait patienter plusieurs minutes) et la file d'attente
+      part aussitot.
+   4. MISES A JOUR APPLIQUEES ET VERSION VISIBLE
+      Une nouvelle version est installee a l'ouverture ou a l'ecran de
+      connexion, sans attendre un toucher ; la version en service est
+      affichee dans les portails.
+   Aucune structure de base modifiee. Ecritures : uniquement les noeuds
+   existants blocs/_acces et blocs/_affect (reglage des acces) et la
+   fiche du gerant cree.
+   ================================================================ */
+if(window.AGV_55) return;
+var X = window.AGV_55 = { version: '1.0' };
+var BL = window.AGV_BASE_LOCALE || null;
+
+function log(){ try{ var a = [].slice.call(arguments); a.unshift('[AGV-55]'); console.log.apply(console, a); }catch(e){} }
+function esc(v){ return String(v === null || v === undefined ? '' : v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+function memeId(a, b){ return a !== null && a !== undefined && b !== null && b !== undefined && String(a) === String(b); }
+function tab(v){ if(!v) return []; if(Array.isArray(v)) return v.filter(Boolean); return Object.keys(v).map(function(k){ return v[k]; }).filter(Boolean); }
+function uid(){ return (window._currentShop || {}).uid || null; }
+function role(){ try{ if(window.currentRole) return window.currentRole; }catch(e){} try{ return currentRole; }catch(e){} return null; }
+function gidCourant(){ var g = null; try{ g = window.currentGerantId; }catch(e){} if(g === undefined || g === null || g === ''){ try{ g = currentGerantId; }catch(e){} } return (g === undefined || g === null || g === '') ? null : g; }
+function blocActif(){ try{ if(typeof window.agvBlocActif === 'function') return window.agvBlocActif(); }catch(e){} return window._agvBloc || 'A'; }
+function dire(t){ try{ if(typeof window.showToast === 'function') return window.showToast(t); }catch(e){} }
+function connecte(){ try{ if(BL && BL.actif && BL.estConnecte) return !!BL.estConnecte(); }catch(e){} return navigator.onLine !== false; }
+function fondateurEnTitre(){ try{ if(typeof window.agvEstVraiFondateur === 'function') return !!window.agvEstVraiFondateur(); }catch(e){} return role() === 'fondateur'; }
+function refBrut(ch){ var d = window.db; if(!d) return null; try{ return window._agvRefBrut ? window._agvRefBrut(ch) : d.ref(ch); }catch(e){ return null; } }
+function lire(ch, ms){
+  return new Promise(function(res){
+    var r = refBrut(ch); if(!r){ res({ ok: false, v: null }); return; }
+    var fini = false, t = setTimeout(function(){ if(!fini){ fini = true; res({ ok: false, v: null }); } }, ms || 5000);
+    try{ r.once('value').then(function(s){ if(!fini){ fini = true; clearTimeout(t); res({ ok: true, v: s.val() }); } },
+                              function(){ if(!fini){ fini = true; clearTimeout(t); res({ ok: false, v: null }); } }); }
+    catch(e){ if(!fini){ fini = true; clearTimeout(t); res({ ok: false, v: null }); } }
+  });
+}
+
+/* ================================================================
+   1. IDENTITES
+   ================================================================ */
+/* fiches designees par un acces de connexion de GERANT (boutique ouverte).
+   Seuls les numeros de fiche sont retenus sur l'appareil (jamais les acces
+   eux-memes) : apres un changement de bloc, la page est rechargee et la
+   liste doit etre juste DES le premier affichage du Personnel. */
+var GIDS = { uid: null, set: {}, lu: false };
+function cleGids(u){ return 'agv55_gids_gerants_' + u; }
+function gidsCourants(){
+  var u = uid(); if(!u) return null;
+  if(GIDS.uid !== u){
+    var set = {};
+    try{ (JSON.parse(localStorage.getItem(cleGids(u)) || '[]') || []).forEach(function(i){ set[String(i)] = true; }); }catch(e){}
+    GIDS = { uid: u, set: set, lu: false };
+  }
+  return GIDS;
+}
+function personnelAffiche(){
+  var c = document.getElementById('agv32-personnel-corps');
+  return !!(c && c.offsetParent !== null);
+}
+function saisieEnCours(){
+  var a = document.activeElement, c = document.getElementById('agv32-personnel-corps');
+  return !!(a && c && c.contains(a) && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName));
+}
+var REDESSIN = false;
+function redessinerPersonnel(){
+  if(!personnelAffiche()){ REDESSIN = false; return; }
+  if(saisieEnCours()){ REDESSIN = true; return; }        /* jamais pendant une saisie : on reessaie */
+  REDESSIN = false;
+  try{ if(typeof window.agvRendrePersonnel === 'function') window.agvRendrePersonnel(); }catch(e){}
+}
+setInterval(function(){ if(REDESSIN) redessinerPersonnel(); }, 1500);
+function chargerComptes(){
+  var u = uid(); if(!u) return Promise.resolve();
+  return lire('gdv_shops/' + u + '/comptes', 5000).then(function(r){
+    if(!r.ok || uid() !== u) return;
+    var l = r.v || {}, set = {}, ids = [];
+    Object.keys(l).forEach(function(k){
+      var c = l[k];
+      if(c && c.role !== 'fondateur' && c.gerantId !== undefined && c.gerantId !== null && !set[String(c.gerantId)]){
+        set[String(c.gerantId)] = true; ids.push(String(c.gerantId));
+      }
+    });
+    var avant = gidsCourants(), change = Object.keys(avant.set).sort().join(',') !== ids.slice().sort().join(',');
+    GIDS = { uid: u, set: set, lu: true };
+    try{ localStorage.setItem(cleGids(u), JSON.stringify(ids)); }catch(e){}
+    if(change) redessinerPersonnel();
+  });
+}
+setInterval(chargerComptes, 15000);
+setTimeout(chargerComptes, 1200);
+(function suivreOuverture(){                     /* des que la boutique est ouverte */
+  var dernier = null;
+  setInterval(function(){ var u = uid(); if(u && u !== dernier){ dernier = u; chargerComptes(); } }, 700);
+})();
+function ficheDesigneeParGerant(g){
+  if(!g || g.id === undefined || g.id === null) return false;
+  var G = gidsCourants();
+  return !!(G && G.set[String(g.id)]);
+}
+(function brancherIdentite(){
+  function poser(){
+    var f = window.agvFicheEstFondateur;
+    if(typeof f !== 'function'){ setTimeout(poser, 300); return; }
+    if(f.__agv55) return;
+    var neuf = function(g){
+      if(!f.apply(this, arguments)) return false;
+      if(String(g && g.id) === '1') return true;
+      return !ficheDesigneeParGerant(g);          /* un acces de GERANT la designe : c'est un gerant */
+    };
+    neuf.__agv55 = true; neuf.__agvOrig = f;
+    window.agvFicheEstFondateur = neuf;
+    var m = window.agvFicheMarqueeParErreur;
+    if(typeof m === 'function' && !m.__agv55){
+      var m2 = function(g){ return !!(m.apply(this, arguments) || (g && (g.role === 'fondateur' || g.type === 'fondateur') && ficheDesigneeParGerant(g))); };
+      m2.__agv55 = true; window.agvFicheMarqueeParErreur = m2;
+    }
+  }
+  poser();
+})();
+X.ficheEstGerant = ficheDesigneeParGerant;
+
+/* le fondateur qui entre avec un acces relie a SA propre fiche entre en fondateur */
+function ficheDuFondateur(u, gid){
+  return lire('gdv_shops/' + u + '/data/gerants', 5000).then(function(r){
+    var f = null;
+    tab(r.v).forEach(function(g){ if(!f && memeId(g.id, gid)) f = g; });
+    if(!f) return false;
+    var orig = (window.agvFicheEstFondateur && window.agvFicheEstFondateur.__agvOrig) || window.agvFicheEstFondateur;
+    try{ return !!(f.role === 'fondateur' || f.type === 'fondateur' || String(f.id) === '1') && !!orig(f); }catch(e){ return false; }
+  });
+}
+window.agv55CompteDuFondateur = function(cible, compte, cb){
+  if(!(compte && compte.role === 'fondateur' && compte.gerantId !== undefined && compte.gerantId !== null && cible && cible.uid)) return cb(compte);
+  ficheDuFondateur(cible.uid, compte.gerantId).then(function(estLui){
+    if(!estLui) return cb(compte);
+    var c2 = {}; for(var k in compte) c2[k] = compte[k];
+    delete c2.gerantId;
+    log('accès du fondateur relié à sa propre fiche : session ouverte en FONDATEUR');
+    cb(c2);
+  }, function(){ cb(compte); });
+};
+
+/* un gerant cree dans le Personnel est enregistre aussitot (il ne peut plus disparaitre) */
+(function brancherCreation(){
+  function poser(){
+    var f = window.agvPersAjouter;
+    if(typeof f !== 'function'){ setTimeout(poser, 400); return; }
+    if(f.__agv55) return;
+    var neuf = function(type){
+      var avant = {};
+      var l0; try{ l0 = tab(gerants); }catch(e){ l0 = tab(window.gerants); }
+      l0.forEach(function(g){ avant[String(g.id)] = 1; });
+      var r = f.apply(this, arguments);
+      var l; try{ l = gerants; }catch(e){ l = window.gerants; }
+      var neuve = tab(l).filter(function(g){ return !avant[String(g.id)]; })[0];
+      if(neuve){
+        if(!neuve.nom) neuve.nom = (type === 'associe') ? 'Nouveau co-fondateur' : 'Nouveau gérant';
+        try{ if(typeof window.saveAll === 'function') window.saveAll(); }catch(e){}
+        try{ if(typeof window.agvRendrePersonnel === 'function') window.agvRendrePersonnel(); }catch(e){}
+        var u = uid(), b = blocActif();
+        if(u){ var ra = refBrut('gdv_shops/' + u + '/blocs/_affect/' + neuve.id); if(ra) ra.set(b).catch(function(){}); }
+        setTimeout(function(){
+          var n = document.getElementById('agv32-nom-' + neuve.id);
+          if(n){ try{ n.select(); }catch(e){} }
+        }, 120);
+        log('fiche créée et enregistrée (' + neuve.id + ', ' + b + ')');
+      }
+      return r;
+    };
+    neuf.__agv55 = true;
+    window.agvPersAjouter = neuf;
+  }
+  poser();
+})();
+
+/* ================================================================
+   2. ACCES DES GERANTS AUX BLOCS
+   ================================================================ */
+var PERS = null;     /* derniere lecture de tout le personnel */
+function toutLePersonnel(){
+  var A = window.AGV_54;
+  if(!A || typeof A.toutLePersonnel !== 'function') return Promise.resolve(null);
+  return A.toutLePersonnel().then(function(d){ if(d){ d.u = uid(); d.t = Date.now(); PERS = d; } return d; });
+}
+function nomBloc(L, meta){
+  if(L === 'A') return ((window._currentShop || {}).entreprise || 'BLOC A');
+  var m = meta && meta[L]; return (m && m.nom) ? String(m.nom) : 'BLOC ' + L;
+}
+function lesPersonnes(d){
+  var vus = {}, out = [];
+  d.blocs.forEach(function(b){
+    b.fiches.forEach(function(g){
+      if(!g || g.id === undefined || g.id === null || vus[String(g.id)]) return;
+      var estF = window.agvFicheEstFondateur ? window.agvFicheEstFondateur(g) : false;
+      if(estF) return;
+      vus[String(g.id)] = 1;
+      out.push({ g: g, fiche: b.lettre });
+    });
+  });
+  return out;
+}
+function blocsDe(d, id, fiche){
+  var s = {}, a = d.affect && d.affect[String(id)], acc = d.acces && d.acces[String(id)];
+  s[a || fiche || 'A'] = true;
+  if(acc && typeof acc === 'object') Object.keys(acc).forEach(function(k){ if(acc[k]) s[k] = true; });
+  return s;
+}
+function styleP(){
+  if(document.getElementById('agv55-style')) return;
+  var st = document.createElement('style'); st.id = 'agv55-style';
+  st.textContent = '#agv55-acces{position:fixed;inset:0;z-index:99996;background:rgba(15,23,42,.6);display:flex;align-items:center;justify-content:center;padding:12px;box-sizing:border-box;font-family:inherit}'
+    + '#agv55-acces .bx{background:#fff;color:#0f172a;border-radius:15px;max-width:760px;width:100%;max-height:90vh;overflow:auto;padding:18px 20px;box-sizing:border-box}'
+    + '#agv55-acces h3{margin:0;font-size:16px;font-weight:800}#agv55-acces .sous{font-size:12.5px;color:#64748b;margin-top:3px;line-height:1.5}'
+    + '#agv55-acces table{width:100%;border-collapse:collapse;margin-top:12px}#agv55-acces th{padding:8px 6px;font-size:10.5px;font-weight:700;color:#475569;text-transform:uppercase;text-align:center;border-bottom:2px solid #dbe3ec}'
+    + '#agv55-acces th.g{text-align:left}#agv55-acces td{padding:9px 6px;border-bottom:1px solid #eef2f7;text-align:center;font-size:12.5px}#agv55-acces td.g{text-align:left}'
+    + '#agv55-acces .p{font-size:10.5px;color:#94a3b8;line-height:1.4}#agv55-acces .arr{font-size:10.5px;color:#1d4ed8;font-weight:700}'
+    + '#agv55-acces input[type=checkbox]{width:18px;height:18px;cursor:pointer}'
+    + '#agv55-acces .bt{display:flex;gap:8px;margin-top:12px}#agv55-acces button{flex:1;padding:11px;border-radius:10px;font-family:inherit;font-size:14px;font-weight:700;cursor:pointer;border:1px solid #cbd5e1;background:#f8fafc}'
+    + '#agv55-acces button.ok{background:#1d4ed8;border-color:#1d4ed8;color:#fff}#agv55-acces .msg{font-size:12.5px;margin-top:10px;min-height:17px}'
+    + '#agv55-acces .note{margin-top:12px;padding:10px 12px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:10px;font-size:12px;color:#075985;line-height:1.6}'
+    + '.agv55-version{font-size:10.5px;color:#94a3b8;text-align:center;padding:10px 0 14px;letter-spacing:.02em}';
+  document.head.appendChild(st);
+}
+function panneauAcces(){
+  if(role() !== 'fondateur' || !fondateurEnTitre()){ dire('Réservé au fondateur'); return; }
+  var u = uid(); if(!u){ dire('Ouvrez d\'abord une boutique'); return; }
+  styleP();
+  var vieux = document.getElementById('agv55-acces'); if(vieux) vieux.remove();
+  var vieux2 = document.getElementById('agv-ger-panneau'); if(vieux2) vieux2.remove();
+  var ov = document.createElement('div'); ov.id = 'agv55-acces';
+  ov.innerHTML = '<div class="bx"><div style="color:#64748b;font-size:13px;padding:20px 0;text-align:center">Lecture de tout le personnel…</div></div>';
+  ov.onclick = function(e){ if(e.target === ov) ov.remove(); };
+  document.body.appendChild(ov);
+  toutLePersonnel().then(function(d){
+    var bx = ov.querySelector('.bx'); if(!bx) return;
+    if(!d){ bx.innerHTML = '<div style="padding:20px">Lecture impossible pour le moment.</div>'; return; }
+    var illisibles = d.blocs.filter(function(b){ return !b.lu; }).map(function(b){ return nomBloc(b.lettre, d.meta); });
+    var gens = lesPersonnes(d), lettres = d.blocs.map(function(b){ return b.lettre; });
+    if(!gens.length){
+      bx.innerHTML = '<h3>Accès des gérants aux blocs</h3><div class="sous" style="margin-top:12px">Aucun gérant enregistré dans les blocs de la boutique.</div><div class="bt"><button id="agv55-x">Fermer</button></div>';
+      bx.querySelector('#agv55-x').onclick = function(){ ov.remove(); }; return;
+    }
+    var entete = lettres.map(function(L){ return '<th>' + esc(L) + '<div style="font-size:9.5px;font-weight:600;text-transform:none;color:#94a3b8;max-width:96px;margin:auto;white-space:normal;line-height:1.25">' + esc(nomBloc(L, d.meta)) + '</div></th>'; }).join('');
+    var lignes = gens.map(function(x){
+      var g = x.g, s = blocsDe(d, g.id, x.fiche);
+      var genre = (g.type === 'associe' || g.role === 'associe') ? 'co-fondateur' : 'gérant';
+      return '<tr data-g="' + esc(g.id) + '" data-fiche="' + esc(x.fiche) + '" data-arr="' + esc((d.affect && d.affect[String(g.id)]) || x.fiche) + '"><td class="g"><b>' + esc(g.nom || '(sans nom)') + '</b>'
+        + (g.bloque ? ' <span style="color:#b91c1c;font-size:10.5px">bloqué</span>' : '')
+        + '<div class="p">' + genre + ' · fiche dans ' + esc(nomBloc(x.fiche, d.meta)) + '</div><div class="arr" data-arr-txt></div></td>'
+        + lettres.map(function(L){ return '<td><input type="checkbox" class="agv55-c" data-b="' + esc(L) + '"' + (s[L] ? ' checked' : '') + '></td>'; }).join('') + '</tr>';
+    }).join('');
+    bx.innerHTML = '<div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start"><div><h3>Accès des gérants aux blocs</h3>'
+      + '<div class="sous">Cochez les blocs que chaque personne peut ouvrir. Toutes les cases se cochent et se décochent librement.</div></div>'
+      + '<button id="agv55-x" style="flex:0 0 auto;padding:7px 13px;font-size:13px">Fermer</button></div>'
+      + (illisibles.length ? '<div class="msg" style="color:#b45309">⚠️ ' + esc(illisibles.join(', ')) + ' : personnel non lisible pour le moment (connexion Internet nécessaire la première fois).</div>' : '')
+      + '<div style="overflow-x:auto"><table><thead><tr><th class="g">Personne</th>' + entete + '</tr></thead><tbody>' + lignes + '</tbody></table></div>'
+      + '<div class="note">À la connexion, chaque personne arrive dans son <b>bloc d\'arrivée</b> (indiqué sous son nom) ; elle passe ensuite aux autres blocs cochés par le bouton « Portail ». Ses droits (onglets, actions) la suivent dans chaque bloc.</div>'
+      + '<div class="msg" id="agv55-msg"></div><div class="bt"><button id="agv55-ann">Annuler</button><button class="ok" id="agv55-ok">Enregistrer les accès</button></div>';
+    function arrivee(tr){
+      var c = [].slice.call(tr.querySelectorAll('.agv55-c')).filter(function(i){ return i.checked; }).map(function(i){ return i.getAttribute('data-b'); });
+      if(!c.length) return null;
+      var a = tr.getAttribute('data-arr'), f = tr.getAttribute('data-fiche');
+      if(c.indexOf(a) >= 0) return a;
+      if(c.indexOf(f) >= 0) return f;
+      return c[0];
+    }
+    function majArrivees(){
+      [].forEach.call(bx.querySelectorAll('tbody tr'), function(tr){
+        var a = arrivee(tr), z = tr.querySelector('[data-arr-txt]');
+        if(z){ z.style.color = a ? '#1d4ed8' : '#b91c1c'; z.textContent = a ? 'arrive dans : ' + nomBloc(a, d.meta) : 'aucun bloc coché'; }
+      });
+    }
+    majArrivees();
+    [].forEach.call(bx.querySelectorAll('.agv55-c'), function(i){ i.onchange = majArrivees; });
+    bx.querySelector('#agv55-x').onclick = bx.querySelector('#agv55-ann').onclick = function(){ ov.remove(); };
+    bx.querySelector('#agv55-ok').onclick = function(){
+      var msg = bx.querySelector('#agv55-msg'), acc = {}, arr = {}, sans = [];
+      [].forEach.call(bx.querySelectorAll('tbody tr'), function(tr){
+        var id = tr.getAttribute('data-g'), a = arrivee(tr);
+        var c = [].slice.call(tr.querySelectorAll('.agv55-c')).filter(function(i){ return i.checked; }).map(function(i){ return i.getAttribute('data-b'); });
+        if(!a){ sans.push(tr.querySelector('b').textContent); return; }
+        var o = {}; c.forEach(function(L){ o[L] = true; });
+        acc[id] = o;
+        arr[id] = a;
+      });
+      if(sans.length){ msg.style.color = '#b91c1c'; msg.textContent = sans.join(', ') + ' : cochez au moins un bloc. Pour retirer tout accès à une personne, bloquez-la dans le Personnel.'; return; }
+      msg.style.color = '#475569'; msg.textContent = 'Enregistrement…';
+      /* deux mises a jour simples (cles sans « / ») : la base locale de l'appareil les accepte
+         et les relaie au serveur, hors ligne compris */
+      var rA = refBrut('gdv_shops/' + u + '/blocs/_acces'), rF = refBrut('gdv_shops/' + u + '/blocs/_affect');
+      if(!rA || !rF){ msg.style.color = '#b91c1c'; msg.textContent = 'Base indisponible'; return; }
+      var envoi;
+      try{ envoi = Promise.all([rA.update(acc), rF.update(arr)]); }
+      catch(e){ msg.style.color = '#b91c1c'; msg.textContent = 'Échec : ' + ((e && e.message) || e); return; }
+      envoi.then(function(){
+        gens.forEach(function(x){ try{ localStorage.removeItem('agv_acces_g_' + u + '_' + x.g.id); }catch(e){} });
+        try{ if(typeof window.agvJournaliser === 'function') window.agvJournaliser('Accès des gérants aux blocs', gens.length + ' personne(s) mise(s) à jour'); }catch(e){}
+        PERS = null; ov.remove(); dire('✓ Accès enregistrés'); majTuiles(true);
+      }, function(e){ msg.style.color = '#b91c1c'; msg.textContent = 'Échec : ' + ((e && e.message) || e); });
+    };
+  });
+}
+X.panneauAcces = panneauAcces;
+setInterval(function(){
+  var G = window.AGV_GERANTS;
+  if(G && G.panneau !== panneauAcces) G.panneau = panneauAcces;
+  var b = document.getElementById('agv-ger-lien');
+  if(b && b.textContent !== 'Accès des gérants aux blocs') b.textContent = 'Accès des gérants aux blocs';
+}, 500);
+
+/* la fiche d'un gerant le suit dans chaque bloc (droits a jour, meme sur un appareil neuf) */
+function lesGerantsOuverts(){ try{ return tab(gerants); }catch(e){ return tab(window.gerants); } }
+var dernierSuivi = 0;
+function suivreFiche(force){
+  var u = uid(), g = gidCourant();
+  if(!u || g === null || role() !== 'gerant') return;
+  if(!force && Date.now() - dernierSuivi < 30000) return;
+  dernierSuivi = Date.now();
+  if(lesGerantsOuverts().some(function(x){ return memeId(x.id, g); })) return;      /* chez lui : rien a faire */
+  /* sa fiche : dans un autre bloc de cette boutique, ou dans la boutique d'accueil */
+  var cle = 'agv_fiche_g_' + u + '_' + g;
+  toutLePersonnel().then(function(d){
+    var f = null;
+    if(d) d.blocs.forEach(function(b){ b.fiches.forEach(function(x){ if(!f && memeId(x.id, g)) f = x; }); });
+    if(f) return f;
+    return lire('gdv_shops/' + u + '/rattachement', 4000).then(function(rr){
+      var acc = rr.v && rr.v.vers; if(!acc) return null;
+      return lire('gdv_shops/' + acc + '/blocs/_meta', 4000).then(function(rm){
+        var meta = rm.v || {}, chemins = ['gdv_shops/' + acc + '/data/gerants'];
+        Object.keys(meta).forEach(function(L){ if(/^[B-Z]$/.test(L) && meta[L]) chemins.push(meta[L].source ? 'gdv_shops/' + meta[L].source + '/data/gerants' : 'gdv_shops/' + acc + '/blocs/' + L + '/data/gerants'); });
+        return Promise.all(chemins.map(function(c){ return lire(c, 4000); })).then(function(rs){
+          var t = null; rs.forEach(function(r){ tab(r.v).forEach(function(x){ if(!t && memeId(x.id, g)) t = x; }); }); return t;
+        });
+      });
+    });
+  }).then(function(f){
+    if(!f) return;
+    try{
+      var avant = localStorage.getItem(cle), neuf = JSON.stringify(f);
+      if(avant !== neuf){ localStorage.setItem(cle, neuf); log('fiche du gérant ' + g + ' relue à sa source (droits à jour)'); }
+    }catch(e){}
+  });
+}
+setInterval(function(){ try{ suivreFiche(false); }catch(e){} }, 5000);
+X.suivreFiche = function(){ suivreFiche(true); };
+
+/* portail du fondateur : sous chaque bloc, les personnes qui y ont acces */
+function responsables(L){
+  var d = PERS; if(!d || d.u !== uid()) return '';
+  var noms = [];
+  lesPersonnes(d).forEach(function(x){ var s = blocsDe(d, x.g.id, x.fiche); if(s[L]) noms.push(x.g.nom || 'Gérant'); });
+  if(!noms.length) return 'aucun gérant';
+  return noms.length > 2 ? noms.slice(0, 2).join(', ') + ' +' + (noms.length - 2) : noms.join(', ');
+}
+window.agv55ResponsablesBloc = responsables;
+var lectureTuiles = 0;
+/* Deux modules posent les tuiles du portail (d'apres les cartes, ou d'apres la liste des blocs) :
+   on repere chaque tuile de bloc, quelle que soit son origine, et on lui donne sa ligne de noms. */
+function marquerTuiles(){
+  var a = document.getElementById('agv-accueil'); if(!a) return 0;
+  var n = 0, actif = blocActif();
+  [].forEach.call(a.querySelectorAll('.tuile'), function(t){
+    var oc = t.getAttribute('onclick') || '', m = oc.match(/agvBlocOuvrir\('([A-Z])'\)/), L = m ? m[1] : null;
+    if(!L && t.classList.contains('on') && /agvAccueilFermer\(\)\s*$/.test(oc) && t.querySelector('.s')) L = actif;
+    if(!L) return;
+    var g = t.querySelector('[data-agv55-bloc]') || t.querySelector('.g');
+    if(!g){ g = document.createElement('div'); g.className = 'g'; var sx = t.querySelector('.s'); if(sx && sx.nextSibling) t.insertBefore(g, sx.nextSibling); else t.appendChild(g); }
+    if(g.getAttribute('data-agv55-bloc') !== L){
+      if(!g.hasAttribute('data-agv55-orig')) g.setAttribute('data-agv55-orig', /^(bloc [A-Z]|boutique rattach)/i.test(g.textContent || '') ? g.textContent : '');
+      g.setAttribute('data-agv55-bloc', L);
+    }
+    n++;
+  });
+  return n;
+}
+function majTuiles(relire){
+  if(!marquerTuiles()) return;
+  if(relire || !PERS || PERS.u !== uid() || Date.now() - PERS.t > 60000){
+    if(Date.now() - lectureTuiles < 3000 && !relire){ ecrireTuiles(); return; }
+    lectureTuiles = Date.now();
+    toutLePersonnel().then(function(){ ecrireTuiles(); });
+  }
+  ecrireTuiles();
+}
+function ecrireTuiles(){
+  [].forEach.call(document.querySelectorAll('#agv-accueil [data-agv55-bloc]'), function(e){
+    var t = responsables(e.getAttribute('data-agv55-bloc')) || e.getAttribute('data-agv55-orig') || '';
+    if(e.textContent !== t) e.textContent = t;
+  });
+}
+setInterval(function(){ try{ majTuiles(false); }catch(e){} }, 400);
+
+/* ================================================================
+   3. EN LIGNE D'ABORD : RECONNEXION IMMEDIATE AU RETOUR DU RESEAU
+   ================================================================ */
+/* Le SDK reprend seul apres une coupure breve, et il se reconnecte de lui-meme a l'evenement
+   « online » du navigateur. Mais apres une longue coupure il espace ses essais (jusqu'a 5 min),
+   et sur telephone le retour du reseau ne declenche pas toujours « online ». On relance donc la
+   connexion quand le serveur est de nouveau joignable — sans jamais interrompre une connexion
+   en cours d'etablissement (premiere connexion, reseau lent) : pas dans les 15 s qui suivent
+   l'ouverture, pas pour une coupure de moins de 12 s, et au plus une fois toutes les 25 s. */
+var CHARGEE = Date.now(), deconnecteDepuis = 0, dernierForcage = 0;
+setInterval(function(){
+  if(connecte()) deconnecteDepuis = 0;
+  else if(!deconnecteDepuis) deconnecteDepuis = Date.now();
+}, 500);
+function forcerReconnexion(pourquoi){
+  if(!window.db || connecte()) return;
+  var n = Date.now();
+  if(n - CHARGEE < 15000) return;
+  if(!deconnecteDepuis || n - deconnecteDepuis < 12000) return;
+  if(n - dernierForcage < 25000) return;
+  dernierForcage = n;
+  try{ window.db.goOffline(); window.db.goOnline(); log('reconnexion relancée (' + pourquoi + ')'); }catch(e){}
+}
+function urlSonde(){
+  try{
+    var u = new URL(firebase.app().options.databaseURL);
+    var q = u.search ? u.search + '&' : '?';
+    return u.origin + '/.json' + q + 'shallow=true&agv=' + Date.now();
+  }catch(e){ return null; }
+}
+var sondeEnCours = false;
+function sonder(){
+  if(sondeEnCours || connecte() || navigator.onLine === false || !window.db) return;
+  var url = urlSonde(); if(!url) return;
+  sondeEnCours = true;
+  var fini = false, t = setTimeout(function(){ if(!fini){ fini = true; sondeEnCours = false; } }, 3500);
+  fetch(url, { mode: 'no-cors', cache: 'no-store' }).then(function(){
+    if(fini) return; fini = true; clearTimeout(t); sondeEnCours = false;
+    forcerReconnexion('réseau joignable');
+  }, function(){ if(!fini){ fini = true; clearTimeout(t); sondeEnCours = false; } });
+}
+window.addEventListener('online', function(){ setTimeout(function(){ forcerReconnexion('retour du réseau'); }, 200); });
+document.addEventListener('visibilitychange', function(){ if(document.visibilityState === 'visible') setTimeout(function(){ forcerReconnexion('retour dans l\'application'); }, 300); });
+window.addEventListener('focus', function(){ setTimeout(function(){ forcerReconnexion('retour dans l\'application'); }, 300); });
+setInterval(sonder, 4000);
+X.forcerReconnexion = forcerReconnexion;
+
+/* ================================================================
+   4. MISES A JOUR APPLIQUEES, VERSION VISIBLE
+   ================================================================ */
+var DEBUT = Date.now();
+function ecranDeConnexion(){
+  var ids = ['agv-landing', 'agv-shop-login', 'agv-auth'];
+  for(var i = 0; i < ids.length; i++){ var e = document.getElementById(ids[i]); if(e && e.offsetParent !== null) return true; }
+  var app = document.getElementById('app');
+  return !(app && app.classList.contains('visible'));
+}
+function saisieEnCours(){
+  var a = document.activeElement;
+  return !!(a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) && String(a.value || '').length);
+}
+var majAppliquee = false;
+function appliquerMaj(reg){
+  if(majAppliquee || !reg || !reg.waiting || !navigator.serviceWorker.controller) return;
+  if(saisieEnCours()) return;
+  if(!(Date.now() - DEBUT < 10000 || ecranDeConnexion())) return;
+  majAppliquee = true;
+  log('nouvelle version installée');
+  try{ reg.waiting.postMessage({ type: 'SKIP_WAITING' }); }catch(e){}
+}
+if('serviceWorker' in navigator){
+  setInterval(function(){
+    try{ navigator.serviceWorker.getRegistration().then(function(reg){ appliquerMaj(reg); }).catch(function(){}); }catch(e){}
+  }, 2000);
+}
+function texteVersion(){
+  var v = window.AGV_VERSION || {};
+  return 'App AGV · version ' + (v.version || '?') + (v.date ? ' du ' + String(v.date).slice(0, 10).split('-').reverse().join('/') : '');
+}
+setInterval(function(){
+  ['agv-accueil', 'agv-pg'].forEach(function(id){
+    var p = document.getElementById(id);
+    if(!p || p.querySelector('.agv55-version')) return;
+    styleP();
+    var d = document.createElement('div'); d.className = 'agv55-version'; d.textContent = texteVersion();
+    p.appendChild(d);
+  });
+}, 1000);
+X.texteVersion = texteVersion;
+
+log('module actif — v' + X.version + ' — identités, accès aux blocs, relais hors ligne, mises à jour');
 })();
 
 </script>
