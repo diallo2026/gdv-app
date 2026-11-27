@@ -476,6 +476,8 @@ function agvInitFirebase(){
       });
     }
     window.db = firebase.database();
+    /* [AGV-54] la redirection vers le bloc ouvert est posee AVANT toute lecture */
+    try{ if(typeof window.__agvPoserRedirection === 'function') window.__agvPoserRedirection(); }catch(e){}
     window._firebaseReady = true;
     try{ db = window.db; }catch(e){}
   } catch(e){ console.error('[AGV] Firebase init error:', e); }
@@ -2002,6 +2004,11 @@ window.addEventListener('DOMContentLoaded',function(){
       </div>
       <!-- REGISTER -->
       <div id="p-reg" style="display:none">
+        <div style="margin-bottom:12px;padding:12px;border-radius:10px;background:rgba(251,191,36,0.07);border:1px solid rgba(251,191,36,0.3)">
+          <label class="fl" style="color:#fbbf24">Code de cr&eacute;ation * <span style="font-weight:400;font-size:10px;color:#a16207;text-transform:none">(fourni par le concepteur)</span></label>
+          <input id="agv-r-code-creation" class="fi" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="CR-XXXX-XXXX" style="font-family:monospace;letter-spacing:.14em;text-transform:uppercase">
+          <div style="font-size:11px;color:#a16207;margin-top:6px;line-height:1.5">La cr&eacute;ation d'une boutique se fait avec l'accord du concepteur. Sans code de cr&eacute;ation valable, la cr&eacute;ation est refus&eacute;e. Pour obtenir votre code : <a href="https://wa.me/224623030403?text=Bonjour%2C%20je%20souhaite%20cr%C3%A9er%20une%20boutique%20sur%20App%20AGV.%20Pouvez-vous%20m%27envoyer%20un%20code%20de%20cr%C3%A9ation%20%3F" target="_blank" rel="noopener" style="color:#fbbf24;font-weight:700">+224 623 030 403</a></div>
+        </div>
         <div class="fg2" style="margin-bottom:10px">
           <div><label class="fl">Prenom *</label><input id="r-prenom" class="fi" placeholder="Mamadou"></div>
           <div><label class="fl">Nom *</label><input id="r-nom" class="fi" placeholder="Diallo"></div>
@@ -24794,6 +24801,12 @@ function creer(){
   /* [AGV-52] la creation d'une nouvelle boutique se fait obligatoirement en ligne */
   if(navigator.onLine === false || (window.AGV_HORS_LIGNE && !window.AGV_HORS_LIGNE.enLigne()))
     return message('Création impossible sans connexion Internet. La création d\'une nouvelle boutique se fait obligatoirement en ligne : connectez-vous puis réessayez. (Les boutiques déjà créées restent accessibles sans Internet.)', false);
+  /* [AGV-53] creation autorisee uniquement avec un code de creation valable, fourni par le concepteur */
+  if(!window.agvCodeCreation || !window.agvCodeCreation.autorise()){
+    if(window.agvCodeCreation) window.agvCodeCreation.demander();
+    else message('Création momentanément indisponible : réessayez dans un instant.', false);
+    return;
+  }
 
   var d = DB();
   viderJournal();
@@ -24830,7 +24843,8 @@ function creer(){
       if(logo === null) return null;
       occupe('Enregistrement...');
       var codeAcces = code();
-      var uid = 'shop_' + Date.now() + '_' + Math.random().toString(36).substr(2,5);
+      /* [AGV-53] identifiant de la future boutique : celui que le code de creation a autorise */
+      var uid = (window.agvCodeCreation && window.agvCodeCreation.uidPrevu()) || ('shop_' + Date.now() + '_' + Math.random().toString(36).substr(2,5));
       var maintenant = new Date();
       var expiration = new Date(maintenant.getTime() + 60*24*60*60*1000);
       var shop = {
@@ -24842,8 +24856,11 @@ function creer(){
         licenceStatut: 'essai', licencePeriode: 'essai_60j'
       };
 
+      /* [AGV-53] 0) le code de creation devient « utilise » par cette boutique (une seule fois) */
+      return (window.agvCodeCreation ? window.agvCodeCreation.consommer(uid) : Promise.reject(new Error('code de creation indisponible')))
+        .then(function(){ etape('Code de création', 'ok'); })
       /* 1) la fiche de la boutique — c'est l'ecriture essentielle */
-      return avecDelai(d.ref('gdv_shops/' + uid + '/info').set(shop), 20000, 'fiche de la boutique')
+        .then(function(){ return avecDelai(d.ref('gdv_shops/' + uid + '/info').set(shop), 20000, 'fiche de la boutique'); })
         .then(function(){
           etape('Enregistrement de la boutique', 'ok', 'code d\'acces : ' + codeAcces);
           /* 2) l'index du code — separement : son echec ne perd pas la boutique */
@@ -24889,6 +24906,8 @@ function creer(){
     })
     .catch(function(e){
       actif();
+      /* [AGV-53] code de creation refuse : message clair, rien n'a ete enregistre */
+      if(e && e.agvCodeCreation){ etape('Code de création', 'ko', e.message); message(e.message, false); return; }
       etape('Enregistrement de la boutique', 'ko', detail(e));
       var t = detail(e);
       if(/permission|denied|PERMISSION/i.test(t)){
@@ -26204,6 +26223,7 @@ function refBrut(chemin){
     window._agvRefBrut = origine;
     d.ref = function(chemin){ return origine(reecrire(chemin)); };
   }
+  window.__agvPoserRedirection = poser;   /* [AGV-54] appelee des la creation de la base */
   poser();
 })();
 
@@ -26381,8 +26401,14 @@ function basculer(b){
       t: Date.now()
     }));
   }catch(e){}
-  toast('Ouverture du ' + nomBloc(b) + '...');
-  setTimeout(function(){ location.reload(); }, 350);
+  try{
+    var o = document.createElement('div');
+    o.style.cssText = 'position:fixed;inset:0;z-index:2147483000;background:rgba(15,23,42,.88);display:flex;align-items:center;justify-content:center;color:#fff;font-family:inherit;font-size:15px;font-weight:700';
+    o.textContent = 'Ouverture du ' + nomBloc(b) + '…';
+    document.body.appendChild(o);
+  }catch(e){ toast('Ouverture du ' + nomBloc(b) + '...'); }
+  if(window.requestAnimationFrame) requestAnimationFrame(function(){ setTimeout(function(){ location.reload(); }, 0); });
+  else setTimeout(function(){ location.reload(); }, 0);
 }
 window.agvBlocOuvrir = basculer;
 
@@ -26397,7 +26423,8 @@ window.agvBlocOuvrir = basculer;
   (function attendre(){
     essais++;
     if(essais > 160) return;
-    if(typeof window.agvLaunchApp !== 'function' || !window.db){ setTimeout(attendre, 150); return; }
+    /* [AGV-54] la redirection des chemins doit etre en place avant d'ouvrir le bloc */
+    if(typeof window.agvLaunchApp !== 'function' || !window.db || !window.db.__agvBlocsPose){ setTimeout(attendre, 150); return; }
     var shop = null;
     try{ shop = JSON.parse(localStorage.getItem('agv_shop_' + r.uid) || 'null'); }catch(e){}
     if(!shop && r.code){
@@ -40232,8 +40259,8 @@ window.agvStocks = function(){
 (function () {
   'use strict';
   var V = {
-    version: 'AGV-52',
-    date: '2026-11-25 08:00 UTC',
+    version: 'AGV-54',
+    date: '2026-11-27 12:00 UTC',
     modules: 27,
     corrections: [
       'empreinte : deux sels (agvc$ a l ecriture, agv$ a la verification)',
@@ -40279,7 +40306,12 @@ window.agvStocks = function(){
       'PRODUITS DORMANTS : plus de 2 mois sans vente -> rappel peremption / sechage / etat',
       'PALMARES : meilleurs produits, clients et fournisseurs de chaque mois, graphiques imprimables',
       'BASE LOCALE PERMANENTE (AGV-51) : IndexedDB par appareil, file d attente, synchro par enregistrement',
-      'ACCES HORS LIGNE ENCADRE (AGV-52) : 2 jours hors ligne, mode hors ligne du concepteur sur un appareil, creation en ligne seulement'
+      'ACCES HORS LIGNE ENCADRE (AGV-52) : 2 jours hors ligne, mode hors ligne du concepteur sur un appareil, creation en ligne seulement',
+      'CODE DE CREATION (AGV-53) : toute nouvelle boutique exige un code genere par le concepteur, verrou serveur par regles',
+      'BOUTIQUE NEUVE (AGV-53) : sa premiere ouverture recoit bien la reponse vide du serveur, ses premieres saisies partent',
+      'OUVERTURE ET BLOCS (AGV-54) : page servie par l appareil, bloc fixe avant toute lecture, changement de bloc immediat',
+      'PERSONNEL COMPLET (AGV-54) : le fondateur voit le personnel de tous les blocs et les acces sans fiche',
+      'SUPPRESSION D UNE BOUTIQUE (AGV-54) : complete, reservee au concepteur, retiree des appareils'
     ]
   };
   window.AGV_VERSION = V;
@@ -40290,7 +40322,7 @@ window.agvStocks = function(){
   V.etat = function () {
     var noms = ['AGV_PERF', 'AGV_FACT', 'AGV_PORTAIL', 'AGV_DETTES', 'AGV_RESET',
                 'AGV_FORFAIT', 'AGV_STABLE', 'AGV_LIER', 'AGV_GERANTS', 'AGV_CONNEXION',
-                'AGV_COMPTES', 'AGV_ACCES', 'AGV_CHOIX', 'AGV_ECRAN', 'AGV_AUDIT', 'AGV_DEST', 'AGV_MDP', 'AGV_SIMPLE', 'AGV_TRACE', 'AGV_BOUTON', 'AGV_ROLE', 'AGV_STOCK', 'AGV_SESSION', 'AGV_LICENCE', 'AGV_FACTURE', 'AGV_SOLDE', 'AGV_PERSONNEL', 'AGV_PORTAIL_GERANT', 'AGV_39', 'AGV_40', 'AGV_BASE_LOCALE', 'AGV_HORS_LIGNE'];
+                'AGV_COMPTES', 'AGV_ACCES', 'AGV_CHOIX', 'AGV_ECRAN', 'AGV_AUDIT', 'AGV_DEST', 'AGV_MDP', 'AGV_SIMPLE', 'AGV_TRACE', 'AGV_BOUTON', 'AGV_ROLE', 'AGV_STOCK', 'AGV_SESSION', 'AGV_LICENCE', 'AGV_FACTURE', 'AGV_SOLDE', 'AGV_PERSONNEL', 'AGV_PORTAIL_GERANT', 'AGV_39', 'AGV_40', 'AGV_BASE_LOCALE', 'AGV_HORS_LIGNE', 'AGV_CODE_CREATION', 'AGV_54'];
     var absents = noms.filter(function (n) { return typeof window[n] !== 'object'; });
     console.log('Version ' + V.version + ' — fichier du ' + V.date);
     console.log(absents.length ? 'MODULES ABSENTS : ' + absents.join(', ')
@@ -67939,6 +67971,7 @@ function recuServeur(b, r, v){
   if (r.anomalie && v !== null){ r.anomalie = null; majIndicateurBientot(); }
   r.frais = true;
   if (r.couvert && egal(ancien, v)){ resoudreAttente(r); reveillerAttenteServeur(r); return; }
+  var premiere = !r.couvert;   /* [AGV-53] premiere reponse du serveur pour cette rubrique */
   r.S = v; r.couvert = true;
   persisterS(b, r, ancien).catch(alerteStockage);
   var avant = r.L;
@@ -67951,6 +67984,10 @@ function recuServeur(b, r, v){
          est enregistree AVANT que l'ecran ne recoive la nouvelle version */
       try{ if (window.AGV_PERF && typeof window.AGV_PERF.viderFileAttente === 'function') window.AGV_PERF.viderFileAttente(); }catch(e){}
     }
+    signaler(b.uid, [r.s]);
+  } else if (premiere){
+    /* [AGV-53] reponse vide (rubrique encore inexistante) : les ecouteurs poses avant
+       cette reponse la recoivent quand meme ; ceux deja servis ne sont pas rappeles */
     signaler(b.uid, [r.s]);
   }
   if (r.cle === 'blocs/_meta') suivreBlocs(b, v);
@@ -68926,6 +68963,35 @@ API.enAttente = function(){ return totalEnAttente(); };
 API.operations = function(uid){ var b = BOUTIQUES[uid || uidCourant()]; return b ? b.ops.map(function(o){ return { opId: o.opId, cree: new Date(o.cree).toLocaleString('fr-FR'), resume: o.resume, tentatives: o.tentatives, erreur: o.erreur || null }; }) : []; };
 API.journal = function(n){ return lireJournal(n).then(function(l){ try{ console.table(l.map(function(e){ return { quand: dateFr(e.quand), type: e.type, resume: e.resume }; })); }catch(x){} return l; }); };
 API.estConnecte = function(){ return connecte; };
+API.oublierBoutique = function(uid){
+  if (!uid) return Promise.resolve(false);
+  var b = BOUTIQUES[uid];
+  ECOUTEURS.forEach(function(e){ if (e.uid === uid) e.retire = true; });
+  ECOUTEURS = ECOUTEURS.filter(function(e){ return e.uid !== uid; });
+  FILE_LIVRAISON = FILE_LIVRAISON.filter(function(e){ return e.uid !== uid; });
+  if (b){
+    Object.keys(b.R).forEach(function(k){
+      var r = b.R[k];
+      if (r.ecoute && O){ try{ O.off.call(r.ecoute.ref, 'value', r.ecoute.h); }catch(e){} }
+      r.ecoute = null; r.attente = [];
+    });
+    b.ops = [];
+    delete BOUTIQUES[uid];
+  }
+  delete REGISTRE[uid];
+  ecrireRegistre();
+  return tx(['docs', 'operations', 'instantanes'], 'readwrite', function(t){
+    t.objectStore('docs')['delete'](plage(uid));
+    t.objectStore('instantanes')['delete'](plage(uid));
+    var c = t.objectStore('operations').index('uid').openCursor(IDBKeyRange.only(uid));
+    c.onsuccess = function(){ var cur = c.result; if (cur){ cur['delete'](); cur['continue'](); } };
+  }).then(function(){
+    journaliser({ uid: uid, type: 'oubli', resume: 'boutique supprimee par le concepteur : copie locale retiree de cet appareil' });
+    diffuser({ type: 'ops', uid: uid });
+    majIndicateurBientot();
+    return true;
+  }, function(){ return false; });
+};
 API._noyau = { normal: normal, egal: egal, difference: difference, appliquer: appliquer, appliquerCollection: appliquerCollection,
                poser: poser, clesDe: clesDe, cleBase: cleBase, evaluerRequete: evaluerRequete, etendreSpec: etendreSpec,
                seulementAjouts: seulementAjouts, enCollection: enCollection, Instantane: Instantane, tableauSiDense: tableauSiDense };
@@ -69525,6 +69591,1059 @@ function demarrer(){
 if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', function(){ setTimeout(demarrer, 0); });
 else setTimeout(demarrer, 0);
 console.log('[AGV-52] accès hors ligne encadré actif');
+})();
+
+</script>
+<script>
+(function(){
+'use strict';
+/* ================================================================
+   AGV-53 — CODE DE CREATION D'UNE BOUTIQUE (accord du concepteur)
+   ----------------------------------------------------------------
+   Une nouvelle boutique ne peut etre creee qu'avec un CODE DE
+   CREATION genere par le concepteur (espace concepteur, onglet
+   « Codes de creation ») et envoye a la personne. Sans code
+   valable (faux, annule, expire ou deja utilise), « Creer mon
+   compte » est refuse. Avec le bon code, la creation se fait comme
+   avant et la boutique s'ouvre (ecran de succes inchange).
+   UN CODE = UNE BOUTIQUE.
+   CIRCUIT
+     1. le code saisi est verifie, puis une AUTORISATION est inscrite
+        pour la future boutique : agv_creation/autorisees/<uid> ;
+     2. juste avant l'enregistrement de la fiche, le code devient
+        « utilise » par cette boutique : agv_creation/utilises/<empreinte>
+        (une seule fois, meme a plusieurs appareils) ;
+     3. la boutique est creee comme avant (gdv_shops/<uid>/info puis
+        gdv_codes/<code>, memes champs).
+   VERROU SERVEUR (facultatif, active par le concepteur) : regles
+   Firebase generees dans l'espace concepteur avec SA cle secrete ;
+   elles reprennent les regles d'aujourd'hui (gdv_codes, gdv_shops
+   avec l'index info/email, agv_platform) et ajoutent seulement le
+   verrou de creation.
+   SECURITE : la base ne contient jamais un code en clair (empreinte
+   SHA-256) ; la liste des codes n'est pas lisible.
+   Noeud ajoute : agv_creation (hors des boutiques et de agv_platform).
+   Les boutiques existantes, leurs donnees et la structure de la base
+   ne sont pas touchees ; elles s'ouvrent sans code.
+   ================================================================ */
+var RACINE = 'agv_creation';
+var N_DEF = RACINE + '/codes', N_UTIL = RACINE + '/utilises', N_AUT = RACINE + '/autorisees', N_CONC = RACINE + '/concepteur';
+var LOCAL_CODES = 'agv_cc_codes', LOCAL_CLE = 'agv_cc_cle';
+var TS = { '.sv': 'timestamp' };          /* heure du serveur (verifiee par les regles) */
+var MODELE_REGLES = {"rules": {"gdv_codes": {".read": true, "$code": {".write": "(newData.isString() && (root.child('gdv_shops/' + newData.val() + '/info/codeAcces').val() === $code || (!root.child('agv_creation/supprimees/' + newData.val()).exists() && root.child('agv_creation/utilises/' + root.child('agv_creation/autorisees/' + newData.val() + '/hash').val() + '/uid').val() === newData.val()))) || (!newData.exists() && data.isString() && !newData.parent().parent().child('gdv_shops/' + data.val() + '/info').exists())"}}, "gdv_shops": {".read": true, ".indexOn": ["info/email"], "$shopId": {".read": true, ".write": "(data.exists() && newData.exists()) || newData.parent().parent().child('agv_creation/concepteur/__CLE__/suppressions/' + $shopId + '/le').val() === now || (!data.exists() && !root.child('agv_creation/supprimees/' + $shopId).exists() && root.child('agv_creation/utilises/' + root.child('agv_creation/autorisees/' + $shopId + '/hash').val() + '/uid').val() === $shopId)"}}, "agv_platform": {".read": true, ".write": true}, "agv_creation": {"concepteur": {"$cle": {".read": "$cle === '__CLE__'", ".write": "$cle === '__CLE__'"}}, "codes": {"$hash": {".read": true, ".write": "newData.parent().parent().child('concepteur/__CLE__/codes/' + $hash + '/majLe').val() === now"}}, "autorisees": {"$uid": {".read": true, ".write": "!data.exists() && !root.child('gdv_shops/' + $uid).exists() && newData.child('hash').isString() && newData.child('hash').val().length === 64 && newData.child('hash').val().matches(/^[0-9a-f]+$/) && root.child('agv_creation/concepteur/__CLE__/codes/' + newData.child('hash').val()).exists() && root.child('agv_creation/codes/' + newData.child('hash').val() + '/statut').val() === 'disponible' && (!root.child('agv_creation/codes/' + newData.child('hash').val() + '/expireMs').exists() || root.child('agv_creation/codes/' + newData.child('hash').val() + '/expireMs').val() >= now) && !root.child('agv_creation/utilises/' + newData.child('hash').val()).exists()"}}, "utilises": {"$hash": {".read": true, ".write": "!data.exists() && newData.child('uid').isString() && root.child('agv_creation/autorisees/' + newData.child('uid').val() + '/hash').val() === $hash"}}, "supprimees": {"$uid": {".read": true, ".write": "!data.exists() && newData.exists() && newData.parent().parent().child('concepteur/__CLE__/suppressions/' + $uid + '/le').val() === now"}}}}};
+var ALPHA = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';           /* sans I, O, 0, 1 (confusions) */
+var CONTACT = '+224 623 030 403';
+
+/* ---------------- outils ---------------- */
+function esc(v){ return v === null || v === undefined ? '' : String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+function el(id){ return document.getElementById(id); }
+function pad2(n){ return String(n).padStart(2, '0'); }
+function isoJour(d){ d = d || new Date(); return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()); }
+function frIso(k){ var p = String(k || '').slice(0, 10).split('-'); return p.length === 3 ? p[2] + '/' + p[1] + '/' + p[0] : ''; }
+function frTs(t){ if(!t) return ''; var d = new Date(t); return isNaN(d.getTime()) ? '' : pad2(d.getDate()) + '/' + pad2(d.getMonth() + 1) + '/' + d.getFullYear(); }
+function connecte(){
+  if(typeof navigator !== 'undefined' && navigator.onLine === false) return false;
+  try{ if(window.AGV_HORS_LIGNE && typeof window.AGV_HORS_LIGNE.enLigne === 'function') return !!window.AGV_HORS_LIGNE.enLigne(); }catch(e){}
+  try{ var B = window.AGV_BASE_LOCALE; if(B && B.actif && B.estConnecte) return !!B.estConnecte(); }catch(e){}
+  return true;
+}
+function avecDelai(pr, ms){ return Promise.race([Promise.resolve(pr), new Promise(function(_, rej){ setTimeout(function(){ rej(new Error('délai dépassé')); }, ms); })]); }
+function lireLocal(k){ try{ return JSON.parse(localStorage.getItem(k) || '{}') || {}; }catch(e){ return {}; } }
+function ecrireLocal(k, v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} }
+
+/* SHA-256 (meme resultat sur tous les appareils, sans dependre du navigateur) */
+function sha256(ascii){
+  function rr(v, a){ return (v >>> a) | (v << (32 - a)); }
+  var maxWord = Math.pow(2, 32), i, j, res = '', words = [], bits = ascii.length * 8, hash = [], k = [], n = 0, comp = {};
+  for(var c = 2; n < 64; c++){
+    if(!comp[c]){
+      for(i = 0; i < 313; i += c) comp[i] = c;
+      hash[n] = (Math.pow(c, .5) * maxWord) | 0;
+      k[n++] = (Math.pow(c, 1 / 3) * maxWord) | 0;
+    }
+  }
+  ascii += '\x80';
+  while(ascii.length % 64 - 56) ascii += '\x00';
+  for(i = 0; i < ascii.length; i++){ j = ascii.charCodeAt(i); if(j >> 8) return ''; words[i >> 2] |= j << ((3 - i) % 4) * 8; }
+  words[words.length] = ((bits / maxWord) | 0);
+  words[words.length] = bits;
+  for(j = 0; j < words.length;){
+    var w = words.slice(j, j += 16), old = hash;
+    hash = hash.slice(0, 8);
+    for(i = 0; i < 64; i++){
+      var w15 = w[i - 15], w2 = w[i - 2], a = hash[0], e = hash[4];
+      var t1 = hash[7] + (rr(e, 6) ^ rr(e, 11) ^ rr(e, 25)) + ((e & hash[5]) ^ ((~e) & hash[6])) + k[i]
+        + (w[i] = (i < 16) ? w[i] : (w[i - 16] + (rr(w15, 7) ^ rr(w15, 18) ^ (w15 >>> 3)) + w[i - 7] + (rr(w2, 17) ^ rr(w2, 19) ^ (w2 >>> 10))) | 0);
+      var t2 = (rr(a, 2) ^ rr(a, 13) ^ rr(a, 22)) + ((a & hash[1]) ^ (a & hash[2]) ^ (hash[1] & hash[2]));
+      hash = [(t1 + t2) | 0].concat(hash);
+      hash[4] = (hash[4] + t1) | 0;
+    }
+    for(i = 0; i < 8; i++) hash[i] = (hash[i] + old[i]) | 0;
+  }
+  for(i = 0; i < 8; i++) for(j = 3; j + 1; j--){ var b = (hash[i] >> (j * 8)) & 255; res += (b < 16 ? '0' : '') + b.toString(16); }
+  return res;
+}
+/* « cr-ab7k q2m9 », « AB7KQ2M9 »... -> « CRAB7KQ2M9 » */
+function normaliser(code){
+  var s = String(code || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if(s.length === 8 && s.indexOf('CR') !== 0) s = 'CR' + s;
+  return s;
+}
+function empreinte(code){ var n = normaliser(code); return n ? sha256('AGV-CC|' + n) : ''; }
+function nouveauCode(){
+  var t = new Uint32Array(8), s = '';
+  try{ window.crypto.getRandomValues(t); }catch(e){ for(var x = 0; x < 8; x++) t[x] = Math.floor(Math.random() * 4294967296); }
+  for(var i = 0; i < 8; i++) s += ALPHA.charAt(t[i] % ALPHA.length);
+  return 'CR-' + s.slice(0, 4) + '-' + s.slice(4);
+}
+function expire(rec){
+  if(!rec) return false;
+  if(typeof rec.expireMs === 'number') return rec.expireMs < Date.now();
+  return !!(rec.expireLe && String(rec.expireLe).slice(0, 10) < isoJour());
+}
+function finJourMs(iso){ var p = String(iso || '').split('-'); return p.length === 3 ? new Date(+p[0], +p[1] - 1, +p[2], 23, 59, 59, 999).getTime() : null; }
+function etatCode(def, util){
+  if(util) return 'utilise';
+  if(!def) return 'inconnu';
+  if(def.statut === 'annule') return 'annule';
+  if(expire(def)) return 'expire';
+  return 'disponible';
+}
+function DB(){ return (window.db && typeof window.db.ref === 'function') ? window.db : null; }
+function ref(ch){ var d = DB(); if(!d) throw new Error('base indisponible'); return (typeof window._agvRefBrut === 'function') ? window._agvRefBrut(ch) : d.ref(ch); }
+function lire(ch){ return avecDelai(ref(ch).once('value'), 20000).then(function(s){ return s.val(); }); }
+function poser(ch, v){ return avecDelai(ref(ch).set(v), 20000); }
+function majCreation(obj){ return avecDelai(ref(RACINE).update(obj), 20000); }
+function tx(ch, fn){ return avecDelai(ref(ch).transaction(fn, undefined, false), 20000); }
+function estRefus(e){ return /permission|denied|refus/i.test(String((e && (e.code || e.message)) || e || '')); }
+function Raison(r, d){ this.r = r; this.d = d; }
+function ErreurCode(t){ var e = new Error(t); e.agvCodeCreation = true; return e; }
+
+/* ================================================================
+   1. CREATION D'UNE BOUTIQUE : le code est exige
+   ================================================================ */
+var jeton = null;          /* { h, n, uid, pret } : code accepte pour CETTE creation */
+function msg(t, ok){
+  try{ if(typeof window.agvMsg === 'function') window.agvMsg(t, ok); else alert(t); }catch(e){ alert(t); }
+  try{ var m = el('agv-msg'); if(m && m.scrollIntoView) m.scrollIntoView({ block: 'center', behavior: 'smooth' }); }catch(e){}
+}
+function bouton(txt, actif){ var b = el('r-btn'); if(!b) return; b.disabled = !actif; b.textContent = txt; }
+function saisi(){ var i = el('agv-r-code-creation'); return i ? i.value : ''; }
+function champ(){ return el('agv-r-code-creation'); }
+function rouge(){ var c = champ(); if(c){ c.focus(); c.style.borderColor = '#ef4444'; } }
+function texteRaison(r, d){
+  if(r === 'inconnu') return 'Code de création invalide : ce code n\'existe pas. Demandez un code au concepteur (' + CONTACT + ').';
+  if(r === 'utilise') return 'Ce code de création a déjà servi à créer une boutique : un code ne sert qu\'une seule fois. Demandez un nouveau code au concepteur.';
+  if(r === 'annule') return 'Ce code de création a été annulé par le concepteur. Demandez un nouveau code.';
+  if(r === 'expire') return 'Ce code de création a expiré' + (d && d.expireLe ? ' le ' + frIso(d.expireLe) : '') + '. Demandez un nouveau code au concepteur.';
+  if(r === 'refuse') return 'Code de création refusé : il n\'est pas (ou plus) valable. Demandez un nouveau code au concepteur (' + CONTACT + ').';
+  return 'Vérification du code impossible : la connexion ne répond pas. Réessayez.';
+}
+
+/* appeles par la creation (agvRegister), apres la verification des champs */
+function autorise(){ return !!(jeton && jeton.pret && jeton.n === normaliser(saisi())); }
+function uidPrevu(){ return autorise() ? jeton.uid : null; }
+/* 1) verification du code + autorisation inscrite pour CETTE future boutique */
+function demander(){
+  var n = normaliser(saisi());
+  if(!n){ msg('Saisissez le code de création fourni par le concepteur. Sans ce code, la création d\'une boutique est refusée.', false); rouge(); return; }
+  if(!/^CR[A-Z0-9]{8}$/.test(n)){ msg('Code de création invalide. Vérifiez le code reçu du concepteur (forme : CR-XXXX-XXXX).', false); rouge(); return; }
+  if(!DB()){ msg('Création momentanément indisponible. Réessayez dans un instant.', false); return; }
+  if(!connecte()){ msg('Création impossible sans connexion Internet : connectez-vous puis réessayez.', false); return; }
+  var h = empreinte(n);
+  if(!jeton || jeton.n !== n) jeton = { h: h, n: n, uid: 'shop_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5), pret: false };
+  var J = jeton;
+  bouton('Vérification du code…', false);
+  Promise.all([lire(N_DEF + '/' + h), lire(N_UTIL + '/' + h)]).then(function(r){
+    var def = r[0], util = r[1];
+    if(util && util.uid === J.uid) return;                 /* deja consomme pour cette creation (nouvel essai) */
+    var e = etatCode(def, util);
+    if(e !== 'disponible') throw new Raison(e, def);
+    return lire(N_AUT + '/' + J.uid).then(function(a){
+      if(a && a.hash === h) return;
+      return poser(N_AUT + '/' + J.uid, { hash: h, le: Date.now() }).catch(function(err){ throw new Raison(estRefus(err) ? 'refuse' : 'reseau'); });
+    });
+  }).then(function(){
+    J.pret = true;
+    var c = champ(); if(c) c.style.borderColor = '#22c55e';
+    msg('Code de création accepté ✓ — création de la boutique…', true);
+    bouton('Creer mon compte', true);
+    setTimeout(function(){ try{ window.agvRegister(); }catch(e){ msg('Erreur : ' + e.message, false); } }, 50);
+  }).catch(function(e){
+    bouton('Creer mon compte', true);
+    rouge();
+    msg(texteRaison((e instanceof Raison) ? e.r : (estRefus(e) ? 'refuse' : 'reseau'), e && e.d), false);
+  });
+}
+/* 2) juste avant l'enregistrement de la boutique : le code devient « utilise » (une seule fois) */
+function consommer(uid){
+  var J = jeton;
+  if(!J || !J.pret || J.uid !== uid) return Promise.reject(ErreurCode('Saisissez le code de création fourni par le concepteur.'));
+  return tx(N_UTIL + '/' + J.h, function(cur){
+    if(cur === null) return { uid: uid, le: Date.now() };
+    return;                                                /* deja pris : on ne touche a rien */
+  }).then(function(res){
+    var v = res && res.snapshot ? res.snapshot.val() : null;
+    if(v && v.uid === uid) return true;
+    throw ErreurCode(texteRaison('utilise'));
+  }, function(err){
+    return lire(N_UTIL + '/' + J.h).then(function(u){
+      if(u && u.uid === uid) return true;
+      throw ErreurCode(texteRaison(u ? 'utilise' : (estRefus(err) ? 'refuse' : 'reseau')));
+    }, function(){ throw ErreurCode(texteRaison('reseau')); });
+  });
+}
+function brancherSucces(){
+  var f = window.agvShowSuccess;
+  if(typeof f !== 'function' || f._agvcc) return;
+  var w = function(){ jeton = null; return f.apply(this, arguments); };
+  w._agvcc = true;
+  window.agvShowSuccess = w;
+}
+window.agvCodeCreation = { autorise: autorise, demander: demander, uidPrevu: uidPrevu, consommer: consommer, empreinte: empreinte, normaliser: normaliser };
+
+/* ================================================================
+   2. ESPACE CONCEPTEUR : cle, regles de securite, codes de creation
+   ================================================================ */
+var codes = [], filtreC = 'tous';
+function cle(){ try{ return localStorage.getItem(LOCAL_CLE) || ''; }catch(e){ return ''; } }
+function codesLocaux(){ return lireLocal(LOCAL_CODES); }
+function nouvelleCle(){
+  var A = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789', t = new Uint32Array(32), s = '';
+  try{ window.crypto.getRandomValues(t); }catch(e){ for(var x = 0; x < 32; x++) t[x] = Math.floor(Math.random() * 4294967296); }
+  for(var i = 0; i < 32; i++) s += A.charAt(t[i] % A.length);
+  return s;
+}
+function texteRegles(k){ return JSON.stringify(MODELE_REGLES, null, 2).split('__CLE__').join(k); }
+function cheminCodes(){ return N_CONC + '/' + cle() + '/codes'; }
+
+function vueSecurite(){
+  var k = cle();
+  if(!k){
+    return '<div style="border:1px solid rgba(251,191,36,0.4);background:rgba(251,191,36,0.07);border-radius:10px;padding:14px;margin-bottom:12px">'
+      + '<div class="cdb-sec">🔒 Sécuriser la création des boutiques</div>'
+      + '<div class="cdb-note" style="margin-bottom:10px">Pour que personne ne puisse créer une boutique sans votre code, même en contournant l\'application, la base doit appliquer des règles de sécurité liées à <b>votre clé secrète</b>. '
+      + 'Générez votre clé ici (une seule fois), puis publiez les règles dans la console Firebase.</div>'
+      + '<button class="cdb-btn" style="background:#b45309;color:#fff;border-color:#b45309" onclick="agvCcNouvelleCle()">🔑 Générer ma clé et mes règles</button>'
+      + '<div class="cdb-note" style="margin:12px 0 4px">Vous avez déjà une clé (générée sur un autre appareil) ?</div>'
+      + '<div style="display:flex;gap:6px;flex-wrap:wrap"><input id="agvcc-cle-saisie" class="cdb-field" style="margin:0;flex:1;min-width:220px;font-family:monospace" placeholder="Votre clé concepteur" autocomplete="off">'
+      + '<button class="cdb-btn" onclick="agvCcEnregistrerCle()">Enregistrer la clé</button></div></div>';
+  }
+  return '<details id="agvcc-secu" style="border:1px solid rgba(37,99,235,0.3);background:rgba(37,99,235,0.06);border-radius:10px;padding:10px 14px;margin-bottom:12px">'
+    + '<summary style="cursor:pointer;font-weight:700;color:#e2e8f0">🔒 Règles de sécurité de la base <span id="agvcc-etat-regles" class="cdb-note" style="font-weight:400"></span></summary>'
+    + '<ol class="cdb-note" style="margin:10px 0 8px 18px;padding:0">'
+    + '<li>Touchez « Copier les règles ».</li>'
+    + '<li>Ouvrez <b>console.firebase.google.com</b> → projet de l\'application → <b>Realtime Database</b> → onglet <b>Règles</b>.</li>'
+    + '<li>Effacez tout le texte, collez les règles, puis touchez <b>Publier</b>.</li>'
+    + '<li>Revenez ici et touchez « Vérifier les règles ».</li></ol>'
+    + '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">'
+    + '<button class="cdb-btn ok" onclick="agvCcCopierRegles()">📋 Copier les règles</button>'
+    + '<button class="cdb-btn" onclick="agvCcVerifier()">✅ Vérifier les règles</button>'
+    + '<button class="cdb-btn" onclick="agvCcVoirCle()">Afficher ma clé</button>'
+    + '<button class="cdb-btn danger" onclick="agvCcOublierCle()">Retirer la clé de cet appareil</button></div>'
+    + '<div id="agvcc-verif" class="cdb-note" style="min-height:16px"></div>'
+    + '<div id="agvcc-cle-vue" class="cdb-note"></div>'
+    + '<textarea id="agvcc-regles" readonly style="width:100%;height:150px;margin-top:6px;background:#060d24;color:#93c5fd;border:1px solid rgba(37,99,235,0.3);border-radius:8px;font-family:monospace;font-size:10.5px;padding:8px;box-sizing:border-box">' + esc(texteRegles(k)) + '</textarea>'
+    + '<div class="cdb-note" style="margin-top:6px">Ces règles reprennent celles d\'aujourd\'hui (boutiques, codes d\'accès, espace concepteur, index « info/email ») et ajoutent seulement le verrou de création. Gardez votre clé en lieu sûr : elle est nécessaire pour générer des codes depuis un autre appareil. Ne la donnez à personne.</div></details>';
+}
+function vueCodes(){
+  var d = new Date(); d.setDate(d.getDate() + 30);
+  var k = cle();
+  return '<div class="cdb-sec">🔑 Codes de création</div>'
+    + '<div class="cdb-note" style="margin-bottom:10px">Toute nouvelle boutique doit saisir un code de création pour être créée. Générez un code, puis envoyez-le à la personne : '
+    + '<b>un code ne sert qu\'une seule fois</b>. Sans code valable, « Créer mon compte » est refusé. Les boutiques déjà créées ne sont pas concernées.</div>'
+    + vueSecurite()
+    + (k ? '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:10px">'
+      + '<div style="flex:1;min-width:170px"><div class="cdb-note">Pour (nom ou boutique prévue)</div><input id="agvcc-pour" class="cdb-field" style="margin:0" placeholder="ex. Boutique Madina — M. Bah"></div>'
+      + '<div style="width:170px"><div class="cdb-note">Téléphone WhatsApp</div><input id="agvcc-tel" class="cdb-field" style="margin:0" inputmode="tel" placeholder="620 00 00 00"></div>'
+      + '<div style="width:160px"><div class="cdb-note">Valable jusqu\'au</div><input id="agvcc-exp" type="date" class="cdb-field" style="margin:0" value="' + isoJour(d) + '"></div>'
+      + '<button class="cdb-btn ok" id="agvcc-gen" onclick="agvCcGenerer()">🔑 Générer un code</button>'
+      + '</div>'
+      + '<div id="agvcc-nouveau"></div>'
+      + '<div style="display:flex;gap:6px;flex-wrap:wrap;margin:6px 0 8px" id="agvcc-filtres"></div>'
+      + '<div class="cdb-wrap"><table class="cdb-table" style="min-width:760px"><thead><tr><th>Code</th><th>Pour</th><th>Créé le</th><th>Valable jusqu\'au</th><th>Statut</th><th>Boutique créée</th><th>Actions</th></tr></thead>'
+      + '<tbody id="agvcc-corps"><tr><td colspan="7" class="cdb-empty">Chargement…</td></tr></tbody></table></div>'
+      + '<div class="cdb-note" style="margin-top:8px">Par sécurité, la base ne garde jamais le code lui-même : le code complet n\'est visible que sur l\'appareil qui l\'a généré. Sur un autre appareil, générez un nouveau code si besoin.</div>'
+      : '<div class="cdb-note" style="color:#fbbf24">Générez ou saisissez d\'abord votre clé concepteur pour créer des codes.</div>');
+}
+function rafraichirVue(){ var v = el('cdbVue-codes'); if(v){ v.innerHTML = vueCodes(); chargerCodes(); } }
+window.agvCcNouvelleCle = function(){
+  if(cle() && !window.confirm('Une clé existe déjà sur cet appareil. La remplacer ?')) return;
+  try{ localStorage.setItem(LOCAL_CLE, nouvelleCle()); }catch(e){ alert('Impossible d\'enregistrer la clé sur cet appareil.'); return; }
+  rafraichirVue();
+  var s = el('agvcc-secu'); if(s) s.open = true;
+  var z = el('agvcc-verif'); if(z){ z.style.color = '#fbbf24'; z.textContent = 'Clé générée ✓ — copiez maintenant les règles et publiez-les dans la console Firebase.'; }
+};
+window.agvCcEnregistrerCle = function(){
+  var v = String((el('agvcc-cle-saisie') || {}).value || '').trim();
+  if(!/^[A-Za-z0-9]{16,64}$/.test(v)){ alert('Clé invalide : lettres et chiffres uniquement (au moins 16).'); return; }
+  try{ localStorage.setItem(LOCAL_CLE, v); }catch(e){}
+  rafraichirVue();
+  window.agvCcVerifier();
+};
+window.agvCcOublierCle = function(){
+  if(!window.confirm('Retirer la clé de cet appareil ?\nVous devrez la ressaisir pour générer des codes ici. Les codes et les règles ne changent pas.')) return;
+  try{ localStorage.removeItem(LOCAL_CLE); }catch(e){}
+  rafraichirVue();
+};
+window.agvCcVoirCle = function(){ var z = el('agvcc-cle-vue'); if(z) z.innerHTML = 'Votre clé : <b style="font-family:monospace;color:#fde68a;user-select:all">' + esc(cle()) + '</b>'; };
+function copier(t){
+  try{ navigator.clipboard.writeText(t); }catch(e){}
+  try{ var x = document.createElement('textarea'); x.value = t; document.body.appendChild(x); x.select(); document.execCommand('copy'); x.remove(); }catch(e){}
+}
+window.agvCcCopierRegles = function(){
+  copier(texteRegles(cle()));
+  var z = el('agvcc-verif'); if(z){ z.style.color = '#93c5fd'; z.textContent = 'Règles copiées ✓ — collez-les dans Realtime Database → Règles, puis Publier.'; }
+};
+/* verification : la cle est acceptee, et une ecriture interdite est bien refusee */
+function ouvrirSecu(){ var d = el('agvcc-secu'); if(d) d.open = true; }
+window.agvCcVerifier = function(){
+  var z = el('agvcc-verif'), e2 = el('agvcc-etat-regles'), k = cle();
+  if(!z || !k) return;
+  if(!connecte()){ z.style.color = '#fbbf24'; z.textContent = 'Connectez-vous à Internet pour vérifier.'; return; }
+  z.style.color = '#93c5fd'; z.textContent = 'Vérification en cours…';
+  var essai = 'verif_' + Date.now().toString(36);
+  /* [AGV-54] la base suit-elle encore les anciennes regles (sans agv_creation) ? Alors rien ne
+     peut fonctionner : ni les codes, ni la creation. On le dit clairement. */
+  lire(N_AUT + '/' + essai).then(function(){ return true; }, function(err){ return estRefus(err) ? false : true; }).then(function(lisible){
+  if(!lisible) return 'anciennes';
+  return poser(N_CONC + '/' + k + '/_verif', TS).then(function(){
+    return poser(N_AUT + '/' + essai, { hash: '0000000000000000000000000000000000000000000000000000000000000000', le: Date.now() }).then(function(){
+      try{ ref(N_AUT + '/' + essai).remove(); }catch(x){}
+      return 'ouvert';
+    }, function(err){ return estRefus(err) ? 'actif' : 'reseau'; });
+  }, function(err){ return estRefus(err) ? 'cle' : 'reseau'; });
+  }).then(function(r){
+    if(r === 'anciennes'){ z.style.color = '#f87171'; z.textContent = '❌ Règles à publier : la base suit encore les anciennes règles. Tant qu\'elles ne sont pas remplacées par celles ci-dessous, aucun code ne peut être enregistré et AUCUNE boutique ne peut être créée. Copiez et publiez les règles (étapes 1 à 4).'; if(e2) e2.textContent = '— à publier ❌'; ouvrirSecu(); return; }
+    if(r === 'actif'){ z.style.color = '#4ade80'; z.textContent = '✅ Règles actives : le serveur refuse toute création de boutique sans code valable, et votre clé est reconnue.'; if(e2) e2.textContent = '— actives ✅'; }
+    else if(r === 'ouvert'){ z.style.color = '#fbbf24'; z.textContent = '⚠️ Les règles ne sont pas encore publiées : l\'application refuse déjà la création sans code, mais la base, elle, ne bloque pas encore. Copiez et publiez les règles.'; if(e2) e2.textContent = '— à publier ⚠️'; }
+    else if(r === 'cle'){ z.style.color = '#f87171'; z.textContent = '❌ Cette clé n\'est pas celle des règles publiées. Saisissez la bonne clé, ou recopiez et republiez les règles de cette clé.'; if(e2) e2.textContent = '— clé refusée ❌'; }
+    else { z.style.color = '#f87171'; z.textContent = 'Vérification impossible : la connexion ne répond pas.'; }
+  });
+};
+
+function badge(e){
+  var m = { disponible: ['essai', 'Disponible'], utilise: ['actif', 'Utilisé'], expire: ['expire', 'Expiré'], annule: ['bloque', 'Annulé'], inconnu: ['expire', 'Introuvable'] }[e] || ['essai', e];
+  return '<span class="cdb-badge ' + m[0] + '">' + m[1] + '</span>';
+}
+function numeroWa(t){ var d = String(t || '').replace(/\D/g, ''); if(d.length === 9) d = '224' + d; return d; }
+function texteWa(code, rec){
+  return 'Bonjour' + (rec && rec.pour ? ' ' + rec.pour : '') + ',\nVoici votre code de création App AGV : ' + code
+    + (rec && rec.expireLe ? '\nValable jusqu\'au ' + frIso(rec.expireLe) + '.' : '')
+    + '\nOuvrez l\'application, touchez « Créer un compte » et saisissez ce code dans « Code de création ». Il ne sert qu\'une seule fois.';
+}
+function trouver(h){ for(var i = 0; i < codes.length; i++) if(codes[i].h === h) return codes[i]; return null; }
+function rendreCodes(){
+  var corps = el('agvcc-corps'); if(!corps) return;
+  var loc = codesLocaux();
+  var nb = { tous: codes.length, disponible: 0, utilise: 0, expire: 0, annule: 0 };
+  codes.forEach(function(c){ nb[c.etat] = (nb[c.etat] || 0) + 1; });
+  var fz = el('agvcc-filtres');
+  if(fz) fz.innerHTML = [['tous', 'Tous'], ['disponible', 'Disponibles'], ['utilise', 'Utilisés'], ['expire', 'Expirés'], ['annule', 'Annulés']].map(function(x){
+    return '<button class="cdb-btn" style="' + (filtreC === x[0] ? 'background:#1e3a8a;color:#fff' : '') + '" onclick="agvCcFiltre(\'' + x[0] + '\')">' + x[1] + ' (' + (nb[x[0]] || 0) + ')</button>';
+  }).join('');
+  var l = codes.filter(function(c){ return filtreC === 'tous' || c.etat === filtreC; });
+  if(!l.length){ corps.innerHTML = '<tr><td colspan="7" class="cdb-empty">' + (codes.length ? 'Aucun code dans ce filtre.' : 'Aucun code de création pour le moment. Générez-en un ci-dessus.') + '</td></tr>'; return; }
+  corps.innerHTML = l.map(function(c){
+    var m = c.meta || {}, clair = loc[c.h] || '', b = c.boutique, act = '';
+    if(clair && c.etat === 'disponible'){
+      act += '<button class="cdb-btn" onclick="agvCcCopier(\'' + c.h + '\')">Copier</button> ';
+      act += '<button class="cdb-btn wa" onclick="agvCcWhatsapp(\'' + c.h + '\')">WhatsApp</button> ';
+    }
+    if(c.etat === 'disponible' || c.etat === 'expire') act += '<button class="cdb-btn danger" onclick="agvCcAnnuler(\'' + c.h + '\')">Annuler</button>';
+    return '<tr><td style="font-family:monospace;font-weight:800;letter-spacing:.08em;color:#93c5fd;white-space:nowrap">' + (clair ? esc(clair) : '<span style="color:#64748b">CR-••••-••••</span>') + '</td>'
+      + '<td>' + esc(m.pour || '—') + (m.tel ? '<div class="cdb-sub">' + esc(m.tel) + '</div>' : '') + '</td>'
+      + '<td style="white-space:nowrap">' + esc(frTs(m.creeLe || (c.def && c.def.creeLe))) + '</td>'
+      + '<td style="white-space:nowrap">' + ((m.expireLe || (c.def && c.def.expireLe)) ? esc(frIso(m.expireLe || c.def.expireLe)) : 'Sans limite') + '</td>'
+      + '<td>' + badge(c.etat) + '</td>'
+      + '<td>' + (b ? '<b>' + esc(b.entreprise || b.nom || '') + '</b><div class="cdb-sub">' + esc(b.codeAcces || '') + ' · ' + esc(frTs(c.util && c.util.le)) + (b.tel ? ' · ' + esc(b.tel) : '') + '</div>'
+              : (c.util ? '<span class="cdb-sub">Boutique non créée (' + esc(frTs(c.util.le)) + ')</span>' : '—')) + '</td>'
+      + '<td style="white-space:nowrap">' + (act || '—') + '</td></tr>';
+  }).join('');
+}
+function chargerCodes(){
+  var corps = el('agvcc-corps'); if(!corps || !cle()) return;
+  if(!connecte()){ corps.innerHTML = '<tr><td colspan="7" class="cdb-empty" style="color:#fbbf24">Connectez-vous à Internet pour voir les codes.</td></tr>'; return; }
+  lire(cheminCodes()).then(function(metas){
+    metas = metas || {};
+    return Promise.all(Object.keys(metas).map(function(h){
+      return Promise.all([lire(N_DEF + '/' + h).catch(function(){ return null; }), lire(N_UTIL + '/' + h).catch(function(){ return null; })]).then(function(r){
+        var c = { h: h, meta: metas[h] || {}, def: r[0], util: r[1], boutique: null };
+        c.etat = etatCode(c.def, c.util);
+        if(c.util && c.util.uid) return lire('gdv_shops/' + c.util.uid + '/info').then(function(i){
+          if(i) c.boutique = { entreprise: i.entreprise, nom: i.nom, codeAcces: i.codeAcces, tel: i.tel };
+          return c;
+        }, function(){ return c; });
+        return c;
+      });
+    }));
+  }).then(function(l){
+    codes = l.sort(function(a, b){ return ((b.meta.creeLe || 0) - (a.meta.creeLe || 0)); });
+    rendreCodes();
+  }).catch(function(e){
+    corps.innerHTML = '<tr><td colspan="7" class="cdb-empty" style="color:#f87171">' + (estRefus(e) ? 'Accès refusé : cette clé n\'est pas celle des règles publiées. Vérifiez votre clé (🔒 Règles de sécurité).' : 'Lecture impossible : ' + esc(e.message || e)) + '</td></tr>';
+  });
+}
+window.agvCcFiltre = function(f){ filtreC = f; rendreCodes(); };
+window.agvCcGenerer = function(){
+  var bt = el('agvcc-gen'), k = cle();
+  var pour = String((el('agvcc-pour') || {}).value || '').trim(), tel = String((el('agvcc-tel') || {}).value || '').trim(), exp = String((el('agvcc-exp') || {}).value || '').trim();
+  if(!k){ alert('Générez ou saisissez d\'abord votre clé concepteur.'); return; }
+  if(exp && exp < isoJour()){ alert('La date de validité ne peut pas être dans le passé.'); return; }
+  if(!connecte()){ alert('Connectez-vous à Internet : le code doit être enregistré sur le serveur pour pouvoir être utilisé.'); return; }
+  var code = nouveauCode(), h = empreinte(code), now = Date.now(), obj = {};
+  obj['concepteur/' + k + '/codes/' + h] = { pour: pour, tel: tel, creeLe: now, expireLe: exp || '', majLe: TS };
+  var def = { statut: 'disponible', creeLe: now, expireLe: exp || '' };
+  if(exp) def.expireMs = finJourMs(exp);
+  obj['codes/' + h] = def;
+  if(bt){ bt.disabled = true; bt.textContent = 'Enregistrement…'; }
+  majCreation(obj).then(function(){
+    var loc = codesLocaux(); loc[h] = code; ecrireLocal(LOCAL_CODES, loc);
+    codes.unshift({ h: h, meta: { pour: pour, tel: tel, creeLe: now, expireLe: exp }, def: def, util: null, boutique: null, etat: 'disponible' });
+    var z = el('agvcc-nouveau');
+    if(z) z.innerHTML = '<div style="border:2px solid rgba(37,99,235,0.5);background:rgba(37,99,235,0.1);border-radius:10px;padding:14px;margin-bottom:10px;text-align:center">'
+      + '<div class="cdb-note">Nouveau code de création' + (pour ? ' — ' + esc(pour) : '') + (exp ? ' — valable jusqu\'au ' + esc(frIso(exp)) : '') + '</div>'
+      + '<div id="agvcc-code-affiche" style="font-family:monospace;font-size:26px;font-weight:900;color:#60a5fa;letter-spacing:.18em;margin:6px 0 10px">' + esc(code) + '</div>'
+      + '<button class="cdb-btn" onclick="agvCcCopier(\'' + h + '\')">Copier le code</button> '
+      + '<button class="cdb-btn wa" onclick="agvCcWhatsapp(\'' + h + '\')">Envoyer par WhatsApp</button></div>';
+    ['agvcc-pour', 'agvcc-tel'].forEach(function(i){ var x = el(i); if(x) x.value = ''; });
+    rendreCodes();
+  }).catch(function(e){
+    alert(estRefus(e) ? 'Code refusé par la base : soit les règles ci-dessus ne sont pas encore publiées (étapes 1 à 4), soit votre clé n\'est pas celle des règles publiées. Touchez « Vérifier les règles ».' : 'Enregistrement du code impossible : ' + (e.message || e));
+    try{ window.agvCcVerifier(); }catch(x){}
+  }).then(function(){ if(bt){ bt.disabled = false; bt.textContent = '🔑 Générer un code'; } });
+};
+window.agvCcCopier = function(h){ var c = codesLocaux()[h]; if(c) copier(c); };
+window.agvCcWhatsapp = function(h){
+  var c = codesLocaux()[h], x = trouver(h), m = (x && x.meta) || {}; if(!c) return;
+  window.open('https://wa.me/' + numeroWa(m.tel) + '?text=' + encodeURIComponent(texteWa(c, m)), '_blank');
+};
+window.agvCcAnnuler = function(h){
+  var x = trouver(h); if(!x) return;
+  if(!window.confirm('Annuler ce code de création' + (x.meta.pour ? ' (' + x.meta.pour + ')' : '') + ' ?\nIl ne permettra plus de créer une boutique.')) return;
+  var obj = {};
+  obj['concepteur/' + cle() + '/codes/' + h + '/majLe'] = TS;
+  obj['codes/' + h + '/statut'] = 'annule';
+  obj['codes/' + h + '/annuleLe'] = Date.now();
+  majCreation(obj).then(function(){
+    if(x.def) x.def.statut = 'annule'; x.etat = etatCode(x.def, x.util); rendreCodes();
+  }).catch(function(e){ alert('Annulation impossible : ' + (e.message || e)); });
+};
+
+/* l'onglet est ajoute au panneau du concepteur des qu'il s'affiche */
+function ajouterOnglet(){
+  var p = el('agv-dev-panel'); if(!p) return;
+  var barre = p.querySelector('.cdb-onglets'); if(!barre || el('cdbOng-codes')) return;
+  var b = document.createElement('button');
+  b.className = 'cdb-onglet'; b.id = 'cdbOng-codes'; b.textContent = '🔑 Codes de création';
+  barre.appendChild(b);
+  var vue = document.createElement('div'); vue.id = 'cdbVue-codes'; vue.style.display = 'none'; vue.innerHTML = vueCodes();
+  var der = el('cdbVue-securite') || barre;
+  der.parentNode.insertBefore(vue, der.nextSibling);
+  b.onclick = function(){
+    barre.querySelectorAll('.cdb-onglet').forEach(function(x){ x.classList.toggle('on', x === b); });
+    p.querySelectorAll('[id^="cdbVue-"]').forEach(function(v){ v.style.display = (v === vue) ? 'block' : 'none'; });
+    chargerCodes();
+    if(cle()) window.agvCcVerifier();
+  };
+  barre.addEventListener('click', function(e){
+    var t = e.target && e.target.closest ? e.target.closest('.cdb-onglet') : null;
+    if(t && t !== b){ b.classList.remove('on'); vue.style.display = 'none'; }
+  }, true);
+}
+
+/* ---------------- demarrage ---------------- */
+function demarrer(){
+  brancherSucces();
+  setInterval(function(){ brancherSucces(); if(el('agv-dev-panel') && !el('cdbOng-codes')) ajouterOnglet(); }, 700);
+  var c = champ();
+  if(c) c.addEventListener('input', function(){ c.style.borderColor = ''; });
+}
+window.AGV_CODE_CREATION = { version: 'AGV-53', autorise: autorise, empreinte: empreinte, regles: function(){ return texteRegles(cle() || '__CLE__'); } };
+if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', demarrer); else demarrer();
+})();
+
+</script>
+<script>
+(function(){
+'use strict';
+/* ================================================================
+   AGV-54 — BLOCS FIABLES, PERSONNEL COMPLET, SUPPRESSION DES BOUTIQUES
+   ----------------------------------------------------------------
+   1. CONTROLE DU BLOC OUVERT
+      L'ecoute principale de l'application doit viser les donnees du bloc
+      affiche. Si ce n'est pas le cas (ouverture trop rapide sur un
+      appareil lent), l'enregistrement est suspendu sur-le-champ et le bloc
+      est rouvert proprement : jamais les produits d'un bloc dans un autre.
+   2. PERSONNEL : AUCUNE FICHE CACHEE AU FONDATEUR
+      Le personnel est range par bloc : une fiche creee dans le BLOC B
+      n'apparaissait que dans le BLOC B, alors que son identifiant et son
+      mot de passe marchaient partout. L'onglet Personnel du fondateur
+      affiche desormais, sous le personnel du bloc ouvert, celui de TOUS
+      les autres blocs (avec un bouton pour ouvrir sa fiche), puis les
+      acces de connexion qui n'ont plus aucune fiche (fiche a retablir).
+      Lecture seule ; seuls « Retablir sa fiche » et « Desactiver cet
+      acces » ecrivent, sur demande du fondateur, dans les champs existants.
+   3. SUPPRESSION D'UNE BOUTIQUE PAR LE CONCEPTEUR
+      Suppression complete en une seule ecriture : fiche et donnees de la
+      boutique (tous ses blocs), ses codes d'acces, ses rattachements, et
+      une pierre tombale qui empeche tout retour. Les appareils qui
+      l'avaient ouverte retirent leur copie locale des leur connexion :
+      aucun ancien appareil ne peut la faire reapparaitre.
+   Noeuds ajoutes : agv_platform/boutiquesSupprimees/<uid>,
+   agv_creation/supprimees/<uid> et agv_creation/concepteur/<cle>/suppressions.
+   ================================================================ */
+if(window.AGV_54) return;
+var X = window.AGV_54 = { version: '1.0' };
+var BL = window.AGV_BASE_LOCALE || null;
+var CONTACT = '+224 623 030 403';
+
+function log(){ try{ var a = [].slice.call(arguments); a.unshift('[AGV-54]'); console.log.apply(console, a); }catch(e){} }
+function esc(v){ return String(v === null || v === undefined ? '' : v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+function connecte(){ try{ if(BL && BL.actif && BL.estConnecte) return !!BL.estConnecte(); }catch(e){} return navigator.onLine !== false; }
+function memeId(a, b){ return a !== null && a !== undefined && b !== null && b !== undefined && String(a) === String(b); }
+function tab(v){ if(!v) return []; if(Array.isArray(v)) return v.filter(Boolean); return Object.keys(v).map(function(k){ return v[k]; }).filter(Boolean); }
+function uid(){ return (window._currentShop || {}).uid || null; }
+function blocActif(){ try{ if(typeof window.agvBlocActif === 'function') return window.agvBlocActif(); }catch(e){} return window._agvBloc || 'A'; }
+function role(){ try{ if(window.currentRole) return window.currentRole; }catch(e){} try{ return currentRole; }catch(e){} return null; }
+function dire(t){ try{ if(typeof window.showToast === 'function') return window.showToast(t); }catch(e){} try{ alert(t); }catch(e){} }
+function refBrut(ch){
+  var d = window.db; if(!d) return null;
+  try{ return window._agvRefBrut ? window._agvRefBrut(ch) : d.ref(ch); }catch(e){ return null; }
+}
+/* lecture bornee dans le temps ; serveur : sans passer par la copie de l'appareil */
+function lire(ch, ms, serveur){
+  return new Promise(function(res){
+    var r = refBrut(ch); if(!r){ res({ ok: false, v: null }); return; }
+    if(serveur){ try{ r.__agvSpec = { nonGere: true }; }catch(e){} }
+    var fini = false, t = setTimeout(function(){ if(!fini){ fini = true; res({ ok: false, v: null }); } }, ms || 5000);
+    try{
+      r.once('value').then(function(s){ if(!fini){ fini = true; clearTimeout(t); res({ ok: true, v: s.val() }); } },
+                            function(){ if(!fini){ fini = true; clearTimeout(t); res({ ok: false, v: null, refus: true }); } });
+    }catch(e){ if(!fini){ fini = true; clearTimeout(t); res({ ok: false, v: null }); } }
+  });
+}
+function estRefus(e){ return /permission|denied|refus/i.test(String((e && (e.code || e.message)) || e || '')); }
+var LS_DEL = (function(){ try{ return Storage.prototype.removeItem; }catch(e){ return null; } })();
+function lsRetirer(k){ try{ if(LS_DEL) LS_DEL.call(window.localStorage, k); else localStorage.removeItem(k); }catch(e){} }
+
+/* ================================================================
+   1. CONTROLE DU BLOC OUVERT
+   ================================================================ */
+var repare = false;
+function attendu(){
+  var u = uid(); if(!u || !window.db) return null;
+  try{ return String(window.db.ref('gdv_shops/' + u + '/data').toString()); }catch(e){ return null; }
+}
+function controlerBloc(){
+  if(repare) return;
+  var l = window._agvDbListener, s = window._currentShop;
+  if(!l || !s || !s.uid || !window._AGV_READY) return;
+  var app = document.getElementById('app'); if(!app || !app.classList.contains('visible')) return;
+  var a = String(l.toString()), e = attendu();
+  if(!e || a === e) return;
+  repare = true;
+  log('écoute sur ' + a + ' au lieu de ' + e + ' — bloc rouvert proprement');
+  try{ window._AGV_READY = false; }catch(x){}
+  try{ l.off(); }catch(x){}
+  try{
+    sessionStorage.setItem('agv_reprise_bloc', JSON.stringify({
+      uid: s.uid, bloc: blocActif(), code: window._lastShopCode || s.codeAcces || '',
+      role: role(), gerantId: window.currentGerantId || null, t: Date.now()
+    }));
+  }catch(x){}
+  location.reload();
+}
+setInterval(controlerBloc, 400);
+X.controlerBloc = controlerBloc;
+
+/* ================================================================
+   2. PERSONNEL : TOUT LE PERSONNEL DE LA BOUTIQUE
+   ================================================================ */
+function fondateurEnTitre(){
+  try{ if(typeof window.agvEstVraiFondateur === 'function') return !!window.agvEstVraiFondateur(); }catch(e){}
+  return role() === 'fondateur';
+}
+function estFondateurFiche(g){
+  try{ if(typeof window.agvFicheEstFondateur === 'function') return !!window.agvFicheEstFondateur(g); }catch(e){}
+  return !!(g && (String(g.id) === '1' || g.role === 'fondateur' || g.type === 'fondateur'));
+}
+function lettresDe(meta){ return ['A'].concat(Object.keys(meta || {}).filter(function(k){ return /^[B-Z]$/.test(k) && meta[k]; }).sort()); }
+function cheminPersonnel(u, L, meta){
+  if(L === 'A') return 'gdv_shops/' + u + '/data/gerants';
+  var m = meta && meta[L];
+  if(m && m.source) return 'gdv_shops/' + m.source + '/data/gerants';
+  return 'gdv_shops/' + u + '/blocs/' + L + '/data/gerants';
+}
+function nomBloc(L, meta){
+  var m = meta && meta[L];
+  if(m && m.nom) return String(m.nom);
+  return 'BLOC ' + L;
+}
+function toutLePersonnel(u){
+  return lire('gdv_shops/' + u + '/blocs/_meta', 4000).then(function(rm){
+    var meta = (rm.v && typeof rm.v === 'object') ? rm.v : {};
+    var lettres = lettresDe(meta);
+    return Promise.all([
+      Promise.all(lettres.map(function(L){ return lire(cheminPersonnel(u, L, meta), 5000); })),
+      lire('gdv_shops/' + u + '/comptes', 5000),
+      lire('gdv_shops/' + u + '/blocs/_affect', 4000),
+      lire('gdv_shops/' + u + '/blocs/_acces', 4000)
+    ]).then(function(r){
+      return {
+        meta: meta,
+        blocs: lettres.map(function(L, i){ return { lettre: L, nom: nomBloc(L, meta), lu: r[0][i].ok, fiches: tab(r[0][i].v) }; }),
+        comptes: r[1].v || {}, comptesLus: r[1].ok,
+        affect: r[2].v || {}, acces: r[3].v || {}
+      };
+    });
+  });
+}
+function identifiantsDe(comptes, id){
+  var l = [];
+  Object.keys(comptes || {}).forEach(function(k){
+    var c = comptes[k];
+    if(c && memeId(c.gerantId, id) && c.identifiant) l.push(c.identifiant + (c.actif === false ? ' (désactivé)' : ''));
+  });
+  return l;
+}
+function blocsAutorises(t, id){
+  var l = [], a = t.affect && t.affect[id], acc = t.acces && t.acces[id];
+  if(a) l.push(String(a));
+  if(acc && typeof acc === 'object') Object.keys(acc).forEach(function(k){ if(acc[k] && l.indexOf(k) < 0) l.push(k); });
+  return l.sort();
+}
+function style(){
+  if(document.getElementById('agv54-style')) return;
+  var st = document.createElement('style'); st.id = 'agv54-style';
+  st.textContent = '#agv54-pers{margin-top:18px}'
+    + '#agv54-pers .t54{font-size:12px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--text3,#64748b);margin:16px 0 8px}'
+    + '#agv54-pers .c54{border:1px solid var(--border,rgba(37,99,235,.25));border-radius:12px;padding:11px 13px;margin-bottom:8px;background:var(--surface,#0a1628);display:flex;gap:10px;align-items:center;flex-wrap:wrap}'
+    + '#agv54-pers .c54 .n{font-weight:800;color:var(--text,#e2e8f0);font-size:14px}'
+    + '#agv54-pers .c54 .s{font-size:11.5px;color:var(--text2,#94a3b8);line-height:1.5}'
+    + '#agv54-pers .c54 .g{flex:1;min-width:200px}'
+    + '#agv54-pers .b54{display:inline-block;padding:2px 8px;border-radius:20px;font-size:10px;font-weight:800;background:rgba(37,99,235,.15);color:#93c5fd;margin-left:6px}'
+    + '#agv54-pers .w54{background:rgba(245,158,11,.15);color:#fbbf24}'
+    + '#agv54-pers .r54{background:rgba(239,68,68,.15);color:#fca5a5}'
+    + '#agv54-pers .note{font-size:12px;color:var(--text3,#64748b);line-height:1.6}'
+    + '#agv54-pers .act54{display:flex;gap:6px;flex-wrap:wrap}'
+    + '.agv54-eclat{animation:agv54e 1.6s ease 2}@keyframes agv54e{0%,100%{box-shadow:none}50%{box-shadow:0 0 0 3px #f59e0b}}';
+  document.head.appendChild(st);
+}
+var dernierRendu = 0, enCours = false, DERNIER = null;
+function rendreTout(){
+  var corps = document.getElementById('agv32-personnel-corps');
+  if(!corps || !fondateurEnTitre()) return;
+  var u = uid(); if(!u) return;
+  style();
+  var z = document.getElementById('agv54-pers');
+  if(!z){ z = document.createElement('div'); z.id = 'agv54-pers'; corps.appendChild(z); }
+  if(DERNIER && DERNIER.u === u && Date.now() - DERNIER.t < 8000){ dessiner(z, DERNIER.d); }
+  else if(!z.innerHTML) z.innerHTML = '<div class="t54">Personnel des autres blocs</div><div class="note">Lecture de tout le personnel de la boutique…</div>';
+  if(enCours) return;
+  enCours = true;
+  toutLePersonnel(u).then(function(d){
+    enCours = false;
+    DERNIER = { u: u, t: Date.now(), d: d };
+    var z2 = document.getElementById('agv54-pers');
+    if(z2) dessiner(z2, d);
+  }, function(){ enCours = false; });
+}
+function dessiner(z, d){
+  var cur = blocActif(), connus = {}, h = '';
+  d.blocs.forEach(function(b){ b.fiches.forEach(function(g){ if(g && g.id !== undefined) connus[String(g.id)] = b; }); });
+  var autres = [], illisibles = [];
+  d.blocs.forEach(function(b){
+    if(b.lettre === cur) return;
+    if(!b.lu){ illisibles.push(b.nom); return; }
+    b.fiches.forEach(function(g){ if(g && !estFondateurFiche(g)) autres.push({ g: g, b: b }); });
+  });
+  h += '<div class="t54">Personnel des autres blocs (' + autres.length + ')</div>';
+  if(!autres.length) h += '<div class="note">Aucun autre membre du personnel dans les autres blocs de la boutique.</div>';
+  autres.forEach(function(x){
+    var g = x.g, ids = identifiantsDe(d.comptes, g.id), bl = blocsAutorises(d, g.id);
+    var genre = (g.type === 'associe' || g.role === 'associe') ? 'Co-fondateur' : 'Gérant';
+    h += '<div class="c54" id="agv54-f-' + esc(g.id) + '"><div class="g"><div class="n">' + esc(g.nom || '(sans nom)')
+      + '<span class="b54">' + esc(x.b.nom) + '</span>' + (g.bloque ? '<span class="b54 r54">Bloqué</span>' : '') + '</div>'
+      + '<div class="s">' + genre + (g.poste ? ' · ' + esc(g.poste) : '')
+      + ' · ' + (ids.length ? 'identifiant : <b>' + esc(ids.join(', ')) + '</b>' : 'pas d\'accès de connexion')
+      + (bl.length ? ' · blocs ouverts : ' + esc(bl.join(', ')) : '') + '</div></div>'
+      + '<div class="act54"><button class="btn btn-ghost btn-sm" onclick="agv54OuvrirFiche(\'' + esc(x.b.lettre) + '\',\'' + esc(g.id) + '\')">Ouvrir sa fiche (' + esc(x.b.nom) + ')</button></div></div>';
+  });
+  if(illisibles.length) h += '<div class="note" style="color:#fbbf24">⚠️ ' + esc(illisibles.join(', ')) + ' : personnel non lisible pour le moment (connexion Internet nécessaire la première fois).</div>';
+  /* acces de connexion dont la fiche n'existe plus nulle part */
+  var orphelins = [];
+  if(d.comptesLus && !illisibles.length){
+    Object.keys(d.comptes || {}).forEach(function(k){
+      var c = d.comptes[k];
+      if(!c || c.actif === false) return;
+      if(c.gerantId === undefined || c.gerantId === null || c.gerantId === '') return;   /* acces du fondateur */
+      if(connus[String(c.gerantId)]) return;
+      orphelins.push({ k: k, c: c });
+    });
+  }
+  if(orphelins.length){
+    h += '<div class="t54">Accès de connexion sans fiche (' + orphelins.length + ')</div>'
+      + '<div class="note" style="margin-bottom:8px">Ces personnes peuvent se connecter, mais leur fiche n\'existe plus dans aucun bloc : leurs onglets et leurs droits ne sont plus réglés. Rétablissez leur fiche pour les gérer, ou désactivez leur accès.</div>';
+    orphelins.forEach(function(o){
+      h += '<div class="c54"><div class="g"><div class="n">' + esc(o.c.identifiant || o.k) + '<span class="b54 w54">fiche absente</span></div>'
+        + '<div class="s">Accès de connexion actif · n° de fiche ' + esc(o.c.gerantId) + (o.c.majLe ? ' · modifié le ' + esc(new Date(Number(o.c.majLe)).toLocaleDateString('fr-FR')) : '') + '</div></div>'
+        + '<div class="act54"><button class="btn btn-primary btn-sm" onclick="agv54Retablir(\'' + esc(o.k) + '\')">Rétablir sa fiche dans ce bloc</button>'
+        + '<button class="btn btn-ghost btn-sm" onclick="agv54Desactiver(\'' + esc(o.k) + '\')">Désactiver cet accès</button></div></div>';
+    });
+  }
+  z.innerHTML = h;
+}
+X.toutLePersonnel = function(){ var u = uid(); return u ? toutLePersonnel(u) : Promise.resolve(null); };
+
+/* le cadre Personnel est redessine par son module : on y remet notre section */
+var obs = null, obsCible = null, minuteur = null;
+function surveiller(){
+  var corps = document.getElementById('agv32-personnel-corps');
+  if(!corps || corps === obsCible) return;
+  if(obs) obs.disconnect();
+  obsCible = corps;
+  obs = new MutationObserver(function(){
+    if(document.getElementById('agv54-pers')) return;
+    clearTimeout(minuteur); minuteur = setTimeout(rendreTout, 60);
+  });
+  obs.observe(corps, { childList: true });
+  if(corps.children.length && !document.getElementById('agv54-pers')) rendreTout();
+}
+setInterval(surveiller, 700);
+
+window.agv54OuvrirFiche = function(L, id){
+  if(L === blocActif()){ montrerFiche(id); return; }
+  if(typeof window.agvBlocOuvrir !== 'function') return dire('Changement de bloc indisponible');
+  try{ sessionStorage.setItem('agv54_fiche', JSON.stringify({ id: String(id), bloc: L, t: Date.now() })); }catch(e){}
+  window.agvBlocOuvrir(L);
+};
+function montrerFiche(id){
+  var essais = 0;
+  (function chercher(){
+    var c = document.getElementById('agv32-carte-' + id) || document.getElementById('agv54-f-' + id);
+    if(c){ try{ c.scrollIntoView({ behavior: 'smooth', block: 'center' }); }catch(e){} c.classList.add('agv54-eclat'); setTimeout(function(){ c.classList.remove('agv54-eclat'); }, 3500); return; }
+    if(++essais < 40) setTimeout(chercher, 250);
+  })();
+}
+(function reprendreFiche(){
+  var r = null;
+  try{ r = JSON.parse(sessionStorage.getItem('agv54_fiche') || 'null'); }catch(e){}
+  if(!r || Date.now() - (r.t || 0) > 90000) return;
+  var essais = 0;
+  (function attendre(){
+    if(++essais > 200) return;
+    var app = document.getElementById('app');
+    if(!window._currentShop || !window._AGV_READY || !app || !app.classList.contains('visible') || blocActif() !== r.bloc || typeof window.agv40Onglet !== 'function'){ setTimeout(attendre, 150); return; }
+    try{ sessionStorage.removeItem('agv54_fiche'); }catch(e){}
+    try{ window.agv40Onglet('personnel'); }catch(e){}
+    montrerFiche(r.id);
+  })();
+})();
+
+window.agv54Retablir = function(k){
+  if(!fondateurEnTitre()) return dire('Réservé au fondateur');
+  var d = DERNIER && DERNIER.d, c = d && d.comptes && d.comptes[k];
+  if(!c) return dire('Accès introuvable : rouvrez l\'onglet Personnel');
+  var id = isNaN(Number(c.gerantId)) ? c.gerantId : Number(c.gerantId);
+  var l; try{ l = tab(gerants); }catch(e){ l = tab(window.gerants); }
+  if(l.some(function(g){ return g && memeId(g.id, id); })) return dire('Cette fiche existe déjà dans ce bloc');
+  var nom = String(c.identifiant || '').split('@')[0].replace(/[._-]+/g, ' ').replace(/\b\w/g, function(m){ return m.toUpperCase(); }).trim() || ('Personne ' + id);
+  if(!confirm('Rétablir la fiche de « ' + (c.identifiant || nom) + ' » dans ' + nomBloc(blocActif(), d.meta) + ' ?\n\nElle reprend son identifiant et son mot de passe actuels. Vous réglerez ensuite son nom, ses onglets et ses droits sur sa carte, puis « Enregistrer ».')) return;
+  var fiche = { id: id, nom: nom, code: '', poste: 'vendeur', tel: '', email: (String(c.identifiant || '').indexOf('@') > 0 ? c.identifiant : ''),
+                type: 'pourcentage', remun: 'pourcentage', pct: 0, salaire: 0, bloque: false,
+                permVentes: true, permDep: true, permEdit: false, permDel: false, permVers: false, permPers: false,
+                permVues: ['ventes', 'journalier', 'rapport'] };
+  l.push(fiche);
+  try{ gerants = l; }catch(e){ window.gerants = l; }
+  try{ if(typeof window.saveAll === 'function') window.saveAll(); }catch(e){}
+  var u = uid(), b = blocActif();
+  if(u && b !== 'A' && !(d.affect && d.affect[String(id)])){
+    var r = refBrut('gdv_shops/' + u + '/blocs/_affect/' + id); if(r) r.set(b).catch(function(){});
+  }
+  DERNIER = null;
+  try{ if(typeof window.agvRendrePersonnel === 'function') window.agvRendrePersonnel(); }catch(e){}
+  dire('Fiche rétablie : réglez ses onglets et ses droits, puis Enregistrer');
+  montrerFiche(String(id));
+};
+window.agv54Desactiver = function(k){
+  if(!fondateurEnTitre()) return dire('Réservé au fondateur');
+  var d = DERNIER && DERNIER.d, c = d && d.comptes && d.comptes[k], u = uid();
+  if(!c || !u) return dire('Accès introuvable');
+  if(!confirm('Désactiver l\'accès « ' + (c.identifiant || k) + ' » ? Cette personne ne pourra plus se connecter. (Rien n\'est effacé : l\'accès peut être réactivé.)')) return;
+  var r = refBrut('gdv_shops/' + u + '/comptes/' + k + '/actif'); if(!r) return;
+  r.set(false).then(function(){ DERNIER = null; rendreTout(); dire('Accès désactivé'); }, function(e){ dire('Impossible : ' + ((e && e.message) || e)); });
+};
+
+/* ================================================================
+   3. SUPPRESSION D'UNE BOUTIQUE (ESPACE CONCEPTEUR)
+   ================================================================ */
+var SUPPR = {}, supprLu = 0;
+function chargerSupprimees(force){
+  if(!force && Date.now() - supprLu < 60000) return Promise.resolve(SUPPR);
+  supprLu = Date.now();
+  return lire('agv_platform/boutiquesSupprimees', 6000, true).then(function(r){ if(r.ok) SUPPR = r.v || {}; return SUPPR; });
+}
+function cle(){ try{ return localStorage.getItem('agv_cc_cle') || ''; }catch(e){ return ''; } }
+function ts(){ try{ return firebase.database.ServerValue.TIMESTAMP; }catch(e){ return { '.sv': 'timestamp' }; } }
+
+function preparerSuppression(x){
+  return Promise.all([
+    lire('gdv_shops/' + x + '/info', 8000, true),
+    lire('gdv_codes', 10000, true),
+    lire('gdv_shops/' + x + '/rattachement', 6000, true),
+    lire('gdv_shops/' + x + '/blocs/_meta', 6000, true)
+  ]).then(function(r){
+    if(!r[1].ok) throw new Error('lecture des codes d\'accès impossible');
+    var info = r[0].v || {}, codes = r[1].v || {}, ratt = r[2].v, meta = r[3].v || {};
+    var p = { uid: x, info: info, codes: [], liens: [], o: {}, opt: {} };
+    Object.keys(codes).forEach(function(c){ if(String(codes[c]) === String(x)) p.codes.push(c); });
+    p.o['gdv_shops/' + x] = null;
+    p.codes.forEach(function(c){ p.o['gdv_codes/' + c] = null; });
+    var suite = Promise.resolve();
+    /* elle etait rattachee a une boutique d'accueil : son bloc y est retire */
+    if(ratt && ratt.vers){
+      suite = lire('gdv_shops/' + ratt.vers + '/blocs/_meta', 6000, true).then(function(rm){
+        var m = rm.v || {};
+        Object.keys(m).forEach(function(L){
+          if(m[L] && String(m[L].source || '') === String(x)){
+            p.opt['gdv_shops/' + ratt.vers + '/blocs/_meta/' + L] = null;
+            p.liens.push('son bloc ' + L + ' est retiré de « ' + (ratt.versNom || ratt.vers) + ' »');
+          }
+        });
+      });
+    }
+    /* elle accueillait d'autres boutiques : elles redeviennent independantes (leurs donnees restent).
+       Chaque ecriteau est relu : seul celui qui designe encore cette boutique est retire. */
+    var sources = [];
+    Object.keys(meta).forEach(function(L){
+      var m = meta[L];
+      if(m && m.source && String(m.source) !== String(x) && sources.indexOf(String(m.source)) < 0) sources.push(String(m.source));
+    });
+    suite = suite.then(function(){
+      return Promise.all(sources.map(function(src){
+        return lire('gdv_shops/' + src + '/rattachement', 6000, true).then(function(rr){
+          if(rr.ok && rr.v && String(rr.v.vers || '') === String(x)){
+            p.opt['gdv_shops/' + src + '/rattachement'] = null;
+            var L = null; Object.keys(meta).forEach(function(k){ if(meta[k] && String(meta[k].source) === src) L = k; });
+            p.liens.push('« ' + ((L && meta[L].nom) || src) + ' » redevient une boutique indépendante (ses données restent)');
+          }
+        });
+      }));
+    });
+    return suite.then(function(){ return p; });
+  });
+}
+function executerSuppression(p){
+  var x = p.uid, nom = p.info.entreprise || p.info.nom || x, k = cle();
+  var tombe = { nom: nom, code: p.info.codeAcces || (p.codes[0] || ''), le: ts(), par: 'concepteur' };
+  function fusion(){ var o = {}; [].forEach.call(arguments, function(a){ Object.keys(a).forEach(function(c){ o[c] = a[c]; }); }); return o; }
+  var base = fusion(p.o); base['agv_platform/boutiquesSupprimees/' + x] = tombe;
+  var protege = {};
+  if(k){
+    protege['agv_creation/concepteur/' + k + '/suppressions/' + x] = { le: ts(), nom: nom };
+    protege['agv_creation/supprimees/' + x] = tombe;
+  }
+  /* du plus complet au plus simple : avec la pierre tombale protegee (regles publiees), puis sans
+     (anciennes regles) ; les rattachements sont retires dans la meme ecriture quand c'est possible */
+  var essais = [];
+  if(k){ essais.push(['complet', fusion(base, p.opt, protege)]); if(Object.keys(p.opt).length) essais.push(['complet', fusion(base, protege)]); }
+  essais.push(['simple', fusion(base, p.opt)]);
+  if(Object.keys(p.opt).length) essais.push(['simple', base]);
+  var racine = refBrut('/');
+  if(!racine) return Promise.reject(new Error('base indisponible'));
+  var i = 0, derniere = null;
+  function suivant(){
+    if(i >= essais.length) return Promise.reject(derniere);
+    var e = essais[i++];
+    return racine.update(e[1]).then(function(){ return e[0]; }, function(err){
+      derniere = err;
+      if(!estRefus(err)) throw err;
+      return suivant();
+    });
+  }
+  return suivant();
+}
+function dialogueSuppression(btn){
+  var x = btn.getAttribute('data-uid'), nomAff = btn.getAttribute('data-name') || x;
+  var ov = document.createElement('div');
+  ov.id = 'agv54-del';
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.88);z-index:2147483300;display:flex;align-items:center;justify-content:center;padding:12px;box-sizing:border-box;font-family:inherit';
+  ov.innerHTML = '<div style="background:#0a1628;border:2px solid rgba(239,68,68,0.5);border-radius:14px;padding:22px;max-width:440px;width:100%;max-height:92vh;overflow:auto;color:#e2e8f0;box-sizing:border-box">'
+    + '<div style="font-size:34px;text-align:center">&#128465;</div>'
+    + '<h3 style="color:#ef4444;font-size:17px;font-weight:800;margin:6px 0 4px;text-align:center">Supprimer la boutique ?</h3>'
+    + '<p style="font-size:14px;font-weight:800;margin:0 0 10px;text-align:center">' + esc(nomAff) + '</p>'
+    + '<div id="agv54-del-plan" style="font-size:12.5px;color:#94a3b8;line-height:1.6;margin-bottom:10px">Préparation…</div>'
+    + '<p style="color:#94a3b8;font-size:12px;margin:0 0 6px">Tapez <b style="color:#ef4444">SUPPRIMER</b> pour confirmer :</p>'
+    + '<input id="agv54-del-mot" autocomplete="off" placeholder="SUPPRIMER" style="width:100%;padding:10px 12px;background:#060d24;border:1px solid rgba(239,68,68,0.4);border-radius:8px;color:#e2e8f0;font-size:14px;font-family:inherit;outline:none;margin-bottom:12px;box-sizing:border-box;text-align:center;letter-spacing:.15em">'
+    + '<div style="display:flex;gap:10px;justify-content:center"><button id="agv54-del-non" class="cdb-btn">Annuler</button><button id="agv54-del-oui" class="cdb-btn danger" disabled>Supprimer définitivement</button></div>'
+    + '<div id="agv54-del-msg" style="margin-top:12px;font-size:12.5px;min-height:16px;text-align:center"></div></div>';
+  document.body.appendChild(ov);
+  var msg = document.getElementById('agv54-del-msg'), oui = document.getElementById('agv54-del-oui'), plan = null;
+  function dit(t, c){ msg.style.color = c || '#94a3b8'; msg.textContent = t; }
+  document.getElementById('agv54-del-non').onclick = function(){ ov.remove(); };
+  ov.onclick = function(e){ if(e.target === ov) ov.remove(); };
+  if(!connecte()){
+    document.getElementById('agv54-del-plan').innerHTML = '<span style="color:#f87171">Connexion Internet nécessaire : la suppression se fait directement sur le serveur.</span>';
+    return;
+  }
+  preparerSuppression(x).then(function(p){
+    plan = p;
+    var l = ['la fiche et <b>toutes les données</b> de la boutique (produits, ventes, factures, dettes, clients, caisse, personnel, tous ses blocs)',
+             p.codes.length ? 'son code d\'accès ' + esc(p.codes.join(', ')) + ' (il n\'ouvrira plus rien)' : 'aucun code d\'accès enregistré'];
+    p.liens.forEach(function(t){ l.push(esc(t)); });
+    l.push('les appareils qui l\'avaient ouverte retireront leur copie dès leur prochaine connexion');
+    document.getElementById('agv54-del-plan').innerHTML = '<b style="color:#fca5a5">Action définitive.</b> Seront supprimés :<ul style="margin:6px 0 0 18px;padding:0">'
+      + l.map(function(t){ return '<li>' + t + '</li>'; }).join('') + '</ul>'
+      + (cle() ? '' : '<div style="margin-top:8px;color:#fbbf24">Votre clé du concepteur n\'est pas enregistrée sur cet appareil : si les règles de sécurité sont publiées, la base refusera la suppression (onglet « Codes de création »).</div>');
+    oui.disabled = false;
+  }, function(e){
+    document.getElementById('agv54-del-plan').innerHTML = '<span style="color:#f87171">Préparation impossible : ' + esc((e && e.message) || e) + '</span>';
+  });
+  oui.onclick = function(){
+    var mot = String(document.getElementById('agv54-del-mot').value || '').trim().toUpperCase();
+    if(mot !== 'SUPPRIMER') return dit('Saisie incorrecte : rien n\'a été supprimé.', '#ef4444');
+    if(!plan) return;
+    oui.disabled = true; oui.textContent = 'Suppression…'; dit('Suppression en cours…');
+    executerSuppression(plan).then(function(mode){
+      SUPPR[x] = { nom: nomAff, le: Date.now() };
+      try{ if(BL && BL.oublierBoutique) BL.oublierBoutique(x); }catch(e){}
+      try{
+        var c = JSON.parse(localStorage.getItem('agv_dev_shops') || '[]');
+        if(Array.isArray(c)) localStorage.setItem('agv_dev_shops', JSON.stringify(c.filter(function(s){ return s && s.uid !== x; })));
+      }catch(e){}
+      var tr = document.querySelector('#cdbBody tr[data-uid="' + x + '"]'); if(tr) tr.remove();
+      dit(mode === 'complet' ? '✅ Boutique supprimée définitivement.' : '✅ Boutique supprimée. (Publiez les règles de sécurité pour que la suppression soit aussi protégée par le serveur.)', '#22c55e');
+      log('boutique ' + x + ' supprimée (' + mode + ')');
+      setTimeout(function(){ ov.remove(); try{ if(typeof window.agvDevRefresh === 'function') window.agvDevRefresh(); }catch(e){} }, mode === 'complet' ? 1200 : 3500);
+    }, function(e){
+      oui.disabled = false; oui.textContent = 'Réessayer';
+      dit(estRefus(e) ? 'Refusé par la base : enregistrez votre clé du concepteur sur cet appareil (onglet « Codes de création ») puis réessayez.' : 'Erreur : ' + ((e && e.message) || e), '#ef4444');
+    });
+  };
+}
+X.supprimer = function(x){ var b = document.createElement('button'); b.setAttribute('data-uid', x); dialogueSuppression(b); };
+function brancherSuppression(){
+  if(window.agvDeleteShop !== dialogueSuppression) window.agvDeleteShop = dialogueSuppression;
+  var corps = document.getElementById('cdbBody');
+  if(!corps) return;
+  chargerSupprimees(false).then(function(){
+    corps.querySelectorAll('tr[data-uid]').forEach(function(tr){
+      var u = tr.getAttribute('data-uid');
+      /* restes d'une boutique deja supprimee (ancien appareil) : jamais affiches */
+      if(SUPPR[u] && !tr.getAttribute('data-agv54')){
+        var nom = (tr.querySelector('.cdb-name') || {}).textContent || '';
+        if(!nom || /sans nom/i.test(nom)) tr.style.display = 'none';
+        tr.setAttribute('data-agv54', '1');
+      }
+    });
+  });
+}
+setInterval(brancherSuppression, 1000);
+
+/* ================================================================
+   4. SUR LES APPAREILS : UNE BOUTIQUE SUPPRIMEE QUITTE L'APPAREIL
+   ================================================================ */
+var vus = {};
+function verifierUid(u){
+  if(!u || !connecte()) return Promise.resolve(false);
+  if(vus[u] && Date.now() - vus[u] < 60000) return Promise.resolve(false);
+  vus[u] = Date.now();
+  return Promise.all([lire('agv_creation/supprimees/' + u, 6000, true), lire('agv_platform/boutiquesSupprimees/' + u, 6000, true)]).then(function(r){
+    var t = r[0].v || r[1].v;
+    if(!t) return false;
+    /* la pierre tombale ne suffit pas : la boutique doit aussi avoir disparu du serveur */
+    return lire('gdv_shops/' + u + '/info', 8000, true).then(function(ri){
+      if(!ri.ok || ri.v) return false;
+      return t;
+    });
+  });
+}
+var CLE_PURGEES = 'agv54_supprimees';
+function purgees(){ try{ var l = JSON.parse(localStorage.getItem(CLE_PURGEES) || '[]'); return Array.isArray(l) ? l : []; }catch(e){ return []; } }
+function purgerAppareil(u){
+  try{ var l = purgees(); if(l.indexOf(u) < 0){ l.push(u); localStorage.setItem(CLE_PURGEES, JSON.stringify(l.slice(-200))); } }catch(e){}
+  try{ if(BL && BL.oublierBoutique) BL.oublierBoutique(u); }catch(e){}
+  /* les blocs memorises sur l'appareil qui renvoyaient vers elle sont oublies */
+  try{
+    Object.keys(localStorage).forEach(function(k){
+      if(k.indexOf('agv_meta_') !== 0) return;
+      var m = JSON.parse(localStorage.getItem(k) || 'null'), change = false;
+      if(!m || typeof m !== 'object') return;
+      Object.keys(m).forEach(function(L){ if(m[L] && String(m[L].source || '') === String(u)){ delete m[L]; change = true; } });
+      if(change) localStorage.setItem(k, JSON.stringify(m));
+    });
+  }catch(e){}
+  try{
+    Object.keys(localStorage).forEach(function(k){
+      if(k.indexOf(u) >= 0 && /^agv/.test(k)) lsRetirer(k);
+    });
+    var s = JSON.parse(localStorage.getItem('agv_session_appareil') || 'null');
+    if(s && s.uid === u) lsRetirer('agv_session_appareil');
+    var dev = JSON.parse(localStorage.getItem('agv_dev_shops') || '[]');
+    if(Array.isArray(dev)) localStorage.setItem('agv_dev_shops', JSON.stringify(dev.filter(function(x){ return x && x.uid !== u; })));
+  }catch(e){}
+  try{ sessionStorage.removeItem('agv_reprise_bloc'); sessionStorage.removeItem('agv_reprise_boutique'); }catch(e){}
+}
+function ecranSupprimee(nom, t){
+  if(document.getElementById('agv54-fin')) return;
+  var ov = document.createElement('div'); ov.id = 'agv54-fin';
+  ov.style.cssText = 'position:fixed;inset:0;z-index:2147483600;background:linear-gradient(180deg,#060d24 0%,#0a1628 100%);display:flex;align-items:center;justify-content:center;padding:24px;box-sizing:border-box;font-family:system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif';
+  var le = t && t.le ? new Date(Number(t.le)).toLocaleDateString('fr-FR') : '';
+  ov.innerHTML = '<div style="text-align:center;max-width:440px;color:#e2e8f0"><div style="font-size:48px;margin-bottom:10px">&#128465;</div>'
+    + '<h2 style="color:#f87171;font-size:19px;margin:0 0 10px">Boutique supprimée</h2>'
+    + '<p style="color:#94a3b8;font-size:14px;line-height:1.7;margin:0 0 16px">« ' + esc(nom || 'Cette boutique') + ' » a été supprimée par le concepteur' + (le ? ' le ' + esc(le) : '') + '.<br>Sa copie a été retirée de cet appareil.<br>Pour toute question : ' + esc(CONTACT) + '.</p>'
+    + '<button id="agv54-fin-ok" style="padding:11px 22px;border:none;border-radius:10px;background:#2563eb;color:#fff;font-weight:800;font-size:14px;cursor:pointer">Retour à l\'accueil</button></div>';
+  document.body.appendChild(ov);
+  document.getElementById('agv54-fin-ok').onclick = function(){
+    try{ location.href = location.pathname + '?accueil=1'; }catch(e){ location.reload(); }
+  };
+}
+function surveillerAppareil(){
+  if(!connecte()) return;
+  var s = window._currentShop || window._shopLoginData || null;
+  var u = s && s.uid;
+  var src = null;
+  try{ var b = blocActif(); src = (b !== 'A' && window._agvBlocSource) ? window._agvBlocSource[b] : null; }catch(e){}
+  if(u) verifierUid(u).then(function(t){
+    if(!t) return;
+    log('boutique ' + u + ' supprimée par le concepteur : copie retirée de cet appareil');
+    try{ window._AGV_READY = false; }catch(e){}
+    try{ if(window._agvDbListener) window._agvDbListener.off(); }catch(e){}
+    purgerAppareil(u);
+    ecranSupprimee(s.entreprise || t.nom, t);
+  });
+  if(src) verifierUid(String(src)).then(function(t){
+    if(!t) return;
+    log('bloc rattaché ' + src + ' supprimé : retour au bloc A');
+    purgerAppareil(String(src));
+    try{
+      sessionStorage.setItem('agv_reprise_bloc', JSON.stringify({ uid: u, bloc: 'A', code: window._lastShopCode || (s && s.codeAcces) || '', role: role(), gerantId: window.currentGerantId || null, t: Date.now() }));
+      localStorage.setItem('agv_bloc_' + u, 'A');
+      if(window.currentGerantId) localStorage.setItem('agv_bloc_g_' + u + '_' + window.currentGerantId, 'A');
+    }catch(e){}
+    try{ window._AGV_READY = false; }catch(e){}
+    alert('Ce bloc a été supprimé par le concepteur. Retour au BLOC A.');
+    location.reload();
+  });
+}
+/* une boutique supprimee ne revient jamais dans la base locale de l'appareil */
+function nettoyerFantomes(){
+  var l = purgees(); if(!l.length || !BL || !BL._interne) return;
+  l.forEach(function(u){
+    try{
+      if(BL._interne.REGISTRE[u] || BL._interne.BOUTIQUES[u]){ if(BL.oublierBoutique) BL.oublierBoutique(u); }
+      if(window._agvBlocSource) Object.keys(window._agvBlocSource).forEach(function(L){ if(String(window._agvBlocSource[L]) === String(u)) delete window._agvBlocSource[L]; });
+    }catch(e){}
+  });
+}
+setInterval(nettoyerFantomes, 3000);
+window.addEventListener('agv-base-locale-connexion', function(){ vus = {}; setTimeout(surveillerAppareil, 1500); });
+setInterval(surveillerAppareil, 20000);
+setTimeout(surveillerAppareil, 4000);
+X.verifierSuppression = function(){ vus = {}; surveillerAppareil(); };
+
+log('module actif — v' + X.version + ' — blocs contrôlés, personnel complet, suppression des boutiques');
 })();
 
 </script>
