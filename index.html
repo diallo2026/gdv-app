@@ -1017,7 +1017,9 @@ function agvLaunchApp(shop){
   // 1. Affichage INSTANTANÉ depuis cache
   window._AGV_READY = false;
   try {
-    var cached = localStorage.getItem(cacheKey);
+    /* [AGV-56] en ligne : rien avant le serveur ; la copie de l'appareil ne sert qu'en relais */
+    var BLx = window.AGV_BASE_LOCALE;
+    var cached = (BLx && typeof BLx.reseauPerturbe === 'function' && !BLx.reseauPerturbe()) ? null : localStorage.getItem(cacheKey);
     if(cached){
       var cachedData = JSON.parse(cached);
       applyData(cachedData);
@@ -17983,11 +17985,13 @@ function poserFormulaire(){
   var bloc = zone.firstChild;
   parent.insertBefore(bloc, msg.nextSibling);
 
+  /* [AGV-56] toujours la chaine complete (window.agvConnexionUnique), jamais la seule verification d'origine */
+  function connecterChaine(){ var f = window.agvConnexionUnique; return (typeof f === 'function' ? f : connecter)(); }
   var btn = document.getElementById('agvcu-btn');
-  if(btn) btn.addEventListener('click', function(){ connecter(); });
+  if(btn) btn.addEventListener('click', function(){ connecterChaine(); });
   ['agvcu-id','agvcu-pwd'].forEach(function(id){
     var e = document.getElementById(id);
-    if(e) e.addEventListener('keydown', function(ev){ if(ev.key === 'Enter') connecter(); });
+    if(e) e.addEventListener('keydown', function(ev){ if(ev.key === 'Enter') connecterChaine(); });
   });
 
   /* message d'aide pendant la periode de transition */
@@ -40269,8 +40273,8 @@ window.agvStocks = function(){
 (function () {
   'use strict';
   var V = {
-    version: 'AGV-55',
-    date: '2026-11-27 18:00 UTC',
+    version: 'AGV-56',
+    date: '2026-11-27 20:00 UTC',
     modules: 27,
     corrections: [
       'empreinte : deux sels (agvc$ a l ecriture, agv$ a la verification)',
@@ -40323,7 +40327,8 @@ window.agvStocks = function(){
       'PERSONNEL COMPLET (AGV-54) : le fondateur voit le personnel de tous les blocs et les acces sans fiche',
       'SUPPRESSION D UNE BOUTIQUE (AGV-54) : complete, reservee au concepteur, retiree des appareils',
       'GERANTS ET FONDATEUR (AGV-55) : identites jamais melangees, acces aux blocs librement reglables, bloc d arrivee respecte',
-      'EN LIGNE D ABORD (AGV-55) : le serveur fait foi, l appareil sert de relais hors ligne, reconnexion immediate'
+      'EN LIGNE D ABORD (AGV-55) : le serveur fait foi, l appareil sert de relais hors ligne, reconnexion immediate',
+      'EN LIGNE SEULEMENT (AGV-56) : rien n est montre ni lu sur l appareil tant que le serveur repond ; relais local seulement si la connexion est perturbee'
     ]
   };
   window.AGV_VERSION = V;
@@ -46490,7 +46495,15 @@ window.agvStocks = function(){
       if (!u) return suite.apply(self, args);
 
       var btn = document.getElementById('agvcu-btn');
-      function fini() { if (btn) { btn.disabled = false; btn.textContent = 'Se connecter'; } }
+      /* [AGV-56] le bouton peut avoir ete remplace par sa copie (module du bouton) : on agit sur le bouton affiche */
+      function fini() { var b = document.getElementById('agvcu-btn') || btn; if (b) { b.disabled = false; b.textContent = 'Se connecter'; b.__agvEnCours = 0; } if (btn && btn !== b) btn.__agvEnCours = 0; }
+      /* [AGV-56] une seule verification a la fois ; le bouton revient de lui-meme si rien ne repond */
+      if (btn) {
+        if (btn.disabled && btn.__agvEnCours && Date.now() - btn.__agvEnCours < 30000) return;
+        var marque = btn.__agvEnCours = Date.now();
+        btn.disabled = true; btn.textContent = 'Vérification...';
+        setTimeout(function () { if (btn.__agvEnCours === marque) fini(); }, 30000);
+      }
 
       // 1. Combien de comptes portent ce nom d'utilisateur dans la boutique saisie ?
       chercherComptes(u, identifiant, function (ici) {
@@ -49112,6 +49125,7 @@ window.agvStocks = function(){
 
     var btn = document.getElementById('agvcu-btn');
     if (!btn || btn.getAttribute('data-agv-bouton')) return;
+    if (btn.disabled) return;          /* [AGV-56] pas de copie pendant une verification : elle resterait bloquee */
 
     // Le bouton
     var b2 = remplacer(btn);
@@ -67543,14 +67557,10 @@ function ajouterEcouteur(q, c, cb, annul, ctx){
   function premier(){
     assurerMiroir(b, cle);
     var r = racine(b, cle);
-    function livrerSiConnue(){ if (valeurLocale(b, c.rel) !== undefined){ if (FILE_LIVRAISON.indexOf(e) < 0) FILE_LIVRAISON.push(e); viderFile(); } }
-    /* [AGV-55] en ligne, le serveur d'abord ; l'appareil n'est qu'un relais */
-    if (connecte && !r.frais && !copieRecente(c.uid) && !modeHorsLigneAccorde(c.uid)){
-      var fait = false;
-      var t = setTimeout(function(){ if (!fait){ fait = true; livrerSiConnue(); } }, 2500);
-      r.attente.push(function(){ if (!fait){ fait = true; clearTimeout(t); livrerSiConnue(); } });
-      return;
-    }
+    function livrerSiConnue(){ if (e.retire) return; if (valeurLocale(b, c.rel) !== undefined){ if (FILE_LIVRAISON.indexOf(e) < 0) FILE_LIVRAISON.push(e); viderFile(); } }
+    /* [AGV-56] EN LIGNE : rien n'est montre avant la reponse du serveur. La copie de l'appareil
+       ne sert que si la connexion est perturbee. */
+    if (!r.frais && !reseauPerturbe()){ attendreEnLigne(b, r).then(livrerSiConnue); return; }
     livrerSiConnue();
   }
   if (b.charge) premier();                 /* livraison immediate, comme le cache Firebase */
@@ -67589,6 +67599,9 @@ function lireLocal(q, c){
   var b = boutique(c.uid), cle = cleRacine(c.rel);
   return charger(c.uid).then(function(){
     assurerMiroir(b, cle);
+    /* [AGV-56] en ligne : la reponse du serveur (mot de passe, acces, personnel... a jour) */
+    var r = racine(b, cle);
+    if (!r.frais && !reseauPerturbe()) return attendreEnLigne(b, r).then(function(){ return attendreCouvert(b, cle); });
     return attendreCouvert(b, cle);
   }).then(function(){
     var v = valeurLocale(b, c.rel);
@@ -68001,32 +68014,49 @@ function assurerMiroir(b, cle){
   });
 }
 
-/* [AGV-55] copie de l'appareil revue par le serveur il y a peu : elle est a jour */
-var FRAIS = {};
-function noterFrais(uid){
-  var n = Date.now();
-  if (FRAIS[uid] && n - FRAIS[uid] < 10000) return;
-  FRAIS[uid] = n;
-  try{ localStorage.setItem('agv55_frais_' + uid, String(n)); }catch(e){}
+/* ============================================================
+   [AGV-56] EN LIGNE SEULEMENT — L'APPAREIL N'EST QU'UN RELAIS
+   En ligne, l'application ne lit et ne montre que ce que le serveur a envoye pendant CETTE
+   ouverture : la copie de l'appareil n'est jamais montree a la place du serveur. Elle ne sert
+   que lorsque la connexion est perturbee — pas de reseau, connexion perdue, connexion qui ne
+   s'etablit pas en 5 s, ou serveur sans reponse en 4,5 s — et seulement jusqu'au retour du reseau.
+   Les saisies restent inscrites sur l'appareil jusqu'a ce que le serveur les ait recues
+   (rien ne se perd si la connexion tombe pendant l'envoi) ; en ligne, elles partent aussitot.
+   ============================================================ */
+var OUVERTURE = Date.now(), DEJA_CONNECTE = false;
+var DELAI_CONNEXION = 5000;   /* jamais connecte 5 s apres l'ouverture : reseau perturbe */
+var ATTENTE_MAX = 4500;       /* une lecture n'attend jamais le serveur plus de 4,5 s : les modules qui
+                                 lisent ont leurs propres delais (6 a 9 s) ; au-dela, relais de l'appareil */
+var LENT = {};
+function reseauPerturbe(){
+  if (navigator.onLine === false) return true;
+  if (connecte) return false;
+  return DEJA_CONNECTE || (Date.now() - OUVERTURE > DELAI_CONNEXION);
 }
-function copieRecente(uid){
-  var t = FRAIS[uid];
-  if (!t){ try{ t = Number(localStorage.getItem('agv55_frais_' + uid)) || 0; }catch(e){ t = 0; } }
-  return Date.now() - t < 120000;
+function attendreEnLigne(b, r){
+  return new Promise(function(res){
+    var t0 = Date.now(), fini = false;
+    function fin(relais){
+      if (fini) return;
+      fini = true;
+      if (relais && !r.frais){ LENT[b.uid + '|' + r.cle] = Date.now(); majIndicateurBientot(); }
+      res();
+    }
+    r.attente.push(function(){ fin(false); });
+    (function veiller(){
+      if (fini) return;
+      if (r.frais) return fin(false);
+      if (reseauPerturbe()) return fin(true);
+      if (Date.now() - t0 > ATTENTE_MAX) return fin(true);
+      setTimeout(veiller, 200);
+    })();
+  });
 }
-/* boutique mise « hors ligne » par le concepteur pour CET appareil : la base locale fait foi */
-function modeHorsLigneAccorde(uid){
-  try{
-    var a = JSON.parse(localStorage.getItem('agv_hl_autorisations') || '{}')[uid];
-    var v = a && a.v;
-    if (!v || !v.actif || !v.jusquau || !v.appareil || v.appareil.id !== APPAREIL) return false;
-    return Date.parse(v.jusquau + 'T23:59:59') >= Date.now() || !!v.licenceAcquittee;
-  }catch(e){ return false; }
-}
-API.copieRecente = copieRecente;
-API.modeHorsLigneAccorde = modeHorsLigneAccorde;
+function relaisActif(){ for (var k in LENT) return true; return false; }
+API.reseauPerturbe = reseauPerturbe;
+API.relaisActif = relaisActif;
 function recuServeur(b, r, v){
-  noterFrais(b.uid);
+  if (LENT[b.uid + '|' + r.cle]){ delete LENT[b.uid + '|' + r.cle]; majIndicateurBientot(); }
   if (!b.charge){
     charger(b.uid).then(function(){ recuServeur(b, r, v); }, function(){});
     return;
@@ -68158,6 +68188,7 @@ function suivreConnexion(){
 function changerConnexion(c){
   if (c === connecte) return;
   connecte = c;
+  if (c) DEJA_CONNECTE = true;               /* [AGV-56] */
   var n = totalEnAttente();
   /* le module d'acces hors ligne (AGV-52), s'il est present, affiche ses propres messages */
   var messagesAcces = !!window.AGV_HORS_LIGNE;
@@ -68782,7 +68813,7 @@ function majIndicateur(){
   for (var u in BOUTIQUES) for (var c in BOUTIQUES[u].R) if (BOUTIQUES[u].R[c].anomalie) anomalie = true;
   var t;
   if (!API.actif) t = connecte ? 'En ligne ✓' : 'Hors ligne';
-  else if (connecte) t = n ? (envoiActif ? 'Synchronisation… (' + n + ')' : n + ' en attente') : 'En ligne ✓';
+  else if (connecte) t = n ? (envoiActif ? 'Synchronisation… (' + n + ')' : n + ' en attente') : (relaisActif() ? 'Connexion lente · appareil en relais' : 'En ligne ✓');
   else t = 'Hors ligne · ' + (n ? n + ' en attente' : 'base locale ✓');
   if (anomalie) t = '⚠ ' + t;
   txt.textContent = t;
