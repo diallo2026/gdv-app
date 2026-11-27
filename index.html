@@ -4564,6 +4564,9 @@ function agvHandleOffline(){
 
 
 function doLogout(){
+  /* [AGV-57] la derniere saisie (retenue 0,5 s pour regrouper les envois) est enregistree AVANT de
+     fermer la session : une vente suivie aussitot d'une deconnexion n'est plus perdue */
+  try{ if(window.AGV_PERF && typeof window.AGV_PERF.viderFileAttente === 'function') window.AGV_PERF.viderFileAttente(); }catch(e){}
   currentRole=null; currentGerantId=null;
   /* [AGV-55] la session terminee ne revient pas : ni par la veille du role, ni par le role retenu */
   window._agvRoleConnexion = null;
@@ -40273,8 +40276,8 @@ window.agvStocks = function(){
 (function () {
   'use strict';
   var V = {
-    version: 'AGV-56',
-    date: '2026-11-27 20:00 UTC',
+    version: 'AGV-57',
+    date: '2026-11-27 21:00 UTC',
     modules: 27,
     corrections: [
       'empreinte : deux sels (agvc$ a l ecriture, agv$ a la verification)',
@@ -40328,7 +40331,8 @@ window.agvStocks = function(){
       'SUPPRESSION D UNE BOUTIQUE (AGV-54) : complete, reservee au concepteur, retiree des appareils',
       'GERANTS ET FONDATEUR (AGV-55) : identites jamais melangees, acces aux blocs librement reglables, bloc d arrivee respecte',
       'EN LIGNE D ABORD (AGV-55) : le serveur fait foi, l appareil sert de relais hors ligne, reconnexion immediate',
-      'EN LIGNE SEULEMENT (AGV-56) : rien n est montre ni lu sur l appareil tant que le serveur repond ; relais local seulement si la connexion est perturbee'
+      'EN LIGNE SEULEMENT (AGV-56) : rien n est montre ni lu sur l appareil tant que le serveur repond ; relais local seulement si la connexion est perturbee',
+      'RELAIS PARTOUT (AGV-57) : accueil, boutiques, changement de bloc et de boutique avec ou sans Internet ; perturbation detectee aussitot'
     ]
   };
   window.AGV_VERSION = V;
@@ -68028,10 +68032,49 @@ var DELAI_CONNEXION = 5000;   /* jamais connecte 5 s apres l'ouverture : reseau 
 var ATTENTE_MAX = 4500;       /* une lecture n'attend jamais le serveur plus de 4,5 s : les modules qui
                                  lisent ont leurs propres delais (6 a 9 s) ; au-dela, relais de l'appareil */
 var LENT = {};
+/* [AGV-57] DETECTION RAPIDE D'UNE PERTURBATION
+   - une sonde legere vers le serveur : si elle echoue (reseau sans Internet), l'appareil prend
+     le relais aussitot, sans attendre les 5 s ;
+   - la perturbation constatee est retenue sur l'appareil : apres un changement de bloc ou de
+     boutique (la page se recharge), ou a la reouverture, le relais reprend en 1,5 s au plus.
+   Des que la connexion revient, tout redevient « en ligne ». */
+var CLE_PERTURBE = 'agv_reseau_perturbe';
+var PERTURBE_AVANT = 0;
+try{ PERTURBE_AVANT = Number(localStorage.getItem(CLE_PERTURBE)) || 0; }catch(e){}
+if (Date.now() - PERTURBE_AVANT > 15 * 60000) PERTURBE_AVANT = 0;
+var SONDE = { echec: 0, enCours: false, derniere: 0 }, dernierNote = 0;
+function urlSondeReseau(){
+  try{
+    var u = new URL(window.firebase.app().options.databaseURL);
+    var ns = u.searchParams.get('ns');
+    return u.origin + '/.json?shallow=true&agv57=' + Date.now() + (ns ? '&ns=' + encodeURIComponent(ns) : '');
+  }catch(e){ return null; }
+}
+function sonderReseau(){
+  if (SONDE.enCours || connecte || navigator.onLine === false || typeof fetch !== 'function') return;
+  if (Date.now() - SONDE.derniere < 3000) return;
+  var url = urlSondeReseau(); if (!url) return;
+  SONDE.enCours = true; SONDE.derniere = Date.now();
+  var fini = false;
+  var t = setTimeout(function(){ if (!fini){ fini = true; SONDE.enCours = false; } }, 4000);
+  fetch(url, { mode: 'no-cors', cache: 'no-store' }).then(function(){
+    if (fini) return; fini = true; clearTimeout(t); SONDE.enCours = false; SONDE.echec = 0;
+  }, function(){
+    if (fini) return; fini = true; clearTimeout(t); SONDE.enCours = false; SONDE.echec = Date.now(); majIndicateurBientot();
+  });
+}
+function noterPerturbation(){
+  var n = Date.now();
+  if (n - dernierNote > 5000){ dernierNote = n; try{ localStorage.setItem(CLE_PERTURBE, String(n)); }catch(e){} }
+  return true;
+}
 function reseauPerturbe(){
-  if (navigator.onLine === false) return true;
+  if (navigator.onLine === false) return noterPerturbation();
   if (connecte) return false;
-  return DEJA_CONNECTE || (Date.now() - OUVERTURE > DELAI_CONNEXION);
+  if (DEJA_CONNECTE) return noterPerturbation();
+  if (SONDE.echec && Date.now() - SONDE.echec < 20000) return noterPerturbation();
+  sonderReseau();
+  return (Date.now() - OUVERTURE > (PERTURBE_AVANT ? 1500 : DELAI_CONNEXION)) ? noterPerturbation() : false;
 }
 function attendreEnLigne(b, r){
   return new Promise(function(res){
@@ -68189,6 +68232,7 @@ function changerConnexion(c){
   if (c === connecte) return;
   connecte = c;
   if (c) DEJA_CONNECTE = true;               /* [AGV-56] */
+  if (c){ PERTURBE_AVANT = 0; SONDE.echec = 0; try{ localStorage.removeItem(CLE_PERTURBE); }catch(e){} }   /* [AGV-57] */
   var n = totalEnAttente();
   /* le module d'acces hors ligne (AGV-52), s'il est present, affiche ses propres messages */
   var messagesAcces = !!window.AGV_HORS_LIGNE;
@@ -69530,6 +69574,7 @@ function verifier(entree){
   var s = boutCourante();
   if(!s || !encadre()){ nettoyer(); return; }
   if(connecte()){
+    try{ sessionStorage.removeItem('agvx4_periode_' + s.uid); }catch(e){}   /* [AGV-57] fin de la periode hors ligne */
     noterLiaison(s.uid);
     lireAutorisation(s.uid);
     debloquer();
@@ -69542,6 +69587,9 @@ function verifier(entree){
     etatPrec = 'enligne';
     return;
   }
+  /* [AGV-57] pendant que la connexion s'etablit (premieres secondes d'une ouverture), ni message ni
+     bandeau « hors ligne » : on attend de savoir si le reseau repond ; nouvel examen dans 1 s */
+  if(BL && typeof BL.reseauPerturbe === 'function' && !BL.reseauPerturbe()){ setTimeout(function(){ verifier(entree); }, 1000); return; }
   var r = politique(s);
   if(r.bloque){
     if(!document.getElementById('agvx4-bloc')) bloquer(s, r);
@@ -69552,8 +69600,16 @@ function verifier(entree){
   }
   var bo = document.getElementById('agvx4-bloc'); if(bo) bo.remove();      /* l'acces est de nouveau permis (reglage du concepteur...) */
   bandeau(r);
-  if(etatPrec !== 'horsligne' || entree){
+  /* [AGV-57] le message s'affiche une fois par periode hors ligne : un changement de bloc ou de
+     boutique (la page se recharge) ne le fait plus revenir, le bandeau suffit */
+  var dejaVu = false;
+  try{ dejaVu = !!sessionStorage.getItem('agvx4_periode_' + s.uid); }catch(e){}
+  if(entree && dejaVu && etatPrec !== 'horsligne'){
+    /* rechargement pendant la meme periode : seulement un rappel d'echeance s'il est du */
+    if(r.niveau !== 'info' && rappelDu(s.uid, r.niveau) && !document.getElementById('agvx4-alerte')) alerteRappel(s, r);
+  } else if(etatPrec !== 'horsligne' || entree){
     /* debut d'une periode hors ligne (ouverture ou coupure) : un seul message */
+    try{ sessionStorage.setItem('agvx4_periode_' + s.uid, String(Date.now())); }catch(e){}
     if(r.niveau === 'info') alerteHorsLigne(s, r); else { rappelDu(s.uid, r.niveau); alerteRappel(s, r); }
   } else if(r.niveau !== 'info' && rappelDu(s.uid, r.niveau) && !document.getElementById('agvx4-alerte')){
     alerteRappel(s, r);
@@ -71260,6 +71316,44 @@ setInterval(function(){
   });
 }, 1000);
 X.texteVersion = texteVersion;
+
+/* ================================================================
+   [AGV-57] LES BOUTONS DE NAVIGATION RESTENT TOUJOURS ACCESSIBLES
+   Hors ligne, la barre « Hors connexion » (tout en bas, au-dessus de tout) recouvrait le
+   bouton du bloc du fondateur et le bouton « Portail » du gerant : impossible de changer
+   de bloc ou de boutique sans Internet. Les deux boutons se placent desormais au-dessus
+   des barres du bas, et au-dessus du bandeau hors ligne.
+   ================================================================ */
+function hauteurBarresBas(){
+  var h = 0, H = window.innerHeight || document.documentElement.clientHeight || 0;
+  [].forEach.call(document.querySelectorAll('.agv-pwa-bar'), function(b){
+    try{
+      var cs = getComputedStyle(b); if(cs.position !== 'fixed' || cs.display === 'none' || cs.visibility === 'hidden') return;
+      var r = b.getBoundingClientRect(); if(r.height <= 0 || r.width < 120) return;
+      if(H - r.bottom <= 4) h = Math.max(h, H - r.top);
+    }catch(e){}
+  });
+  return h;
+}
+function degagerBoutons(){
+  var h = hauteurBarresBas();
+  var c1 = document.getElementById('agvbl-chip');
+  if(c1){
+    var b1 = h ? Math.round(h + 10) + 'px' : '16px';
+    if(c1.style.bottom !== b1) c1.style.bottom = b1;
+    if(c1.style.zIndex !== '9989') c1.style.zIndex = '9989';
+  }
+  var c2 = document.getElementById('agv-pg-chip');
+  if(c2){
+    var hl = !!document.getElementById('agvx4-bandeau');
+    var b2 = h ? Math.round(h + 10) + 'px' : '';
+    if(c2.style.bottom !== b2) c2.style.bottom = b2;
+    var z2 = (h || hl) ? '9989' : '';
+    if(c2.style.zIndex !== z2) c2.style.zIndex = z2;
+  }
+}
+setInterval(function(){ try{ degagerBoutons(); }catch(e){} }, 300);
+X.degagerBoutons = degagerBoutons;
 
 log('module actif — v' + X.version + ' — identités, accès aux blocs, relais hors ligne, mises à jour');
 })();

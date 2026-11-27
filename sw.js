@@ -11,7 +11,7 @@
    La version change a chaque livraison pour que les telephones deja
    installes recoivent la mise a jour.
    ============================================================================= */
-var VERSION = 'agv-v36-20261127-en-ligne-seulement';
+var VERSION = 'agv-v37-20261127-relais-partout';
 var COQUILLE = ['./', './index.html', './manifest.json',
                 './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png'];
 var EXTERNES = ['https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js',
